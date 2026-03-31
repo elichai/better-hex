@@ -16,11 +16,11 @@ bytemuck = { version = "1", features = ["derive"] }
 cfg-if = "1"
 
 [target.'cfg(all(not(feature = "std"), any(target_arch = "x86", target_arch = "x86_64")))'.dependencies]
-cpufeatures = "0.2"
+cpufeatures = "0.3"
 
 [dev-dependencies]
 bytemuck = "1"
 proptest = { version = "1", default-features = false, features = ["std"] }
 
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-proptest = { version = "1", default-features = false, features = ["alloc"] }
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+proptest = "1"
