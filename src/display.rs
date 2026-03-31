@@ -5,9 +5,8 @@
 //! stack buffer (see [`DEFAULT_FMT_BUF`]) to batch `write_str` calls through
 //! `fmt::Formatter`, keeping the number of virtual dispatches low.
 
-use core::fmt;
-
 use crate::backend;
+use core::fmt;
 
 /// Default hex buffer size (in bytes of hex output) for fmt-based encoding.
 ///
@@ -15,9 +14,9 @@ use crate::backend;
 /// up to `DEFAULT_FMT_BUF` hex characters in a stack-allocated buffer, then
 /// flushes them through a single `write_str` call.
 ///
-/// 512 means we process 256 input bytes per iteration — a good balance between
-/// stack usage and reducing virtual dispatch overhead on `fmt::Write`.
-const DEFAULT_FMT_BUF: usize = 512;
+/// 256 means we process 128 input bytes per iteration — keeps stack usage
+/// moderate while reducing virtual dispatch overhead on `fmt::Write`.
+const DEFAULT_FMT_BUF: usize = 256;
 
 /// Returns a value that implements `Display`, `LowerHex`, and `UpperHex`
 /// for the given byte data.
@@ -74,11 +73,7 @@ impl<T: AsRef<[u8]>> fmt::UpperHex for HexDisplay<T> {
 /// characters, and writes them as a single `&str` slice.
 ///
 /// Generic over `BUF` to allow benchmarking different buffer sizes.
-pub(crate) fn encode_to_fmt<const BUF: usize>(
-    input: &[u8],
-    f: &mut fmt::Formatter<'_>,
-    upper: bool,
-) -> fmt::Result {
+pub(crate) fn encode_to_fmt<const BUF: usize>(input: &[u8], f: &mut fmt::Formatter<'_>, upper: bool) -> fmt::Result {
     debug_assert!(BUF.is_multiple_of(2), "BUF must be even");
     let mut buf = [core::mem::MaybeUninit::<u8>::uninit(); BUF];
     let chunk_size = BUF / 2;
@@ -95,7 +90,10 @@ pub(crate) fn encode_to_fmt<const BUF: usize>(
         // hex ASCII, which is valid UTF-8.
         let s = unsafe {
             let initialized = core::slice::from_raw_parts(hex_buf.as_ptr().cast::<u8>(), hex_len);
-            debug_assert!(initialized.iter().all(|b| b.is_ascii()), "encode produced non-ASCII bytes");
+            debug_assert!(
+                initialized.iter().all(|b| b.is_ascii()),
+                "encode produced non-ASCII bytes"
+            );
             core::str::from_utf8_unchecked(initialized)
         };
         f.write_str(s)?;

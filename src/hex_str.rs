@@ -1,8 +1,10 @@
+use crate::{
+    backend,
+    error::Error,
+    maybe_uninit,
+    prefix::{NoPrefix, Prefix, WithPrefix},
+};
 use core::{fmt, mem::MaybeUninit, ops::Deref, slice, str::FromStr};
-
-use crate::{backend, maybe_uninit};
-use crate::error::Error;
-use crate::prefix::{NoPrefix, Prefix, WithPrefix};
 
 /// Raw storage for [`HexStr`]. Implements [`Pod`](bytemuck::Pod) so we can use
 /// `bytemuck::bytes_of()` to obtain a byte-slice view without raw pointer casts.
@@ -77,7 +79,11 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
         prefix_out.copy_from_slice(prefix_bytes);
         backend::encode::<UPPER>(input, hex_out);
         // SAFETY: both prefix and hex regions are now fully initialized.
-        unsafe { Self { inner: out.assume_init() } }
+        unsafe {
+            Self {
+                inner: out.assume_init(),
+            }
+        }
     }
 
     /// Construct a `HexStr` from a validated hex string.
@@ -96,13 +102,20 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
         for (dst, &src) in hex_out.iter_mut().zip(hex_input) {
             dst.write(src);
         }
-        debug_assert!({
-            // SAFETY: we just initialized every byte above.
-            let check = unsafe { slice::from_raw_parts(bytes.as_ptr().cast::<u8>(), bytes.len()) };
-            core::str::from_utf8(check).is_ok()
-        }, "from_validated_hex: result is not valid UTF-8");
+        debug_assert!(
+            {
+                // SAFETY: we just initialized every byte above.
+                let check = unsafe { slice::from_raw_parts(bytes.as_ptr().cast::<u8>(), bytes.len()) };
+                core::str::from_utf8(check).is_ok()
+            },
+            "from_validated_hex: result is not valid UTF-8"
+        );
         // SAFETY: both prefix and hex regions are fully initialized.
-        unsafe { Self { inner: out.assume_init() } }
+        unsafe {
+            Self {
+                inner: out.assume_init(),
+            }
+        }
     }
 
     /// View the full string as a byte slice (includes prefix when present).
@@ -119,10 +132,7 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     /// characters are in `[0-9a-fA-F]` (ASCII).
     pub fn as_str(&self) -> &str {
         let bytes = self.as_bytes();
-        debug_assert!(
-            core::str::from_utf8(bytes).is_ok(),
-            "HexStr contained invalid UTF-8"
-        );
+        debug_assert!(core::str::from_utf8(bytes).is_ok(), "HexStr contained invalid UTF-8");
         // SAFETY: all constructors guarantee hex ASCII content (valid UTF-8).
         unsafe { core::str::from_utf8_unchecked(bytes) }
     }
@@ -130,14 +140,10 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     /// Decode the hex content back to raw bytes, ignoring the prefix.
     pub fn decode(&self) -> [u8; N] {
         // SAFETY: `inner.bytes` is `[[u8; 2]; N]` — `N * 2` contiguous `u8`.
-        let hex_bytes =
-            unsafe { slice::from_raw_parts(self.inner.bytes.as_ptr().cast::<u8>(), N * 2) };
+        let hex_bytes = unsafe { slice::from_raw_parts(self.inner.bytes.as_ptr().cast::<u8>(), N * 2) };
         let mut out: [MaybeUninit<u8>; N] = maybe_uninit::array();
         let result = backend::decode(hex_bytes, &mut out);
-        debug_assert!(
-            result.is_ok(),
-            "HexStr invariant violated: contained non-hex bytes"
-        );
+        debug_assert!(result.is_ok(), "HexStr invariant violated: contained non-hex bytes");
         // SAFETY: backend initialized all N bytes on Ok.
         unsafe { maybe_uninit::transpose(out).assume_init() }
     }
@@ -150,10 +156,7 @@ const HEX_CHARS_UPPER: &[u8; 16] = b"0123456789ABCDEF";
 ///
 /// Separate from `encode_with` because const fn cannot call backend (non-const)
 /// functions or trait methods. Each nibble is looked up in `table` directly.
-const fn const_encode_bytes<const N: usize>(
-    input: &[u8; N],
-    table: &[u8; 16],
-) -> [[u8; 2]; N] {
+const fn const_encode_bytes<const N: usize>(input: &[u8; N], table: &[u8; 16]) -> [[u8; 2]; N] {
     let mut bytes = [[0u8; 2]; N];
     let mut i = 0;
     while i < N {
@@ -281,10 +284,7 @@ impl<const N: usize> FromStr for HexStr<N, NoPrefix> {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let expected = N * 2;
         if s.len() != expected {
-            return Err(Error::InvalidLength {
-                expected,
-                got: s.len(),
-            });
+            return Err(Error::InvalidLength { expected, got: s.len() });
         }
         let input = s.as_bytes();
         // Decode to validate hex content — captures InvalidChar errors.

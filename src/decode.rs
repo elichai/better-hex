@@ -5,8 +5,8 @@
 //! 2. Delegate to [`crate::backend::decode`] for the actual byte conversion.
 //! 3. Return the output or an [`Error`].
 
-use crate::{backend, maybe_uninit};
 use crate::error::Error;
+use crate::{backend, maybe_uninit};
 
 /// Validate that `input_len` is even and equals `expected`.
 /// Returns `Err(InvalidLength)` on mismatch.

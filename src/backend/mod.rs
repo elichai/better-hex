@@ -9,9 +9,8 @@
 
 pub(crate) mod scalar;
 
-use core::mem::MaybeUninit;
-
 use crate::error::Error;
+use core::mem::MaybeUninit;
 
 /// Encode `input` bytes as hex into an uninitialized `output` buffer.
 ///

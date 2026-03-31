@@ -45,10 +45,7 @@ fn display_owned_data() {
 
 #[test]
 fn error_display_invalid_char() {
-    let e = Error::InvalidChar {
-        byte: b'G',
-        index: 5,
-    };
+    let e = Error::InvalidChar { byte: b'G', index: 5 };
     assert_eq!(e.to_string(), "invalid hex character 'G' (0x47) at index 5");
 }
 
@@ -60,23 +57,14 @@ fn error_display_invalid_encoding() {
 
 #[test]
 fn error_display_invalid_length() {
-    let e = Error::InvalidLength {
-        expected: 64,
-        got: 40,
-    };
+    let e = Error::InvalidLength { expected: 64, got: 40 };
     assert_eq!(e.to_string(), "invalid length: expected 64, got 40");
 }
 
 #[test]
 fn error_eq() {
     assert_eq!(Error::InvalidEncoding, Error::InvalidEncoding);
-    assert_ne!(
-        Error::InvalidEncoding,
-        Error::InvalidLength {
-            expected: 0,
-            got: 0
-        }
-    );
+    assert_ne!(Error::InvalidEncoding, Error::InvalidLength { expected: 0, got: 0 });
 }
 
 #[test]

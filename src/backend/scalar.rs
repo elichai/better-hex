@@ -27,9 +27,8 @@
 //! invalid character. The `ct` module (added later) provides constant-time
 //! alternatives using branchless arithmetic.
 
-use core::mem::MaybeUninit;
-
 use crate::error::Error;
+use core::mem::MaybeUninit;
 
 /// 16-byte lookup table mapping nibble values (0–15) to lowercase ASCII hex
 /// characters (`b'0'..=b'9'`, `b'a'..=b'f'`).
@@ -95,11 +94,7 @@ static DECODE_LUT: [u8; 256] = {
 /// Caller must ensure `output` has exactly `input.len() * 2` elements.
 /// All elements of `output` will be initialized after this call.
 pub(crate) fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
-    debug_assert_eq!(
-        output.len(),
-        input.len() * 2,
-        "output buffer wrong size for encode"
-    );
+    debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
     let table = if UPPER { HEX_UPPER } else { HEX_LOWER };
     let mut out_idx = 0;
     for &byte in input {
@@ -123,11 +118,7 @@ pub(crate) fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<
 /// that `input.len()` is even. All elements of `output` will be initialized
 /// on `Ok`.
 pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
-    debug_assert_eq!(
-        output.len(),
-        input.len() / 2,
-        "output buffer wrong size for decode"
-    );
+    debug_assert_eq!(output.len(), input.len() / 2, "output buffer wrong size for decode");
     debug_assert!(input.len().is_multiple_of(2), "input length must be even");
     for (i, (pair, out_byte)) in input.chunks_exact(2).zip(output.iter_mut()).enumerate() {
         let hi = DECODE_LUT[pair[0] as usize];
@@ -164,11 +155,7 @@ mod tests {
     #[test]
     fn decode_lut_digits() {
         for (i, ch) in (b'0'..=b'9').enumerate() {
-            assert_eq!(
-                DECODE_LUT[ch as usize], i as u8,
-                "LUT wrong for '{}'",
-                ch as char
-            );
+            assert_eq!(DECODE_LUT[ch as usize], i as u8, "LUT wrong for '{}'", ch as char);
         }
     }
 
@@ -208,11 +195,7 @@ mod tests {
                 is_valid,
                 expected_valid,
                 "LUT mismatch for byte 0x{byte:02x} ('{}'), expected valid={expected_valid} got valid={is_valid}",
-                if byte.is_ascii_graphic() {
-                    byte as char
-                } else {
-                    '.'
-                }
+                if byte.is_ascii_graphic() { byte as char } else { '.' }
             );
         }
     }

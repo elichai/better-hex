@@ -1,6 +1,5 @@
-use core::{mem::MaybeUninit, slice};
-
 use bytemuck::{Pod, Zeroable};
+use core::{mem::MaybeUninit, slice};
 
 mod sealed {
     pub trait Sealed {}
