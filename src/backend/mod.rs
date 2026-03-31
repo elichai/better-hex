@@ -64,10 +64,10 @@ pub(crate) fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<
             // Runtime detection: prefer AVX2, then SSSE3, then scalar.
             cfg_if::cfg_if! {
                 if #[cfg(feature = "std")] {
-                    if is_x86_feature_detected!("avx2") {
+                    if std::is_x86_feature_detected!("avx2") {
                         // SAFETY: we just confirmed AVX2 is available.
                         unsafe { x86::encode_avx2::<UPPER>(input, output) }
-                    } else if is_x86_feature_detected!("ssse3") {
+                    } else if std::is_x86_feature_detected!("ssse3") {
                         // SAFETY: we just confirmed SSSE3 is available.
                         unsafe { x86::encode_ssse3::<UPPER>(input, output) }
                     } else {
@@ -118,10 +118,10 @@ pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(),
         } else if #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "std")] {
-                    if is_x86_feature_detected!("avx2") {
+                    if std::is_x86_feature_detected!("avx2") {
                         // SAFETY: we just confirmed AVX2 is available.
                         unsafe { x86::decode_avx2(input, output) }
-                    } else if is_x86_feature_detected!("ssse3") {
+                    } else if std::is_x86_feature_detected!("ssse3") {
                         // SAFETY: we just confirmed SSSE3 is available.
                         unsafe { x86::decode_ssse3(input, output) }
                     } else {
@@ -164,7 +164,7 @@ pub(crate) fn check(input: &[u8]) -> bool {
         } else if #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "std")] {
-                    if is_x86_feature_detected!("ssse3") {
+                    if std::is_x86_feature_detected!("ssse3") {
                         // SAFETY: we just confirmed SSSE3 is available.
                         unsafe { x86::check_ssse3(input) }
                     } else {
