@@ -77,7 +77,7 @@ use core::mem::MaybeUninit;
 /// iteration using table lookup, with a scalar tail.
 ///
 /// See module-level documentation for the full algorithm description.
-pub(crate) fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
+pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
     debug_assert_eq!(
         output.len(),
         input.len() * 2,
@@ -234,7 +234,7 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(
 /// On validation failure within a SIMD chunk, falls back to scalar decoding
 /// from the start of that chunk to produce the exact `InvalidChar` error with
 /// the correct byte and index.
-pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
+pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     decode_inner::<true>(input, output)
 }
 
@@ -243,7 +243,7 @@ pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(),
 /// Accumulates error bits across all chunks and returns `Error::InvalidEncoding`
 /// at the end if any invalid character was encountered. Does not reveal the
 /// position of the invalid character.
-pub(crate) fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
+pub fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     decode_inner::<false>(input, output)
 }
 
@@ -345,11 +345,11 @@ fn check_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
 }
 
 /// Fast-path hex check (short-circuits on first invalid byte).
-pub(crate) fn check(input: &[u8]) -> bool {
+pub fn check(input: &[u8]) -> bool {
     check_inner::<true>(input)
 }
 
 /// Constant-time hex check (processes all bytes, no early return).
-pub(crate) fn ct_check(input: &[u8]) -> bool {
+pub fn ct_check(input: &[u8]) -> bool {
     check_inner::<false>(input)
 }

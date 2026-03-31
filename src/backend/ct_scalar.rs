@@ -92,7 +92,7 @@ const fn ct_decode_nibble(byte: u8) -> u16 {
 ///
 /// Panics if `output.len() != input.len() * 2`.
 #[allow(dead_code)]
-pub(crate) fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
+pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
     debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
     let mut out_idx = 0;
     for &byte in input {
@@ -115,7 +115,7 @@ pub(crate) fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<
 /// # Panics (debug only)
 ///
 /// Panics if `output.len() != input.len() / 2` or `input.len()` is odd.
-pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
+pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     debug_assert_eq!(output.len(), input.len() / 2, "output buffer wrong size for decode");
     debug_assert!(input.len().is_multiple_of(2), "input length must be even");
 
@@ -143,7 +143,7 @@ pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(),
 ///
 /// Returns `true` iff every byte in `input` is a valid hex ASCII character
 /// (`[0-9a-fA-F]`). Examines all bytes without short-circuiting.
-pub(crate) fn check(input: &[u8]) -> bool {
+pub fn check(input: &[u8]) -> bool {
     let mut err: u16 = 0;
     for &byte in input {
         err |= ct_decode_nibble(byte) >> 8;
