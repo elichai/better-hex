@@ -1,0 +1,19 @@
+[package]
+name = "better-hex"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Fast hex encoding/decoding with SIMD, const fn, and constant-time support"
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+force-generic = []
+
+[dependencies]
+bytemuck = { version = "1", features = ["derive"] }
+cfg-if = "1"
+
+[dev-dependencies]
+proptest = "1"
