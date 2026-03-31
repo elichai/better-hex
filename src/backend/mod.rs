@@ -154,6 +154,129 @@ pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(),
     }
 }
 
+/// Constant-time encode. SIMD encode is already CT (register LUT, no
+/// memory-indexed lookups). Only the scalar fallback differs: `ct_scalar`
+/// uses branchless arithmetic instead of a lookup table.
+#[inline]
+pub(crate) fn ct_encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "force-generic")] {
+            ct_scalar::encode::<UPPER>(input, output);
+        } else if #[cfg(all(target_arch = "aarch64", target_feature = "neon"))] {
+            neon::encode::<UPPER>(input, output);
+        } else if #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "std")] {
+                    if std::is_x86_feature_detected!("avx2") {
+                        unsafe { x86::encode_avx2::<UPPER>(input, output) }
+                    } else if std::is_x86_feature_detected!("ssse3") {
+                        unsafe { x86::encode_ssse3::<UPPER>(input, output) }
+                    } else {
+                        ct_scalar::encode::<UPPER>(input, output);
+                    }
+                } else {
+                    cpufeatures::new!(cpuid_avx2, "avx2");
+                    cpufeatures::new!(cpuid_ssse3, "ssse3");
+                    let token_avx2 = cpuid_avx2::init();
+                    if token_avx2.get() {
+                        unsafe { x86::encode_avx2::<UPPER>(input, output) }
+                    } else {
+                        let token_ssse3 = cpuid_ssse3::init();
+                        if token_ssse3.get() {
+                            unsafe { x86::encode_ssse3::<UPPER>(input, output) }
+                        } else {
+                            ct_scalar::encode::<UPPER>(input, output);
+                        }
+                    }
+                }
+            }
+        } else if #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))] {
+            wasm::encode::<UPPER>(input, output);
+        } else {
+            ct_scalar::encode::<UPPER>(input, output);
+        }
+    }
+}
+
+/// Constant-time decode. Uses CT SIMD variants (no early return, error
+/// accumulation) with `ct_scalar` as the scalar fallback.
+/// Returns `Error::InvalidEncoding` (not `InvalidChar`) on failure.
+#[inline]
+pub(crate) fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "force-generic")] {
+            ct_scalar::decode(input, output)
+        } else if #[cfg(all(target_arch = "aarch64", target_feature = "neon"))] {
+            neon::ct_decode(input, output)
+        } else if #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "std")] {
+                    if std::is_x86_feature_detected!("avx2") {
+                        unsafe { x86::ct_decode_avx2(input, output) }
+                    } else if std::is_x86_feature_detected!("ssse3") {
+                        unsafe { x86::ct_decode_ssse3(input, output) }
+                    } else {
+                        ct_scalar::decode(input, output)
+                    }
+                } else {
+                    cpufeatures::new!(cpuid_avx2, "avx2");
+                    cpufeatures::new!(cpuid_ssse3, "ssse3");
+                    let token_avx2 = cpuid_avx2::init();
+                    if token_avx2.get() {
+                        unsafe { x86::ct_decode_avx2(input, output) }
+                    } else {
+                        let token_ssse3 = cpuid_ssse3::init();
+                        if token_ssse3.get() {
+                            unsafe { x86::ct_decode_ssse3(input, output) }
+                        } else {
+                            ct_scalar::decode(input, output)
+                        }
+                    }
+                }
+            }
+        } else if #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))] {
+            wasm::ct_decode(input, output)
+        } else {
+            ct_scalar::decode(input, output)
+        }
+    }
+}
+
+/// Constant-time check. Uses CT SIMD variants (no early return) with
+/// `ct_scalar` as the scalar fallback.
+#[inline]
+pub(crate) fn ct_check(input: &[u8]) -> bool {
+    cfg_if::cfg_if! {
+        if #[cfg(feature = "force-generic")] {
+            ct_scalar::check(input)
+        } else if #[cfg(all(target_arch = "aarch64", target_feature = "neon"))] {
+            neon::ct_check(input)
+        } else if #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "std")] {
+                    if std::is_x86_feature_detected!("ssse3") {
+                        unsafe { x86::ct_check_ssse3(input) }
+                    } else {
+                        ct_scalar::check(input)
+                    }
+                } else {
+                    cpufeatures::new!(cpuid_ssse3, "ssse3");
+                    let token_ssse3 = cpuid_ssse3::init();
+                    if token_ssse3.get() {
+                        unsafe { x86::ct_check_ssse3(input) }
+                    } else {
+                        ct_scalar::check(input)
+                    }
+                }
+            }
+        } else if #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))] {
+            wasm::ct_check(input)
+        } else {
+            ct_scalar::check(input)
+        }
+    }
+}
+
 /// Check if every byte in `input` is a valid hex ASCII character.
 #[inline]
 pub(crate) fn check(input: &[u8]) -> bool {

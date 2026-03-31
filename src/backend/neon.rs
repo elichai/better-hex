@@ -66,7 +66,7 @@
 //!
 //! Tail bytes (< 16) are handled by the scalar fallback.
 
-use crate::backend::scalar;
+use crate::backend::{ct_scalar, scalar};
 use crate::error::Error;
 use core::arch::aarch64::*;
 use core::mem::MaybeUninit;
@@ -133,16 +133,20 @@ pub(crate) fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<
     }
 }
 
-/// NEON hex decoder using the Mula-Langdale algorithm — processes 32 hex
-/// characters (two 16-byte vectors) into 16 output bytes per iteration, with
-/// a scalar tail.
+/// Inner NEON hex decoder, parameterised by `SHORT_CIRCUIT`.
 ///
-/// On validation failure within a SIMD chunk, falls back to scalar decoding
-/// from the start of that chunk to produce the exact `InvalidChar` error with
-/// the correct byte and index.
+/// - `SHORT_CIRCUIT = true` (fast path): on validation failure, returns early
+///   to `scalar::decode` from the failing chunk onward to produce the exact
+///   `InvalidChar` error with byte and index.
+/// - `SHORT_CIRCUIT = false` (CT path): accumulates error bits across all
+///   chunks, processes every byte, and returns `Error::InvalidEncoding` at the
+///   end if any invalid character was seen. Tail bytes use `ct_scalar::decode`.
 ///
 /// See module-level documentation for the full algorithm description.
-pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
+fn decode_inner<const SHORT_CIRCUIT: bool>(
+    input: &[u8],
+    output: &mut [MaybeUninit<u8>],
+) -> Result<(), Error> {
     debug_assert_eq!(
         output.len(),
         input.len() / 2,
@@ -152,6 +156,8 @@ pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(),
 
     let simd_end = input.len() / 32 * 32;
     let mut i = 0usize;
+    // Accumulated error across all chunks (CT path only).
+    let mut err: u8 = 0;
 
     while i < simd_end {
         // SAFETY: `i + 32 <= input.len()` because `i < simd_end` and
@@ -170,11 +176,17 @@ pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(),
         let check1 = unsafe { vqaddq_u8(nib1, validate_threshold) };
         let max0 = unsafe { vmaxvq_u8(check0) };
         let max1 = unsafe { vmaxvq_u8(check1) };
+        let chunk_err = (max0 | max1) & 0x80;
 
-        if (max0 | max1) & 0x80 != 0 {
-            // At least one invalid character in this 32-byte chunk.
-            // Fall back to scalar for the rest to get the exact error position.
-            return scalar::decode(&input[i..], &mut output[i / 2..]);
+        if SHORT_CIRCUIT {
+            if chunk_err != 0 {
+                // At least one invalid character in this 32-byte chunk.
+                // Fall back to scalar for the rest to get the exact error position.
+                return scalar::decode(&input[i..], &mut output[i / 2..]);
+            }
+        } else {
+            // Accumulate error; continue processing regardless.
+            err |= chunk_err;
         }
 
         // Pack: deinterleave nibbles. vuzpq_u8 on [nib0, nib1] produces:
@@ -196,12 +208,41 @@ pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(),
         i += 32;
     }
 
-    // Scalar fallback for remaining bytes.
+    // Tail for remaining bytes.
     if i < input.len() {
-        scalar::decode(&input[i..], &mut output[i / 2..])?;
+        if SHORT_CIRCUIT {
+            scalar::decode(&input[i..], &mut output[i / 2..])?;
+        } else {
+            ct_scalar::decode(&input[i..], &mut output[i / 2..]).map_err(|_| {
+                err = 0x80; // mark error without short-circuit
+                Error::InvalidEncoding
+            })?;
+        }
+    }
+
+    if !SHORT_CIRCUIT && err != 0 {
+        return Err(Error::InvalidEncoding);
     }
 
     Ok(())
+}
+
+/// NEON hex decoder — fast path with early exit and exact error position.
+///
+/// On validation failure within a SIMD chunk, falls back to scalar decoding
+/// from the start of that chunk to produce the exact `InvalidChar` error with
+/// the correct byte and index.
+pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
+    decode_inner::<true>(input, output)
+}
+
+/// Constant-time NEON hex decoder — processes all bytes, no early exit.
+///
+/// Accumulates error bits across all chunks and returns `Error::InvalidEncoding`
+/// at the end if any invalid character was encountered. Does not reveal the
+/// position of the invalid character.
+pub(crate) fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
+    decode_inner::<false>(input, output)
 }
 
 /// Decode a 16-byte NEON vector of hex ASCII characters into nibble values
@@ -248,46 +289,65 @@ fn decode_nibbles(v: uint8x16_t) -> uint8x16_t {
 /// valid, every lane is 0xFF; we reduce with `vminvq_u8` to check.
 ///
 /// See module-level documentation for the full algorithm description.
-pub(crate) fn check(input: &[u8]) -> bool {
+/// Inner NEON hex check, parameterised by `SHORT_CIRCUIT`.
+///
+/// - `SHORT_CIRCUIT = true`: returns false on the first invalid chunk.
+/// - `SHORT_CIRCUIT = false` (CT): accumulates validity across all chunks,
+///   checks at the end. Tail uses `ct_scalar::check`.
+fn check_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
     let simd_end = input.len() / 16 * 16;
     let mut i = 0usize;
+    let mut all_valid = true;
 
     while i < simd_end {
         // SAFETY: `i + 16 <= input.len()`.
         let v = unsafe { vld1q_u8(input.as_ptr().add(i)) };
 
-        // Range check: '0' (0x30) <= byte <= '9' (0x39)
         let ge_0 = unsafe { vcgeq_u8(v, vdupq_n_u8(b'0')) };
         let le_9 = unsafe { vcleq_u8(v, vdupq_n_u8(b'9')) };
         let is_digit = unsafe { vandq_u8(ge_0, le_9) };
 
-        // Range check: 'A' (0x41) <= byte <= 'F' (0x46)
         let ge_a_upper = unsafe { vcgeq_u8(v, vdupq_n_u8(b'A')) };
         let le_f_upper = unsafe { vcleq_u8(v, vdupq_n_u8(b'F')) };
         let is_upper = unsafe { vandq_u8(ge_a_upper, le_f_upper) };
 
-        // Range check: 'a' (0x61) <= byte <= 'f' (0x66)
         let ge_a_lower = unsafe { vcgeq_u8(v, vdupq_n_u8(b'a')) };
         let le_f_lower = unsafe { vcleq_u8(v, vdupq_n_u8(b'f')) };
         let is_lower = unsafe { vandq_u8(ge_a_lower, le_f_lower) };
 
-        // Combine: at least one range must match for each byte.
         let valid = unsafe { vorrq_u8(vorrq_u8(is_digit, is_upper), is_lower) };
-
-        // Reduce: if all lanes are 0xFF, min is 0xFF. Otherwise, there is
-        // at least one zero lane (invalid byte).
         let min_val = unsafe { vminvq_u8(valid) };
-        if min_val != 0xFF {
-            return false;
+
+        if SHORT_CIRCUIT {
+            if min_val != 0xFF {
+                return false;
+            }
+        } else {
+            all_valid &= min_val == 0xFF;
         }
 
         i += 16;
     }
 
-    // Scalar fallback for remaining bytes.
+    // Tail
     if i < input.len() {
-        return scalar::check(&input[i..]);
+        let tail_ok = if SHORT_CIRCUIT {
+            scalar::check(&input[i..])
+        } else {
+            ct_scalar::check(&input[i..])
+        };
+        all_valid &= tail_ok;
     }
 
-    true
+    all_valid
+}
+
+/// Fast-path hex check (short-circuits on first invalid byte).
+pub(crate) fn check(input: &[u8]) -> bool {
+    check_inner::<true>(input)
+}
+
+/// Constant-time hex check (processes all bytes, no early return).
+pub(crate) fn ct_check(input: &[u8]) -> bool {
+    check_inner::<false>(input)
 }
