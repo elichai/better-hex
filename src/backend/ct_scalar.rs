@@ -42,6 +42,7 @@ use core::mem::MaybeUninit;
 /// The offset distinguishes upper/lower: uppercase needs `+7` past `'9'`
 /// to reach `'A'`; lowercase needs `+39` (`0x27`) to reach `'a'`.
 #[inline(always)]
+#[allow(dead_code)]
 const fn ct_encode_nibble<const UPPER: bool>(nibble: u8) -> u8 {
     let mut ret = nibble as i16 + 0x30;
     let offset = if UPPER { 0x07i16 } else { 0x27i16 };
@@ -90,6 +91,7 @@ const fn ct_decode_nibble(byte: u8) -> u16 {
 /// # Panics (debug only)
 ///
 /// Panics if `output.len() != input.len() * 2`.
+#[allow(dead_code)]
 pub(crate) fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
     debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
     let mut out_idx = 0;
@@ -115,7 +117,7 @@ pub(crate) fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<
 /// Panics if `output.len() != input.len() / 2` or `input.len()` is odd.
 pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     debug_assert_eq!(output.len(), input.len() / 2, "output buffer wrong size for decode");
-    debug_assert!(input.len() % 2 == 0, "input length must be even");
+    debug_assert!(input.len().is_multiple_of(2), "input length must be even");
 
     let mut err: u16 = 0;
 

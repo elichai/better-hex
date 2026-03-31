@@ -9,6 +9,7 @@ extern crate alloc;
 extern crate std;
 
 mod backend;
+pub mod ct;
 mod decode;
 mod display;
 mod encode;

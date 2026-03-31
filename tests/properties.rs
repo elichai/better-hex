@@ -144,4 +144,28 @@ proptest! {
         let scalar = better_hex::test_internals::scalar::check(&input);
         prop_assert_eq!(dispatched, scalar);
     }
+
+    #[test]
+    fn ct_encode_matches_fast(input in proptest::collection::vec(any::<u8>(), 0..512)) {
+        let fast = better_hex::encode(&input);
+        let mut ct_out = vec![0u8; input.len() * 2];
+        let ct = better_hex::ct::encode_lower(&input, &mut ct_out).unwrap();
+        prop_assert_eq!(ct, fast.as_str());
+    }
+
+    #[test]
+    fn ct_decode_matches_fast(input in proptest::collection::vec(any::<u8>(), 0..256)) {
+        let hex = better_hex::encode(&input);
+        let fast = better_hex::decode(&hex).unwrap();
+        let mut ct_out = vec![0u8; input.len()];
+        better_hex::ct::decode(hex.as_bytes(), &mut ct_out).unwrap();
+        prop_assert_eq!(&ct_out, &fast);
+    }
+
+    #[test]
+    fn ct_check_matches_fast(input in proptest::collection::vec(any::<u8>(), 0..512)) {
+        let ct_result = better_hex::ct::check(&input);
+        let fast_result = better_hex::check_raw(&input);
+        prop_assert_eq!(ct_result, fast_result);
+    }
 }

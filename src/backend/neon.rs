@@ -10,10 +10,10 @@
 //! 2. For each 16-byte chunk of input:
 //!    a. Split each byte into high nibble (`byte >> 4`) and low nibble
 //!       (`byte & 0x0F`).
-//!    b. Use `vqtbl1q_u8` (table lookup) to convert each nibble to its ASCII
-//!       hex character.
-//!    c. Interleave the high and low nibble results with `vzipq_u8` so that
-//!       each input byte produces two adjacent hex characters.
+//!    b. Use `vqtbl1q_u8` (table lookup) to convert each nibble to its
+//!       ASCII hex character.
+//!    c. Interleave the high and low nibble results with `vzipq_u8` so
+//!       that each input byte produces two adjacent hex characters.
 //!    d. Store the resulting 32 bytes to the output buffer.
 //! 3. Any remaining bytes (< 16) are handled by the scalar fallback.
 //!
@@ -65,6 +65,8 @@
 //! at least one byte was outside all three ranges and the input is invalid.
 //!
 //! Tail bytes (< 16) are handled by the scalar fallback.
+
+#![allow(clippy::doc_overindented_list_items)]
 
 use crate::backend::{ct_scalar, scalar};
 use crate::error::Error;
@@ -152,7 +154,7 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(
         input.len() / 2,
         "output buffer wrong size for decode"
     );
-    debug_assert!(input.len() % 2 == 0, "input length must be even");
+    debug_assert!(input.len().is_multiple_of(2), "input length must be even");
 
     let simd_end = input.len() / 32 * 32;
     let mut i = 0usize;
