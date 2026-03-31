@@ -265,7 +265,7 @@ impl<const N: usize> FromStr for HexStr<N, NoPrefix> {
 
 /// Decode hex at compile time.
 pub const fn const_decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; N], Error> {
-    if input.len() % 2 != 0 {
+    if !input.len().is_multiple_of(2) {
         return Err(Error::OddLength);
     }
     if input.len() / 2 != N {
@@ -290,7 +290,7 @@ pub const fn const_decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; 
 
 /// Check hex validity at compile time.
 pub const fn const_check(input: &[u8]) -> bool {
-    if input.len() % 2 != 0 {
+    if !input.len().is_multiple_of(2) {
         return false;
     }
     let mut i = 0;
