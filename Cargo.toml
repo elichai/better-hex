@@ -20,4 +20,7 @@ cpufeatures = "0.2"
 
 [dev-dependencies]
 bytemuck = "1"
-proptest = "1"
+proptest = { version = "1", default-features = false, features = ["std"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["alloc"] }
