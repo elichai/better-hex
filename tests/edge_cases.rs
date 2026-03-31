@@ -1,6 +1,42 @@
 use better_hex::{Error, NoPrefix, Prefix, WithPrefix};
 
 #[test]
+fn display_lower() {
+    let s = format!("{}", better_hex::display(&[0xde, 0xad]));
+    assert_eq!(s, "dead");
+}
+
+#[test]
+fn display_upper_hex() {
+    let s = format!("{:X}", better_hex::display(&[0xde, 0xad]));
+    assert_eq!(s, "DEAD");
+}
+
+#[test]
+fn display_lower_hex() {
+    let s = format!("{:x}", better_hex::display(&[0xde, 0xad]));
+    assert_eq!(s, "dead");
+}
+
+#[test]
+fn display_alt_lower() {
+    let s = format!("{:#x}", better_hex::display(&[0xde, 0xad]));
+    assert_eq!(s, "0xdead");
+}
+
+#[test]
+fn display_alt_upper() {
+    let s = format!("{:#X}", better_hex::display(&[0xde, 0xad]));
+    assert_eq!(s, "0xDEAD");
+}
+
+#[test]
+fn display_empty() {
+    let s = format!("{}", better_hex::display(&[]));
+    assert_eq!(s, "");
+}
+
+#[test]
 fn error_display_odd_length() {
     let e = Error::OddLength;
     assert_eq!(e.to_string(), "odd-length hex string");

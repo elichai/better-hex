@@ -4,7 +4,7 @@ use core::str::FromStr;
 
 use crate::arch;
 use crate::error::Error;
-use crate::prefix::{NoPrefix, Prefix};
+use crate::prefix::{NoPrefix, Prefix, WithPrefix};
 
 /// Stack-allocated hex string for `N` input bytes.
 ///
@@ -93,6 +93,65 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
         // The hex content was produced by our own encoder, so this cannot fail.
         let _ = arch::decode(hex_bytes, &mut out);
         out
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Const encode
+// ---------------------------------------------------------------------------
+
+const HEX_CHARS_LOWER: &[u8; 16] = b"0123456789abcdef";
+const HEX_CHARS_UPPER: &[u8; 16] = b"0123456789ABCDEF";
+
+impl<const N: usize> HexStr<N, NoPrefix> {
+    /// Encode bytes to lowercase hex at compile time.
+    pub const fn const_encode_lower(input: &[u8; N]) -> Self {
+        let mut bytes = [[0u8; 2]; N];
+        let mut i = 0;
+        while i < N {
+            bytes[i][0] = HEX_CHARS_LOWER[(input[i] >> 4) as usize];
+            bytes[i][1] = HEX_CHARS_LOWER[(input[i] & 0x0f) as usize];
+            i += 1;
+        }
+        Self { prefix: NoPrefix, bytes }
+    }
+
+    /// Encode bytes to uppercase hex at compile time.
+    pub const fn const_encode_upper(input: &[u8; N]) -> Self {
+        let mut bytes = [[0u8; 2]; N];
+        let mut i = 0;
+        while i < N {
+            bytes[i][0] = HEX_CHARS_UPPER[(input[i] >> 4) as usize];
+            bytes[i][1] = HEX_CHARS_UPPER[(input[i] & 0x0f) as usize];
+            i += 1;
+        }
+        Self { prefix: NoPrefix, bytes }
+    }
+}
+
+impl<const N: usize> HexStr<N, WithPrefix> {
+    /// Encode bytes to lowercase hex at compile time (with "0x" prefix).
+    pub const fn const_encode_lower(input: &[u8; N]) -> Self {
+        let mut bytes = [[0u8; 2]; N];
+        let mut i = 0;
+        while i < N {
+            bytes[i][0] = HEX_CHARS_LOWER[(input[i] >> 4) as usize];
+            bytes[i][1] = HEX_CHARS_LOWER[(input[i] & 0x0f) as usize];
+            i += 1;
+        }
+        Self { prefix: WithPrefix(*b"0x"), bytes }
+    }
+
+    /// Encode bytes to uppercase hex at compile time (with "0x" prefix).
+    pub const fn const_encode_upper(input: &[u8; N]) -> Self {
+        let mut bytes = [[0u8; 2]; N];
+        let mut i = 0;
+        while i < N {
+            bytes[i][0] = HEX_CHARS_UPPER[(input[i] >> 4) as usize];
+            bytes[i][1] = HEX_CHARS_UPPER[(input[i] & 0x0f) as usize];
+            i += 1;
+        }
+        Self { prefix: WithPrefix(*b"0x"), bytes }
     }
 }
 
@@ -197,6 +256,59 @@ impl<const N: usize> FromStr for HexStr<N, NoPrefix> {
         };
         dst.copy_from_slice(s.as_bytes());
         Ok(result)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Const decode free functions
+// ---------------------------------------------------------------------------
+
+/// Decode hex at compile time.
+pub const fn const_decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; N], Error> {
+    if input.len() % 2 != 0 {
+        return Err(Error::OddLength);
+    }
+    if input.len() / 2 != N {
+        return Err(Error::InvalidLength { expected: N * 2, got: input.len() });
+    }
+    let mut out = [0u8; N];
+    let mut i = 0;
+    while i < N {
+        let hi = const_decode_nibble(input[i * 2]);
+        let lo = const_decode_nibble(input[i * 2 + 1]);
+        if hi == u8::MAX {
+            return Err(Error::InvalidChar { byte: input[i * 2], index: i * 2 });
+        }
+        if lo == u8::MAX {
+            return Err(Error::InvalidChar { byte: input[i * 2 + 1], index: i * 2 + 1 });
+        }
+        out[i] = (hi << 4) | lo;
+        i += 1;
+    }
+    Ok(out)
+}
+
+/// Check hex validity at compile time.
+pub const fn const_check(input: &[u8]) -> bool {
+    if input.len() % 2 != 0 {
+        return false;
+    }
+    let mut i = 0;
+    while i < input.len() {
+        if const_decode_nibble(input[i]) == u8::MAX {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+const fn const_decode_nibble(byte: u8) -> u8 {
+    match byte {
+        b'0'..=b'9' => byte - b'0',
+        b'a'..=b'f' => byte - b'a' + 10,
+        b'A'..=b'F' => byte - b'A' + 10,
+        _ => u8::MAX,
     }
 }
 

@@ -121,3 +121,49 @@ fn from_str_wrong_length() {
     let err = "deadbe".parse::<HexStr<4>>().unwrap_err();
     assert!(matches!(err, better_hex::Error::InvalidLength { .. }));
 }
+
+#[test]
+fn const_encode_lower() {
+    const HEX: HexStr<4> = HexStr::<4>::const_encode_lower(&[0xde, 0xad, 0xbe, 0xef]);
+    assert_eq!(HEX.as_str(), "deadbeef");
+}
+
+#[test]
+fn const_encode_upper() {
+    const HEX: HexStr<4> = HexStr::<4>::const_encode_upper(&[0xde, 0xad, 0xbe, 0xef]);
+    assert_eq!(HEX.as_str(), "DEADBEEF");
+}
+
+#[test]
+fn const_decode_to_array() {
+    const BYTES: [u8; 4] = match better_hex::const_decode_to_array(b"deadbeef") {
+        Ok(b) => b,
+        Err(_) => panic!("decode failed"),
+    };
+    assert_eq!(BYTES, [0xde, 0xad, 0xbe, 0xef]);
+}
+
+#[test]
+fn const_decode_uppercase() {
+    const BYTES: [u8; 2] = match better_hex::const_decode_to_array(b"ABCD") {
+        Ok(b) => b,
+        Err(_) => panic!("decode failed"),
+    };
+    assert_eq!(BYTES, [0xab, 0xcd]);
+}
+
+#[test]
+fn const_check() {
+    const VALID: bool = better_hex::const_check(b"deadbeef");
+    const INVALID: bool = better_hex::const_check(b"deadbeeG");
+    const ODD: bool = better_hex::const_check(b"abc");
+    assert!(VALID);
+    assert!(!INVALID);
+    assert!(!ODD);
+}
+
+#[test]
+fn const_encode_zero_len() {
+    const HEX: HexStr<0> = HexStr::<0>::const_encode_lower(&[]);
+    assert_eq!(HEX.as_str(), "");
+}

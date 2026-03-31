@@ -12,7 +12,7 @@ pub struct NoPrefix;
 /// A prefix marker that stores the "0x" prefix.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Pod, Zeroable)]
 #[repr(transparent)]
-pub struct WithPrefix([u8; 2]);
+pub struct WithPrefix(pub(crate) [u8; 2]);
 
 impl sealed::Sealed for NoPrefix {}
 impl sealed::Sealed for WithPrefix {}
