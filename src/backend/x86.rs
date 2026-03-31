@@ -240,11 +240,11 @@ unsafe fn decode_delta_rebase_128() -> __m128i {
     _mm_setr_epi8(
         0,
         0,
+        -48 + 1, // hash 2: digits '0'-'7' (vm1 high nibble = 2)
+        -48 + 1, // hash 3: digits '8'-'9' (vm1 high nibble = 3)
+        -55 + 1, // hash 4: uppercase 'A'-'F'
         0,
-        -48 + 1, // hash 3: digits
-        -55 + 1, // hash 4: uppercase
-        0,
-        -87 + 1, // hash 6: lowercase
+        -87 + 1, // hash 6: lowercase 'a'-'f'
         0,
         0, 0, 0, 0, 0, 0, 0, 0,
     )
