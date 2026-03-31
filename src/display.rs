@@ -1,10 +1,22 @@
+//! Display-based hex formatting.
+//!
+//! Provides [`display()`] which wraps any `AsRef<[u8]>` in a [`HexDisplay`]
+//! that implements `Display`, `LowerHex`, and `UpperHex`. Formatting uses a
+//! stack buffer (see [`DEFAULT_FMT_BUF`]) to batch `write_str` calls through
+//! `fmt::Formatter`, keeping the number of virtual dispatches low.
+
 use core::fmt;
 
 use crate::backend;
 
-/// Default hex buffer size for fmt-based encoding.
-/// Each iteration writes up to `DEFAULT_FMT_BUF` hex characters
-/// (encoding `DEFAULT_FMT_BUF / 2` input bytes).
+/// Default hex buffer size (in bytes of hex output) for fmt-based encoding.
+///
+/// Each iteration encodes up to `DEFAULT_FMT_BUF / 2` input bytes, producing
+/// up to `DEFAULT_FMT_BUF` hex characters in a stack-allocated buffer, then
+/// flushes them through a single `write_str` call.
+///
+/// 512 means we process 256 input bytes per iteration — a good balance between
+/// stack usage and reducing virtual dispatch overhead on `fmt::Write`.
 const DEFAULT_FMT_BUF: usize = 512;
 
 /// Returns a value that implements `Display`, `LowerHex`, and `UpperHex`
@@ -68,22 +80,24 @@ pub(crate) fn encode_to_fmt<const BUF: usize>(
     upper: bool,
 ) -> fmt::Result {
     debug_assert!(BUF.is_multiple_of(2), "BUF must be even");
-    let mut buf = [0u8; BUF];
+    let mut buf = [core::mem::MaybeUninit::<u8>::uninit(); BUF];
     let chunk_size = BUF / 2;
 
     for chunk in input.chunks(chunk_size) {
-        let hex_buf = &mut buf[..chunk.len() * 2];
+        let hex_len = chunk.len() * 2;
+        let hex_buf = &mut buf[..hex_len];
         if upper {
             backend::encode::<true>(chunk, hex_buf);
         } else {
             backend::encode::<false>(chunk, hex_buf);
         }
-        debug_assert!(
-            hex_buf.iter().all(|b: &u8| b.is_ascii()),
-            "encode produced non-ASCII bytes"
-        );
-        // SAFETY: encode writes valid hex ASCII, which is valid UTF-8.
-        let s = unsafe { core::str::from_utf8_unchecked(hex_buf) };
+        // SAFETY: the backend just initialized `hex_len` bytes with valid
+        // hex ASCII, which is valid UTF-8.
+        let s = unsafe {
+            let initialized = core::slice::from_raw_parts(hex_buf.as_ptr().cast::<u8>(), hex_len);
+            debug_assert!(initialized.iter().all(|b| b.is_ascii()), "encode produced non-ASCII bytes");
+            core::str::from_utf8_unchecked(initialized)
+        };
         f.write_str(s)?;
     }
     Ok(())

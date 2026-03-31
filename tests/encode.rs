@@ -43,7 +43,13 @@ fn encode_all_ff() {
 fn encode_output_too_short() {
     let mut out = [0u8; 3];
     let err = better_hex::encode_to_slice(&[0xab, 0xcd], &mut out).unwrap_err();
-    assert_eq!(err, better_hex::Error::InvalidLength { expected: 4, got: 3 });
+    assert_eq!(
+        err,
+        better_hex::Error::InvalidLength {
+            expected: 4,
+            got: 3
+        }
+    );
 }
 
 #[test]

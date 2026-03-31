@@ -25,7 +25,11 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::InvalidChar { byte, index } => {
-                write!(f, "invalid hex character '{}' (0x{:02x}) at index {}", *byte as char, byte, index)
+                write!(
+                    f,
+                    "invalid hex character '{}' (0x{:02x}) at index {}",
+                    *byte as char, byte, index
+                )
             }
             Error::InvalidEncoding => f.write_str("invalid hex encoding"),
             Error::InvalidLength { expected, got } => {

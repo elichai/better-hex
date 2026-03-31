@@ -36,14 +36,26 @@ fn decode_odd_length() {
 fn decode_invalid_char() {
     let mut out = [0u8; 2];
     let err = better_hex::decode_to_slice(b"abGH", &mut out).unwrap_err();
-    assert_eq!(err, better_hex::Error::InvalidChar { byte: b'G', index: 2 });
+    assert_eq!(
+        err,
+        better_hex::Error::InvalidChar {
+            byte: b'G',
+            index: 2
+        }
+    );
 }
 
 #[test]
 fn decode_output_wrong_size() {
     let mut out = [0u8; 1];
     let err = better_hex::decode_to_slice(b"abcd", &mut out).unwrap_err();
-    assert_eq!(err, better_hex::Error::InvalidLength { expected: 2, got: 4 });
+    assert_eq!(
+        err,
+        better_hex::Error::InvalidLength {
+            expected: 2,
+            got: 4
+        }
+    );
 }
 
 #[test]

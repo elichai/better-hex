@@ -13,11 +13,12 @@ mod decode;
 mod encode;
 mod error;
 mod prefix;
+mod maybe_uninit;
 
 pub use decode::{check, check_raw, decode_to_array, decode_to_slice};
 pub use encode::{encode_to_slice, encode_to_slice_upper};
 pub use error::Error;
-pub use hex_str::{const_check, const_decode_to_array, HexStr};
+pub use hex_str::{HexStr, const_check, const_decode_to_array};
 pub use prefix::{NoPrefix, Prefix, WithPrefix};
 
 /// A [`HexStr`] with a `"0x"` prefix.
@@ -31,4 +32,4 @@ pub use encode::{encode, encode_upper};
 mod hex_str;
 
 mod display;
-pub use display::{display, HexDisplay};
+pub use display::{HexDisplay, display};
