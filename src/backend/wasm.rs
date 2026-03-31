@@ -25,6 +25,7 @@
 //! Three range checks (`0-9`, `a-f`, `A-F`) are ORed together and reduced
 //! with `u8x16_all_true`.
 
+use crate::backend::ct_scalar;
 use crate::backend::scalar;
 use crate::error::Error;
 use core::arch::wasm32::*;
@@ -102,17 +103,23 @@ pub(crate) fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<
 // Decode
 // ---------------------------------------------------------------------------
 
-/// Decode hex-encoded `input` into `output`, using SIMD128 for 32-byte chunks.
+/// Inner decode implementation generic over short-circuit mode.
 ///
-/// Returns `Ok(())` on success. On the first invalid hex character, returns
-/// `Err(InvalidChar { byte, index })`.
+/// When `SHORT_CIRCUIT = true` (fast path): bails out to `scalar::decode` on
+/// the first invalid chunk, returning a precise `InvalidChar` error.
 ///
-/// # Panics (debug only)
-///
-/// Panics if `output.len() != input.len() / 2` or `input.len()` is odd.
-pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
+/// When `SHORT_CIRCUIT = false` (constant-time path): accumulates all error
+/// bits across every chunk without branching on validity, then delegates the
+/// tail to `ct_scalar::decode`.
+#[inline]
+fn decode_inner<const SHORT_CIRCUIT: bool>(
+    input: &[u8],
+    output: &mut [MaybeUninit<u8>],
+) -> Result<(), Error> {
     debug_assert_eq!(output.len(), input.len() / 2, "output buffer wrong size for decode");
     debug_assert!(input.len() % 2 == 0, "input length must be even");
+
+    let mut err_accum: u16 = 0;
 
     let chunks = input.len() / 32;
     for i in 0..chunks {
@@ -139,13 +146,17 @@ pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(),
         //
         // Merge: min(digit, alpha) picks whichever path produced a valid small nibble.
 
-        let (nibbles0, valid0) = decode_nibbles(nib0);
-        let (nibbles1, valid1) = decode_nibbles(nib1);
+        let (nibbles0, ok0) = decode_nibbles(nib0);
+        let (nibbles1, ok1) = decode_nibbles(nib1);
 
-        if !valid0 || !valid1 {
-            // Fall back to scalar on the remaining input to get precise error info.
-            let consumed = i * 32;
-            return scalar::decode(&input[consumed..], &mut output[consumed / 2..]);
+        if SHORT_CIRCUIT {
+            if ok0 != 0 || ok1 != 0 {
+                // Fall back to scalar on the remaining input to get precise error info.
+                let consumed = i * 32;
+                return scalar::decode(&input[consumed..], &mut output[consumed / 2..]);
+            }
+        } else {
+            err_accum |= ok0 | ok1;
         }
 
         // Pack nibbles: deinterleave even (hi) and odd (lo) positions from the
@@ -169,15 +180,43 @@ pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(),
         }
     }
 
-    // Tail: delegate remaining bytes to scalar.
+    if !SHORT_CIRCUIT && err_accum != 0 {
+        return Err(Error::InvalidEncoding);
+    }
+
+    // Tail: delegate remaining bytes to scalar (or ct_scalar for CT path).
     let consumed = chunks * 32;
-    scalar::decode(&input[consumed..], &mut output[consumed / 2..])
+    if SHORT_CIRCUIT {
+        scalar::decode(&input[consumed..], &mut output[consumed / 2..])
+    } else {
+        ct_scalar::decode(&input[consumed..], &mut output[consumed / 2..])
+    }
+}
+
+/// Decode hex-encoded `input` into `output`, using SIMD128 for 32-byte chunks.
+///
+/// Returns `Ok(())` on success. On the first invalid hex character, returns
+/// `Err(InvalidChar { byte, index })`.
+///
+/// # Panics (debug only)
+///
+/// Panics if `output.len() != input.len() / 2` or `input.len()` is odd.
+pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
+    decode_inner::<true>(input, output)
+}
+
+/// Constant-time variant of [`decode`]: processes all chunks without
+/// short-circuiting on invalid input, accumulating errors across the entire
+/// input before returning.
+pub(crate) fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
+    decode_inner::<false>(input, output)
 }
 
 /// Decode 16 hex-ASCII bytes in `v` into nibble values, returning the nibble
-/// vector and a boolean indicating whether all 16 bytes were valid hex.
+/// vector and a bitmask (`u16`) where a non-zero value indicates at least one
+/// invalid hex byte (`u8x16_bitmask` of the out-of-range check).
 #[inline]
-fn decode_nibbles(v: v128) -> (v128, bool) {
+fn decode_nibbles(v: v128) -> (v128, u16) {
     // Digit path: '0'..'9' → 0..9
     let digit = u8x16_sub(
         u8x16_sub_sat(u8x16_add(v, u8x16_splat(0xC6)), u8x16_splat(6)),
@@ -196,21 +235,27 @@ fn decode_nibbles(v: v128) -> (v128, bool) {
     // wraps to ≥ 128. Check that the high bit is never set (== all ≤ 127).
     let check = u8x16_add_sat(nibbles, u8x16_splat(112));
     // `u8x16_bitmask` extracts the MSB of each lane into a u16.
-    // If all nibbles are valid (0..15), no MSB is set → bitmask == 0.
-    let valid = u8x16_bitmask(check) == 0;
+    // Non-zero means at least one nibble was out of range (invalid hex byte).
+    let err_bits = u8x16_bitmask(check);
 
-    (nibbles, valid)
+    (nibbles, err_bits)
 }
 
 // ---------------------------------------------------------------------------
 // Check
 // ---------------------------------------------------------------------------
 
-/// Check if every byte in `input` is a valid hex ASCII character, using SIMD128
-/// for 16-byte chunks.
+/// Inner check implementation generic over short-circuit mode.
 ///
-/// Returns `true` iff all bytes are in `[0-9a-fA-F]`.
-pub(crate) fn check(input: &[u8]) -> bool {
+/// When `SHORT_CIRCUIT = true` (fast path): returns `false` immediately on the
+/// first invalid chunk.
+///
+/// When `SHORT_CIRCUIT = false` (constant-time path): ANDs all validity flags
+/// together without branching, examining every chunk regardless.
+#[inline]
+fn check_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
+    let mut all_valid = true;
+
     let chunks = input.len() / 16;
     for i in 0..chunks {
         let src = &input[i * 16..];
@@ -238,12 +283,35 @@ pub(crate) fn check(input: &[u8]) -> bool {
         let is_hex = v128_or(v128_or(is_digit, is_upper), is_lower);
 
         // `u8x16_all_true` returns true if every lane is non-zero.
-        if !u8x16_all_true(is_hex) {
-            return false;
+        if SHORT_CIRCUIT {
+            if !u8x16_all_true(is_hex) {
+                return false;
+            }
+        } else {
+            all_valid &= u8x16_all_true(is_hex);
         }
     }
 
-    // Tail: delegate remaining bytes to scalar.
+    // Tail: delegate remaining bytes to scalar (or ct_scalar for CT path).
     let done = chunks * 16;
-    scalar::check(&input[done..])
+    if SHORT_CIRCUIT {
+        all_valid && scalar::check(&input[done..])
+    } else {
+        ct_scalar::check(&input[done..]) && all_valid
+    }
+}
+
+/// Check if every byte in `input` is a valid hex ASCII character, using SIMD128
+/// for 16-byte chunks.
+///
+/// Returns `true` iff all bytes are in `[0-9a-fA-F]`.
+pub(crate) fn check(input: &[u8]) -> bool {
+    check_inner::<true>(input)
+}
+
+/// Constant-time variant of [`check`]: examines all chunks without
+/// short-circuiting, so execution time does not depend on where (or whether)
+/// invalid bytes appear.
+pub(crate) fn ct_check(input: &[u8]) -> bool {
+    check_inner::<false>(input)
 }
