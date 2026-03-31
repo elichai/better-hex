@@ -158,65 +158,59 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(
 
     let simd_end = input.len() / 32 * 32;
     let mut i = 0usize;
-    // Accumulated error across all chunks (CT path only).
     let mut err: u8 = 0;
 
+    // Hoist all broadcast constants out of the loop so LLVM doesn't need to
+    // prove them loop-invariant. These are used by decode_nibbles_with_consts
+    // and the validation step.
+    let c_c6 = unsafe { vdupq_n_u8(0xC6) };
+    let c_six = unsafe { vdupq_n_u8(6) };
+    let c_f0 = unsafe { vdupq_n_u8(0xF0) };
+    let c_df = unsafe { vdupq_n_u8(0xDF) };
+    let c_a = unsafe { vdupq_n_u8(b'A') };
+    let c_ten = unsafe { vdupq_n_u8(10) };
+    let c_validate = unsafe { vdupq_n_u8(0x70) };
+
     while i < simd_end {
-        // SAFETY: `i + 32 <= input.len()` because `i < simd_end` and
-        // `simd_end` is a multiple of 32 not exceeding `input.len()`.
         let v0 = unsafe { vld1q_u8(input.as_ptr().add(i)) };
         let v1 = unsafe { vld1q_u8(input.as_ptr().add(i + 16)) };
 
-        let nib0 = decode_nibbles(v0);
-        let nib1 = decode_nibbles(v1);
+        let nib0 = decode_nibbles_with_consts(v0, c_c6, c_six, c_f0, c_df, c_a, c_ten);
+        let nib1 = decode_nibbles_with_consts(v1, c_c6, c_six, c_f0, c_df, c_a, c_ten);
 
         // Validate: saturating add with 0x70 (112). Valid nibbles (0-15)
-        // produce 112-127 (MSB=0). Invalid nibbles (>= 16) produce >= 128
-        // (MSB=1). We check the maximum across both vectors.
-        let validate_threshold = unsafe { vdupq_n_u8(0x70) };
-        let check0 = unsafe { vqaddq_u8(nib0, validate_threshold) };
-        let check1 = unsafe { vqaddq_u8(nib1, validate_threshold) };
-        let max0 = unsafe { vmaxvq_u8(check0) };
-        let max1 = unsafe { vmaxvq_u8(check1) };
-        let chunk_err = (max0 | max1) & 0x80;
+        // → 112-127 (MSB clear). Invalid (>= 16) → >= 128 (MSB set).
+        // Fuse two check vectors with vorrq_u8 BEFORE the horizontal reduce,
+        // halving the number of expensive cross-lane vmaxvq_u8 operations.
+        let check0 = unsafe { vqaddq_u8(nib0, c_validate) };
+        let check1 = unsafe { vqaddq_u8(nib1, c_validate) };
+        let combined_check = unsafe { vorrq_u8(check0, check1) };
+        let chunk_err = unsafe { vmaxvq_u8(combined_check) } & 0x80;
 
         if SHORT_CIRCUIT {
             if chunk_err != 0 {
-                // At least one invalid character in this 32-byte chunk.
-                // Fall back to scalar for the rest to get the exact error position.
                 return scalar::decode(&input[i..], &mut output[i / 2..]);
             }
         } else {
-            // Accumulate error; continue processing regardless.
             err |= chunk_err;
         }
 
-        // Pack: deinterleave nibbles. vuzpq_u8 on [nib0, nib1] produces:
-        //   .0 = even-indexed nibbles (hi nibbles): nib0[0], nib0[2], ..., nib1[0], nib1[2], ...
-        //   .1 = odd-indexed nibbles (lo nibbles):  nib0[1], nib0[3], ..., nib1[1], nib1[3], ...
+        // Pack: deinterleave hi/lo nibbles, then combine.
         let deinterleaved = unsafe { vuzpq_u8(nib0, nib1) };
-        let hi = deinterleaved.0;
-        let lo = deinterleaved.1;
-        let combined = unsafe { vorrq_u8(vshlq_n_u8::<4>(hi), lo) };
+        let combined = unsafe { vorrq_u8(vshlq_n_u8::<4>(deinterleaved.0), deinterleaved.1) };
 
-        // SAFETY: Writing 16 bytes to `output` at offset `i / 2`.
-        // Since `i + 32 <= input.len()` and `output.len() == input.len() / 2`,
-        // we have `i / 2 + 16 <= output.len()`.
         let out_ptr = output.as_mut_ptr().cast::<u8>().wrapping_add(i / 2);
-        unsafe {
-            vst1q_u8(out_ptr, combined);
-        }
+        unsafe { vst1q_u8(out_ptr, combined) };
 
         i += 32;
     }
 
-    // Tail for remaining bytes.
     if i < input.len() {
         if SHORT_CIRCUIT {
             scalar::decode(&input[i..], &mut output[i / 2..])?;
         } else {
             ct_scalar::decode(&input[i..], &mut output[i / 2..]).map_err(|_| {
-                err = 0x80; // mark error without short-circuit
+                err = 0x80;
                 Error::InvalidEncoding
             })?;
         }
@@ -247,39 +241,29 @@ pub fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Err
     decode_inner::<false>(input, output)
 }
 
-/// Decode a 16-byte NEON vector of hex ASCII characters into nibble values
-/// (0-15 for valid characters, >= 16 for invalid ones).
+/// Decode a 16-byte NEON vector of hex ASCII characters into nibble values,
+/// using pre-hoisted broadcast constants to avoid redundant `vdupq_n_u8` calls
+/// inside the hot loop.
 ///
 /// Uses two parallel paths (digit and letter) merged with `vminq_u8`.
 #[inline(always)]
-fn decode_nibbles(v: uint8x16_t) -> uint8x16_t {
-    // --- Digit path ---
-    // For '0' (0x30): 0x30 + 0xC6 = 0xF6 (wrapping), sat_sub(0xF6, 6) = 0xF0, 0xF0 - 0xF0 = 0
-    // For '9' (0x39): 0x39 + 0xC6 = 0xFF (wrapping), sat_sub(0xFF, 6) = 0xF9, 0xF9 - 0xF0 = 9
-    // For non-digits the result is garbage (typically >= 16).
-    let offset_c6 = unsafe { vdupq_n_u8(0xC6) };
-    let six = unsafe { vdupq_n_u8(6) };
-    let f0 = unsafe { vdupq_n_u8(0xF0) };
+fn decode_nibbles_with_consts(
+    v: uint8x16_t,
+    c_c6: uint8x16_t,
+    c_six: uint8x16_t,
+    c_f0: uint8x16_t,
+    c_df: uint8x16_t,
+    c_a: uint8x16_t,
+    c_ten: uint8x16_t,
+) -> uint8x16_t {
+    let shifted = unsafe { vaddq_u8(v, c_c6) };
+    let clamped = unsafe { vqsubq_u8(shifted, c_six) };
+    let digit = unsafe { vsubq_u8(clamped, c_f0) };
 
-    let shifted = unsafe { vaddq_u8(v, offset_c6) }; // wrapping add
-    let clamped = unsafe { vqsubq_u8(shifted, six) }; // saturating sub
-    let digit = unsafe { vsubq_u8(clamped, f0) }; // wrapping sub
+    let folded = unsafe { vandq_u8(v, c_df) };
+    let alpha_offset = unsafe { vsubq_u8(folded, c_a) };
+    let alpha = unsafe { vqaddq_u8(alpha_offset, c_ten) };
 
-    // --- Letter path ---
-    // Case-fold by clearing bit 5: 'a'-'f' -> 'A'-'F'.
-    // Then subtract 'A' and add 10.
-    // For 'A' (0x41): (0x41 & 0xDF) = 0x41, 0x41 - 0x41 = 0, sat_add(0, 10) = 10
-    // For 'F' (0x46): (0x46 & 0xDF) = 0x46, 0x46 - 0x41 = 5, sat_add(5, 10) = 15
-    // For 'G' (0x47): 0x47 - 0x41 = 6, sat_add(6, 10) = 16 (invalid, >= 16)
-    let case_mask = unsafe { vdupq_n_u8(0xDF) };
-    let cap_a = unsafe { vdupq_n_u8(b'A') };
-    let ten = unsafe { vdupq_n_u8(10) };
-
-    let folded = unsafe { vandq_u8(v, case_mask) };
-    let alpha_offset = unsafe { vsubq_u8(folded, cap_a) }; // wrapping sub
-    let alpha = unsafe { vqaddq_u8(alpha_offset, ten) }; // saturating add
-
-    // Merge: min picks the valid path (0-15) over garbage (>= 16).
     unsafe { vminq_u8(digit, alpha) }
 }
 
