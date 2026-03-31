@@ -31,3 +31,14 @@ pub use encode::{encode, encode_upper};
 
 /// A [`HexStr`] with a `"0x"` prefix.
 pub type PrefixedHexStr<const N: usize> = HexStr<N, WithPrefix>;
+
+/// Expose backend internals for integration tests.
+///
+/// # Stability
+///
+/// This module is **not** part of the public API and may change at any time.
+/// It is only intended for use in the crate's own integration tests.
+#[doc(hidden)]
+pub mod test_internals {
+    pub use crate::backend::scalar;
+}

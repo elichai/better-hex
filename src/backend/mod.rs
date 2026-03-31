@@ -19,7 +19,7 @@
 //! The inner backend functions work with `MaybeUninit<u8>` output buffers
 //! to avoid unnecessary zeroing.
 
-pub(crate) mod scalar;
+pub mod scalar;
 
 // Conditionally compile SIMD submodules.
 #[cfg(all(

@@ -104,4 +104,44 @@ proptest! {
         let naive = naive_decode(hex.as_bytes()).unwrap();
         prop_assert_eq!(&library, &naive);
     }
+
+    #[test]
+    fn encode_matches_scalar_oracle(input in proptest::collection::vec(any::<u8>(), 0..512)) {
+        // Compare the dispatched (possibly SIMD) encode against scalar directly
+        let dispatched = better_hex::encode(&input);
+
+        let hex_len = input.len() * 2;
+        let mut scalar_out = vec![core::mem::MaybeUninit::<u8>::uninit(); hex_len];
+        better_hex::test_internals::scalar::encode::<false>(&input, &mut scalar_out);
+        let scalar_hex: Vec<u8> = scalar_out.iter().map(|m| unsafe { m.assume_init() }).collect();
+
+        prop_assert_eq!(dispatched.as_bytes(), &scalar_hex[..]);
+    }
+
+    #[test]
+    fn decode_matches_scalar_oracle(input in proptest::collection::vec(any::<u8>(), 0..256)) {
+        let hex = better_hex::encode(&input);
+        let hex_bytes = hex.as_bytes();
+
+        let dispatched = better_hex::decode(hex_bytes);
+
+        let mut scalar_out = vec![core::mem::MaybeUninit::<u8>::uninit(); input.len()];
+        let scalar_result = better_hex::test_internals::scalar::decode(hex_bytes, &mut scalar_out);
+
+        match (dispatched, scalar_result) {
+            (Ok(d_vec), Ok(())) => {
+                let s_vec: Vec<u8> = scalar_out.iter().map(|m| unsafe { m.assume_init() }).collect();
+                prop_assert_eq!(&d_vec, &s_vec);
+            }
+            (Err(_), Err(_)) => {}
+            (a, b) => prop_assert!(false, "mismatch: dispatched={a:?}, scalar={b:?}"),
+        }
+    }
+
+    #[test]
+    fn check_matches_scalar_oracle(input in proptest::collection::vec(any::<u8>(), 0..512)) {
+        let dispatched = better_hex::check_raw(&input);
+        let scalar = better_hex::test_internals::scalar::check(&input);
+        prop_assert_eq!(dispatched, scalar);
+    }
 }

@@ -93,7 +93,7 @@ static DECODE_LUT: [u8; 256] = {
 ///
 /// Caller must ensure `output` has exactly `input.len() * 2` elements.
 /// All elements of `output` will be initialized after this call.
-pub(crate) fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
+pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
     debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
     let table = if UPPER { HEX_UPPER } else { HEX_LOWER };
     let mut out_idx = 0;
@@ -117,7 +117,7 @@ pub(crate) fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<
 /// Caller must ensure `output` has exactly `input.len() / 2` elements and
 /// that `input.len()` is even. All elements of `output` will be initialized
 /// on `Ok`.
-pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
+pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     debug_assert_eq!(output.len(), input.len() / 2, "output buffer wrong size for decode");
     debug_assert!(input.len().is_multiple_of(2), "input length must be even");
     for (i, (pair, out_byte)) in input.chunks_exact(2).zip(output.iter_mut()).enumerate() {
@@ -143,7 +143,7 @@ pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(),
 /// Check if every byte in `input` is a valid hex ASCII character.
 ///
 /// Uses [`DECODE_LUT`]: a byte is valid iff its LUT entry is not [`NIL`].
-pub(crate) fn check(input: &[u8]) -> bool {
+pub fn check(input: &[u8]) -> bool {
     input.iter().all(|&b| DECODE_LUT[b as usize] != NIL)
 }
 
