@@ -1,7 +1,7 @@
 use crate::error::Error;
 
-const HEX_LOWER: &[u8; 16] = b"0123456789abcdef";
-const HEX_UPPER: &[u8; 16] = b"0123456789ABCDEF";
+const HEX_LOWER: [u8; 16] = *b"0123456789abcdef";
+const HEX_UPPER: [u8; 16] = *b"0123456789ABCDEF";
 
 const NIL: u8 = u8::MAX;
 static DECODE_LUT: [u8; 256] = {

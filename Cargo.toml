@@ -16,4 +16,5 @@ bytemuck = { version = "1", features = ["derive"] }
 cfg-if = "1"
 
 [dev-dependencies]
+bytemuck = "1"
 proptest = "1"

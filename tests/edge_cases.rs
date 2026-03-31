@@ -37,9 +37,10 @@ fn display_empty() {
 }
 
 #[test]
-fn error_display_odd_length() {
-    let e = Error::OddLength;
-    assert_eq!(e.to_string(), "odd-length hex string");
+fn display_owned_data() {
+    let d = better_hex::display(vec![0xde, 0xad]);
+    let s = format!("{}", d);
+    assert_eq!(s, "dead");
 }
 
 #[test]
@@ -62,8 +63,8 @@ fn error_display_invalid_length() {
 
 #[test]
 fn error_eq() {
-    assert_eq!(Error::OddLength, Error::OddLength);
-    assert_ne!(Error::OddLength, Error::InvalidEncoding);
+    assert_eq!(Error::InvalidEncoding, Error::InvalidEncoding);
+    assert_ne!(Error::InvalidEncoding, Error::InvalidLength { expected: 0, got: 0 });
 }
 
 #[test]
@@ -87,13 +88,11 @@ fn with_prefix_len() {
 }
 
 #[test]
-fn with_prefix_new_is_0x() {
-    let p = WithPrefix::new();
-    assert_eq!(p.as_bytes(), b"0x");
+fn with_prefix_value_is_0x() {
+    assert_eq!(bytemuck::bytes_of(&WithPrefix::VALUE), b"0x");
 }
 
 #[test]
-fn no_prefix_new_is_empty() {
-    let p = NoPrefix::new();
-    assert_eq!(p.as_bytes(), b"");
+fn no_prefix_value() {
+    let _ = NoPrefix::VALUE; // just verify it exists
 }

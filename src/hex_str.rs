@@ -2,22 +2,40 @@ use core::fmt;
 use core::ops::Deref;
 use core::str::FromStr;
 
-use crate::arch;
+use crate::backend;
 use crate::error::Error;
 use crate::prefix::{NoPrefix, Prefix, WithPrefix};
 
+/// Raw storage for [`HexStr`]. Implements [`Pod`](bytemuck::Pod) so we can use
+/// `bytemuck::bytes_of()` to obtain a byte-slice view without raw pointer casts.
+///
+/// Not exposed publicly — `HexStr` wraps this and enforces the hex ASCII invariant.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub(crate) struct RawHexStr<const N: usize, P: Prefix> {
+    pub(crate) prefix: P,
+    pub(crate) bytes: [[u8; 2]; N],
+}
+
+// SAFETY: `RawHexStr` is `repr(C)`, `P` is `Pod`, and `[[u8; 2]; N]` is all-`u8`.
+// Alignment is 1 so there is no padding.
+unsafe impl<const N: usize, P: Prefix> bytemuck::Zeroable for RawHexStr<N, P> {}
+unsafe impl<const N: usize, P: Prefix> bytemuck::Pod for RawHexStr<N, P> {}
+
 /// Stack-allocated hex string for `N` input bytes.
 ///
-/// Stores `2*N` hex characters (+ 2 bytes for "0x" when using `WithPrefix`).
+/// Stores `2*N` hex characters (+ 2 bytes for `"0x"` when using [`WithPrefix`]).
 /// `N` is the **byte count**, not the hex character count.
 ///
 /// The type parameter `P` defaults to [`NoPrefix`]. Use [`WithPrefix`] to
 /// produce strings with a leading `"0x"` prefix.
-#[repr(C)]
+///
+/// All constructors guarantee that the stored bytes are valid hex ASCII,
+/// so conversions to `&str` are always safe.
+#[repr(transparent)]
 #[derive(Copy, Clone)]
 pub struct HexStr<const N: usize, P: Prefix = NoPrefix> {
-    prefix: P,
-    bytes: [[u8; 2]; N],
+    inner: RawHexStr<N, P>,
 }
 
 impl<const N: usize, P: Prefix> HexStr<N, P> {
@@ -27,51 +45,52 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     /// Create a hex string representing all zeros (`"00...00"`).
     pub fn zero() -> Self {
         Self {
-            prefix: P::new(),
-            bytes: [[b'0'; 2]; N],
+            inner: RawHexStr {
+                prefix: P::VALUE,
+                bytes: [[b'0'; 2]; N],
+            },
         }
     }
 
     /// Encode `input` bytes into a lowercase hex string.
     pub fn encode_lower(input: &[u8; N]) -> Self {
         let mut s = Self {
-            prefix: P::new(),
-            bytes: [[0u8; 2]; N],
+            inner: RawHexStr {
+                prefix: P::VALUE,
+                bytes: [[0u8; 2]; N],
+            },
         };
-        // SAFETY: `s.bytes` is `[[u8; 2]; N]`, so `N * 2` bytes of valid
-        // initialized `u8` starting at `s.bytes.as_mut_ptr()`.
+        // SAFETY: `inner.bytes` is `[[u8; 2]; N]`, so `N * 2` bytes of valid
+        // initialized `u8` starting at `inner.bytes.as_mut_ptr()`.
         let output = unsafe {
-            core::slice::from_raw_parts_mut(s.bytes.as_mut_ptr() as *mut u8, N * 2)
+            core::slice::from_raw_parts_mut(s.inner.bytes.as_mut_ptr().cast::<u8>(), N * 2)
         };
-        arch::encode::<false>(input, output);
+        backend::encode::<false>(input, output);
         s
     }
 
     /// Encode `input` bytes into an uppercase hex string.
     pub fn encode_upper(input: &[u8; N]) -> Self {
         let mut s = Self {
-            prefix: P::new(),
-            bytes: [[0u8; 2]; N],
+            inner: RawHexStr {
+                prefix: P::VALUE,
+                bytes: [[0u8; 2]; N],
+            },
         };
-        // SAFETY: same as `encode_lower`.
+        // SAFETY: same layout reasoning as `encode_lower`.
         let output = unsafe {
-            core::slice::from_raw_parts_mut(s.bytes.as_mut_ptr() as *mut u8, N * 2)
+            core::slice::from_raw_parts_mut(s.inner.bytes.as_mut_ptr().cast::<u8>(), N * 2)
         };
-        arch::encode::<true>(input, output);
+        backend::encode::<true>(input, output);
         s
     }
 
     /// View the full string as a byte slice (includes prefix when present).
     ///
-    /// # Safety invariant
-    ///
-    /// `HexStr` is `#[repr(C)]`, so the in-memory layout is:
-    /// `[prefix bytes (P::LEN)] [hex chars (N * 2)]`, with no padding
-    /// (prefix is either a ZST or `[u8; 2]`, and `bytes` is `[[u8; 2]; N]`).
-    /// Therefore reading `Self::LEN` bytes from `self as *const u8` is valid.
+    /// Uses `bytemuck::bytes_of` on the inner `repr(C)` storage, so no raw
+    /// pointer arithmetic is needed.
     pub fn as_bytes(&self) -> &[u8] {
-        // SAFETY: see invariant above.
-        unsafe { core::slice::from_raw_parts(self as *const Self as *const u8, Self::LEN) }
+        bytemuck::bytes_of(&self.inner)
     }
 
     /// View the full string as a `&str`.
@@ -79,19 +98,21 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     /// Always valid UTF-8 because the prefix is `b"0x"` (ASCII) and the hex
     /// characters are in `[0-9a-fA-F]` (ASCII).
     pub fn as_str(&self) -> &str {
-        // SAFETY: hex output and the "0x" prefix are all ASCII.
-        unsafe { core::str::from_utf8_unchecked(self.as_bytes()) }
+        let bytes = self.as_bytes();
+        debug_assert!(core::str::from_utf8(bytes).is_ok(), "HexStr contained invalid UTF-8");
+        // SAFETY: all constructors guarantee hex ASCII content (valid UTF-8).
+        unsafe { core::str::from_utf8_unchecked(bytes) }
     }
 
     /// Decode the hex content back to raw bytes, ignoring the prefix.
     pub fn decode(&self) -> [u8; N] {
-        // SAFETY: `self.bytes` is `[[u8; 2]; N]` — `N * 2` contiguous `u8`.
+        // SAFETY: `inner.bytes` is `[[u8; 2]; N]` — `N * 2` contiguous `u8`.
         let hex_bytes = unsafe {
-            core::slice::from_raw_parts(self.bytes.as_ptr() as *const u8, N * 2)
+            core::slice::from_raw_parts(self.inner.bytes.as_ptr().cast::<u8>(), N * 2)
         };
         let mut out = [0u8; N];
-        // The hex content was produced by our own encoder, so this cannot fail.
-        let _ = arch::decode(hex_bytes, &mut out);
+        let result = backend::decode(hex_bytes, &mut out);
+        debug_assert!(result.is_ok(), "HexStr invariant violated: contained non-hex bytes");
         out
     }
 }
@@ -113,7 +134,7 @@ impl<const N: usize> HexStr<N, NoPrefix> {
             bytes[i][1] = HEX_CHARS_LOWER[(input[i] & 0x0f) as usize];
             i += 1;
         }
-        Self { prefix: NoPrefix, bytes }
+        Self { inner: RawHexStr { prefix: NoPrefix, bytes } }
     }
 
     /// Encode bytes to uppercase hex at compile time.
@@ -125,12 +146,12 @@ impl<const N: usize> HexStr<N, NoPrefix> {
             bytes[i][1] = HEX_CHARS_UPPER[(input[i] & 0x0f) as usize];
             i += 1;
         }
-        Self { prefix: NoPrefix, bytes }
+        Self { inner: RawHexStr { prefix: NoPrefix, bytes } }
     }
 }
 
 impl<const N: usize> HexStr<N, WithPrefix> {
-    /// Encode bytes to lowercase hex at compile time (with "0x" prefix).
+    /// Encode bytes to lowercase hex at compile time (with `"0x"` prefix).
     pub const fn const_encode_lower(input: &[u8; N]) -> Self {
         let mut bytes = [[0u8; 2]; N];
         let mut i = 0;
@@ -139,10 +160,10 @@ impl<const N: usize> HexStr<N, WithPrefix> {
             bytes[i][1] = HEX_CHARS_LOWER[(input[i] & 0x0f) as usize];
             i += 1;
         }
-        Self { prefix: WithPrefix(*b"0x"), bytes }
+        Self { inner: RawHexStr { prefix: WithPrefix([b'0', b'x']), bytes } }
     }
 
-    /// Encode bytes to uppercase hex at compile time (with "0x" prefix).
+    /// Encode bytes to uppercase hex at compile time (with `"0x"` prefix).
     pub const fn const_encode_upper(input: &[u8; N]) -> Self {
         let mut bytes = [[0u8; 2]; N];
         let mut i = 0;
@@ -151,7 +172,7 @@ impl<const N: usize> HexStr<N, WithPrefix> {
             bytes[i][1] = HEX_CHARS_UPPER[(input[i] & 0x0f) as usize];
             i += 1;
         }
-        Self { prefix: WithPrefix(*b"0x"), bytes }
+        Self { inner: RawHexStr { prefix: WithPrefix([b'0', b'x']), bytes } }
     }
 }
 
@@ -241,20 +262,25 @@ impl<const N: usize> FromStr for HexStr<N, NoPrefix> {
             return Err(Error::InvalidLength { expected, got: s.len() });
         }
 
+        let input = s.as_bytes();
+
         // Decode to validate the hex content; captures InvalidChar errors.
         let mut decoded = [0u8; N];
-        arch::decode(s.as_bytes(), &mut decoded)?;
+        backend::decode(input, &mut decoded)?;
 
         // Copy the validated input bytes directly into the HexStr.
         let mut result = Self {
-            prefix: NoPrefix,
-            bytes: [[0u8; 2]; N],
+            inner: RawHexStr {
+                prefix: NoPrefix,
+                bytes: [[0u8; 2]; N],
+            },
         };
-        // SAFETY: `result.bytes` is `[[u8; 2]; N]` == `N * 2` contiguous `u8`.
+        // SAFETY: `inner.bytes` is `[[u8; 2]; N]` == `N * 2` contiguous `u8`.
         let dst = unsafe {
-            core::slice::from_raw_parts_mut(result.bytes.as_mut_ptr() as *mut u8, N * 2)
+            core::slice::from_raw_parts_mut(result.inner.bytes.as_mut_ptr().cast::<u8>(), N * 2)
         };
-        dst.copy_from_slice(s.as_bytes());
+        dst.copy_from_slice(input);
+        debug_assert!(core::str::from_utf8(dst).is_ok(), "FromStr: validated input is not valid UTF-8");
         Ok(result)
     }
 }
@@ -264,9 +290,12 @@ impl<const N: usize> FromStr for HexStr<N, NoPrefix> {
 // ---------------------------------------------------------------------------
 
 /// Decode hex at compile time.
+///
+/// Returns an error if the input length is not exactly `2 * N`, or if any
+/// byte is not a valid hex character.
 pub const fn const_decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; N], Error> {
     if !input.len().is_multiple_of(2) {
-        return Err(Error::OddLength);
+        return Err(Error::InvalidLength { expected: input.len() & !1, got: input.len() });
     }
     if input.len() / 2 != N {
         return Err(Error::InvalidLength { expected: N * 2, got: input.len() });
@@ -289,6 +318,9 @@ pub const fn const_decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; 
 }
 
 /// Check hex validity at compile time.
+///
+/// Returns `true` if `input` has even length and every byte is a valid hex
+/// character (`[0-9a-fA-F]`).
 pub const fn const_check(input: &[u8]) -> bool {
     if !input.len().is_multiple_of(2) {
         return false;
@@ -311,4 +343,3 @@ const fn const_decode_nibble(byte: u8) -> u8 {
         _ => u8::MAX,
     }
 }
-

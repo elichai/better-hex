@@ -20,37 +20,20 @@ impl sealed::Sealed for WithPrefix {}
 /// Sealed trait for hex string prefix types.
 ///
 /// Only `NoPrefix` and `WithPrefix` implement this.
-pub trait Prefix: sealed::Sealed + Copy + 'static {
+pub trait Prefix: sealed::Sealed + Pod + Copy + 'static {
     /// Length in bytes of the prefix (0 or 2).
     const LEN: usize;
 
-    /// Create a new prefix value.
-    fn new() -> Self;
-
-    /// View the prefix as a byte slice.
-    fn as_bytes(&self) -> &[u8];
+    /// The prefix value. For `NoPrefix` this is a ZST, for `WithPrefix` this is `"0x"`.
+    const VALUE: Self;
 }
 
 impl Prefix for NoPrefix {
     const LEN: usize = 0;
-
-    fn new() -> Self {
-        NoPrefix
-    }
-
-    fn as_bytes(&self) -> &[u8] {
-        &[]
-    }
+    const VALUE: Self = NoPrefix;
 }
 
 impl Prefix for WithPrefix {
     const LEN: usize = 2;
-
-    fn new() -> Self {
-        WithPrefix(*b"0x")
-    }
-
-    fn as_bytes(&self) -> &[u8] {
-        &self.0
-    }
+    const VALUE: Self = WithPrefix([b'0', b'x']);
 }

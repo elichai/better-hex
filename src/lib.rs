@@ -8,7 +8,7 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
-mod arch;
+mod backend;
 mod decode;
 mod encode;
 mod error;
@@ -31,4 +31,4 @@ pub use encode::{encode, encode_upper};
 mod hex_str;
 
 mod display;
-pub use display::display;
+pub use display::{display, HexDisplay};

@@ -29,7 +29,7 @@ fn decode_mixed_case() {
 fn decode_odd_length() {
     let mut out = [0u8; 1];
     let err = better_hex::decode_to_slice(b"abc", &mut out).unwrap_err();
-    assert_eq!(err, better_hex::Error::OddLength);
+    assert!(matches!(err, better_hex::Error::InvalidLength { .. }));
 }
 
 #[test]
@@ -43,7 +43,7 @@ fn decode_invalid_char() {
 fn decode_output_wrong_size() {
     let mut out = [0u8; 1];
     let err = better_hex::decode_to_slice(b"abcd", &mut out).unwrap_err();
-    assert_eq!(err, better_hex::Error::InvalidLength { expected: 2, got: 1 });
+    assert_eq!(err, better_hex::Error::InvalidLength { expected: 2, got: 4 });
 }
 
 #[test]
