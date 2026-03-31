@@ -46,6 +46,7 @@ use core::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
+use crate::backend::ct_scalar;
 use crate::backend::scalar;
 use crate::error::Error;
 use core::mem::MaybeUninit;
@@ -295,14 +296,17 @@ unsafe fn decode_chunk_128(
 /// Hex-decode `input` into `output` using SSSE3.
 ///
 /// Processes 32 hex chars (two `__m128i` loads → 16 output bytes) per
-/// iteration. On validation failure, falls back to scalar for the precise
-/// error position.
+/// iteration. When `SHORT_CIRCUIT` is true, falls back to scalar on the first
+/// invalid chunk for precise error reporting. When `SHORT_CIRCUIT` is false,
+/// processes the entire input without branching on validity (constant-time),
+/// then returns an error if any invalid byte was detected.
 ///
 /// # Safety
 ///
 /// Caller must ensure the CPU supports SSSE3.
+#[inline]
 #[target_feature(enable = "ssse3")]
-pub(crate) unsafe fn decode_ssse3(
+unsafe fn decode_ssse3_inner<const SHORT_CIRCUIT: bool>(
     input: &[u8],
     output: &mut [MaybeUninit<u8>],
 ) -> Result<(), Error> {
@@ -316,6 +320,7 @@ pub(crate) unsafe fn decode_ssse3(
 
         let mut i = 0usize; // index into input
         let mut o = 0usize; // index into output
+        let mut err_accum = 0u32;
         // Each iteration: 32 hex chars → 16 output bytes.
         let simd_end = input.len() & !31;
 
@@ -326,9 +331,13 @@ pub(crate) unsafe fn decode_ssse3(
             let (decoded0, valid0) = decode_chunk_128(chunk0, delta_check, delta_rebase);
             let (decoded1, valid1) = decode_chunk_128(chunk1, delta_check, delta_rebase);
 
-            if !(valid0 & valid1) {
-                // Fall back to scalar for precise error reporting.
-                return scalar::decode(input, output);
+            if SHORT_CIRCUIT {
+                if !(valid0 & valid1) {
+                    // Fall back to scalar for precise error reporting.
+                    return scalar::decode(input, output);
+                }
+            } else {
+                err_accum |= if valid0 { 0 } else { 1 } | if valid1 { 0 } else { 1 };
             }
 
             // Store 8 bytes from each decoded half → 16 output bytes.
@@ -339,13 +348,54 @@ pub(crate) unsafe fn decode_ssse3(
             o += 16;
         }
 
-        // Scalar tail for remaining bytes.
+        if !SHORT_CIRCUIT && err_accum != 0 {
+            return Err(Error::InvalidEncoding);
+        }
+
+        // Tail for remaining bytes.
         if i < input.len() {
-            scalar::decode(&input[i..], &mut output[o..])
+            if SHORT_CIRCUIT {
+                scalar::decode(&input[i..], &mut output[o..])
+            } else {
+                ct_scalar::decode(&input[i..], &mut output[o..])
+            }
         } else {
             Ok(())
         }
     }
+}
+
+/// Hex-decode `input` into `output` using SSSE3.
+///
+/// On validation failure, falls back to scalar for precise error position.
+///
+/// # Safety
+///
+/// Caller must ensure the CPU supports SSSE3.
+#[target_feature(enable = "ssse3")]
+pub(crate) unsafe fn decode_ssse3(
+    input: &[u8],
+    output: &mut [MaybeUninit<u8>],
+) -> Result<(), Error> {
+    // SAFETY: caller guarantees SSSE3.
+    unsafe { decode_ssse3_inner::<true>(input, output) }
+}
+
+/// Constant-time hex-decode `input` into `output` using SSSE3.
+///
+/// Processes all chunks without short-circuiting on invalid input.
+/// Returns `Err(Error::InvalidEncoding)` if any byte was invalid.
+///
+/// # Safety
+///
+/// Caller must ensure the CPU supports SSSE3.
+#[target_feature(enable = "ssse3")]
+pub(crate) unsafe fn ct_decode_ssse3(
+    input: &[u8],
+    output: &mut [MaybeUninit<u8>],
+) -> Result<(), Error> {
+    // SAFETY: caller guarantees SSSE3.
+    unsafe { decode_ssse3_inner::<false>(input, output) }
 }
 
 // ---------------------------------------------------------------------------
@@ -400,13 +450,16 @@ unsafe fn decode_chunk_256(
 /// Hex-decode `input` into `output` using AVX2.
 ///
 /// Processes 64 hex chars (two `__m256i` loads → 32 output bytes) per
-/// iteration. Falls through to [`decode_ssse3`] for the tail.
+/// iteration. When `SHORT_CIRCUIT` is true, falls back to scalar on the first
+/// invalid chunk. When `SHORT_CIRCUIT` is false, processes all chunks without
+/// branching on validity (constant-time).
 ///
 /// # Safety
 ///
 /// Caller must ensure the CPU supports AVX2.
+#[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn decode_avx2(
+unsafe fn decode_avx2_inner<const SHORT_CIRCUIT: bool>(
     input: &[u8],
     output: &mut [MaybeUninit<u8>],
 ) -> Result<(), Error> {
@@ -421,6 +474,7 @@ pub(crate) unsafe fn decode_avx2(
 
         let mut i = 0usize;
         let mut o = 0usize;
+        let mut err_accum = 0u32;
         // Each iteration: 64 hex chars → 32 output bytes.
         let simd_end = input.len() & !63;
 
@@ -431,8 +485,12 @@ pub(crate) unsafe fn decode_avx2(
             let (decoded0, valid0) = decode_chunk_256(chunk0, delta_check, delta_rebase);
             let (decoded1, valid1) = decode_chunk_256(chunk1, delta_check, delta_rebase);
 
-            if !(valid0 & valid1) {
-                return scalar::decode(input, output);
+            if SHORT_CIRCUIT {
+                if !(valid0 & valid1) {
+                    return scalar::decode(input, output);
+                }
+            } else {
+                err_accum |= if valid0 { 0 } else { 1 } | if valid1 { 0 } else { 1 };
             }
 
             // Store low 16 bytes of each decoded __m256i.
@@ -450,13 +508,56 @@ pub(crate) unsafe fn decode_avx2(
             o += 32;
         }
 
+        if !SHORT_CIRCUIT && err_accum != 0 {
+            return Err(Error::InvalidEncoding);
+        }
+
         // Tail: fall through to SSSE3, then scalar.
         if i < input.len() {
-            decode_ssse3(&input[i..], &mut output[o..])
+            if SHORT_CIRCUIT {
+                decode_ssse3(&input[i..], &mut output[o..])
+            } else {
+                ct_decode_ssse3(&input[i..], &mut output[o..])
+            }
         } else {
             Ok(())
         }
     }
+}
+
+/// Hex-decode `input` into `output` using AVX2.
+///
+/// Falls through to [`decode_ssse3`] for the tail. On validation failure,
+/// falls back to scalar for precise error position.
+///
+/// # Safety
+///
+/// Caller must ensure the CPU supports AVX2.
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn decode_avx2(
+    input: &[u8],
+    output: &mut [MaybeUninit<u8>],
+) -> Result<(), Error> {
+    // SAFETY: caller guarantees AVX2.
+    unsafe { decode_avx2_inner::<true>(input, output) }
+}
+
+/// Constant-time hex-decode `input` into `output` using AVX2.
+///
+/// Processes all chunks without short-circuiting on invalid input.
+/// Falls through to [`ct_decode_ssse3`] for the tail.
+/// Returns `Err(Error::InvalidEncoding)` if any byte was invalid.
+///
+/// # Safety
+///
+/// Caller must ensure the CPU supports AVX2.
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn ct_decode_avx2(
+    input: &[u8],
+    output: &mut [MaybeUninit<u8>],
+) -> Result<(), Error> {
+    // SAFETY: caller guarantees AVX2.
+    unsafe { decode_avx2_inner::<false>(input, output) }
 }
 
 // ---------------------------------------------------------------------------
@@ -471,11 +572,16 @@ pub(crate) unsafe fn decode_avx2(
 /// checks that `pmovmskb == 0` (all MSBs clear ⇒ all chars valid).
 /// Falls back to scalar for the sub-16-byte tail.
 ///
+/// When `SHORT_CIRCUIT` is true, returns `false` immediately on the first
+/// invalid chunk. When `SHORT_CIRCUIT` is false, accumulates validity across
+/// all chunks without early exit (constant-time).
+///
 /// # Safety
 ///
 /// Caller must ensure the CPU supports SSSE3.
+#[inline]
 #[target_feature(enable = "ssse3")]
-pub(crate) unsafe fn check_ssse3(input: &[u8]) -> bool {
+unsafe fn check_ssse3_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
     // SAFETY: all intrinsics below require SSSE3, guaranteed by #[target_feature].
     unsafe {
         let delta_check = decode_delta_check_128();
@@ -483,6 +589,7 @@ pub(crate) unsafe fn check_ssse3(input: &[u8]) -> bool {
         let mask_hi = _mm_set1_epi8(0x0F);
 
         let mut i = 0usize;
+        let mut all_valid = true;
         let simd_end = input.len() & !15;
 
         while i < simd_end {
@@ -492,14 +599,52 @@ pub(crate) unsafe fn check_ssse3(input: &[u8]) -> bool {
             let hash_key = _mm_and_si128(_mm_srli_epi16(vm1, 4), mask_hi);
             let check = _mm_add_epi8(vm1, _mm_shuffle_epi8(delta_check, hash_key));
 
-            if _mm_movemask_epi8(check) != 0 {
-                return false;
+            if SHORT_CIRCUIT {
+                if _mm_movemask_epi8(check) != 0 {
+                    return false;
+                }
+            } else {
+                all_valid &= _mm_movemask_epi8(check) == 0;
             }
 
             i += 16;
         }
 
-        // Scalar tail.
-        scalar::check(&input[i..])
+        // Tail.
+        let tail_valid = if SHORT_CIRCUIT {
+            scalar::check(&input[i..])
+        } else {
+            ct_scalar::check(&input[i..])
+        };
+
+        all_valid & tail_valid
     }
+}
+
+/// Check whether every byte in `input` is a valid hex ASCII character,
+/// using SSSE3 SIMD.
+///
+/// Returns `false` immediately upon encountering the first invalid chunk.
+///
+/// # Safety
+///
+/// Caller must ensure the CPU supports SSSE3.
+#[target_feature(enable = "ssse3")]
+pub(crate) unsafe fn check_ssse3(input: &[u8]) -> bool {
+    // SAFETY: caller guarantees SSSE3.
+    unsafe { check_ssse3_inner::<true>(input) }
+}
+
+/// Constant-time check whether every byte in `input` is a valid hex ASCII
+/// character, using SSSE3 SIMD.
+///
+/// Processes all chunks without short-circuiting on invalid input.
+///
+/// # Safety
+///
+/// Caller must ensure the CPU supports SSSE3.
+#[target_feature(enable = "ssse3")]
+pub(crate) unsafe fn ct_check_ssse3(input: &[u8]) -> bool {
+    // SAFETY: caller guarantees SSSE3.
+    unsafe { check_ssse3_inner::<false>(input) }
 }
