@@ -8,11 +8,14 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
+mod error;
+
+pub use error::Error;
+
 // Modules — will be uncommented as implemented:
 // mod arch;
 // mod decode;
 // mod display;
 // mod encode;
-// mod error;
 // mod hex_str;
 // mod prefix;
