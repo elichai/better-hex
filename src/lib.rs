@@ -9,8 +9,10 @@ extern crate alloc;
 extern crate std;
 
 mod error;
+mod prefix;
 
 pub use error::Error;
+pub use prefix::{NoPrefix, Prefix, WithPrefix};
 
 // Modules — will be uncommented as implemented:
 // mod arch;
@@ -18,4 +20,3 @@ pub use error::Error;
 // mod display;
 // mod encode;
 // mod hex_str;
-// mod prefix;
