@@ -92,3 +92,20 @@ fn decode_boundary_chars() {
     // Just above 'f'
     assert!(better_hex::decode_to_slice(b"g0", &mut out).is_err());
 }
+
+#[test]
+fn decode_vec() {
+    let v = better_hex::decode("deadbeef").unwrap();
+    assert_eq!(v, vec![0xde, 0xad, 0xbe, 0xef]);
+}
+
+#[test]
+fn decode_vec_empty() {
+    let v = better_hex::decode("").unwrap();
+    assert!(v.is_empty());
+}
+
+#[test]
+fn decode_vec_odd() {
+    assert!(better_hex::decode("abc").is_err());
+}

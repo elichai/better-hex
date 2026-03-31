@@ -53,3 +53,20 @@ fn encode_every_nibble_value() {
     let s = better_hex::encode_to_slice(&input, &mut out).unwrap();
     assert_eq!(s, "0123456789abcdef");
 }
+
+#[test]
+fn encode_string() {
+    let s = better_hex::encode(&[0xde, 0xad, 0xbe, 0xef]);
+    assert_eq!(s, "deadbeef");
+}
+
+#[test]
+fn encode_upper_string() {
+    let s = better_hex::encode_upper(&[0xde, 0xad, 0xbe, 0xef]);
+    assert_eq!(s, "DEADBEEF");
+}
+
+#[test]
+fn encode_empty_string() {
+    assert_eq!(better_hex::encode(&[]), "");
+}
