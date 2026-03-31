@@ -112,7 +112,7 @@ proptest! {
 
         let hex_len = input.len() * 2;
         let mut scalar_out = vec![core::mem::MaybeUninit::<u8>::uninit(); hex_len];
-        better_hex::test_internals::scalar::encode::<false>(&input, &mut scalar_out);
+        better_hex::bench_internals::scalar::encode::<false>(&input, &mut scalar_out);
         let scalar_hex: Vec<u8> = scalar_out.iter().map(|m| unsafe { m.assume_init() }).collect();
 
         prop_assert_eq!(dispatched.as_bytes(), &scalar_hex[..]);
@@ -126,7 +126,7 @@ proptest! {
         let dispatched = better_hex::decode(hex_bytes);
 
         let mut scalar_out = vec![core::mem::MaybeUninit::<u8>::uninit(); input.len()];
-        let scalar_result = better_hex::test_internals::scalar::decode(hex_bytes, &mut scalar_out);
+        let scalar_result = better_hex::bench_internals::scalar::decode(hex_bytes, &mut scalar_out);
 
         match (dispatched, scalar_result) {
             (Ok(d_vec), Ok(())) => {
@@ -141,7 +141,7 @@ proptest! {
     #[test]
     fn check_matches_scalar_oracle(input in proptest::collection::vec(any::<u8>(), 0..512)) {
         let dispatched = better_hex::check_raw(&input);
-        let scalar = better_hex::test_internals::scalar::check(&input);
+        let scalar = better_hex::bench_internals::scalar::check(&input);
         prop_assert_eq!(dispatched, scalar);
     }
 

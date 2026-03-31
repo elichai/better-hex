@@ -33,13 +33,26 @@ pub use encode::{encode, encode_upper};
 /// A [`HexStr`] with a `"0x"` prefix.
 pub type PrefixedHexStr<const N: usize> = HexStr<N, WithPrefix>;
 
-/// Expose backend internals for integration tests.
-///
-/// # Stability
-///
-/// This module is **not** part of the public API and may change at any time.
-/// It is only intended for use in the crate's own integration tests.
+/// Backend internals for benchmarks and fuzz targets.
 #[doc(hidden)]
-pub mod test_internals {
-    pub use crate::backend::scalar;
+pub mod bench_internals {
+    pub use crate::backend::{scalar, ct_scalar};
+
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    pub use crate::backend::neon;
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    pub use crate::backend::x86;
+
+    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    pub use crate::backend::wasm;
+
+    pub use crate::backend::{
+        encode as dispatched_encode,
+        decode as dispatched_decode,
+        check as dispatched_check,
+        ct_encode as dispatched_ct_encode,
+        ct_decode as dispatched_ct_decode,
+        ct_check as dispatched_ct_check,
+    };
 }

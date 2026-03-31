@@ -10,6 +10,7 @@ default = ["std"]
 std = ["alloc"]
 alloc = []
 force-generic = []
+_bench_internals = []
 
 [dependencies]
 bytemuck = { version = "1", features = ["derive"] }
@@ -20,7 +21,20 @@ cpufeatures = "0.3"
 
 [dev-dependencies]
 bytemuck = "1"
+criterion = { version = "0.5", default-features = false }
 proptest = { version = "1", default-features = false, features = ["std"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 proptest = "1"
+
+[[bench]]
+name = "encode"
+harness = false
+
+[[bench]]
+name = "decode"
+harness = false
+
+[[bench]]
+name = "check"
+harness = false

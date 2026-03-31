@@ -20,7 +20,7 @@
 //! to avoid unnecessary zeroing.
 
 pub mod scalar;
-pub(crate) mod ct_scalar;
+pub mod ct_scalar;
 
 // Conditionally compile SIMD submodules.
 #[cfg(all(
@@ -28,20 +28,20 @@ pub(crate) mod ct_scalar;
     target_arch = "aarch64",
     target_feature = "neon"
 ))]
-pub(crate) mod neon;
+pub mod neon;
 
 #[cfg(all(
     not(feature = "force-generic"),
     any(target_arch = "x86", target_arch = "x86_64")
 ))]
-pub(crate) mod x86;
+pub mod x86;
 
 #[cfg(all(
     not(feature = "force-generic"),
     target_arch = "wasm32",
     target_feature = "simd128"
 ))]
-pub(crate) mod wasm;
+pub mod wasm;
 
 use crate::error::Error;
 use core::mem::MaybeUninit;
@@ -55,7 +55,7 @@ use core::mem::MaybeUninit;
 ///
 /// Panics if `output.len() != input.len() * 2`.
 #[inline]
-pub(crate) fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
+pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
     cfg_if::cfg_if! {
         if #[cfg(feature = "force-generic")] {
             scalar::encode::<UPPER>(input, output);
@@ -110,7 +110,7 @@ pub(crate) fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<
 ///
 /// Panics if `output.len() != input.len() / 2` or input length is odd.
 #[inline]
-pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
+pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     cfg_if::cfg_if! {
         if #[cfg(feature = "force-generic")] {
             scalar::decode(input, output)
@@ -158,7 +158,7 @@ pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(),
 /// memory-indexed lookups). Only the scalar fallback differs: `ct_scalar`
 /// uses branchless arithmetic instead of a lookup table.
 #[inline]
-pub(crate) fn ct_encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
+pub fn ct_encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
     cfg_if::cfg_if! {
         if #[cfg(feature = "force-generic")] {
             ct_scalar::encode::<UPPER>(input, output);
@@ -202,7 +202,7 @@ pub(crate) fn ct_encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUnin
 /// accumulation) with `ct_scalar` as the scalar fallback.
 /// Returns `Error::InvalidEncoding` (not `InvalidChar`) on failure.
 #[inline]
-pub(crate) fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
+pub fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     cfg_if::cfg_if! {
         if #[cfg(feature = "force-generic")] {
             ct_scalar::decode(input, output)
@@ -245,7 +245,7 @@ pub(crate) fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<
 /// Constant-time check. Uses CT SIMD variants (no early return) with
 /// `ct_scalar` as the scalar fallback.
 #[inline]
-pub(crate) fn ct_check(input: &[u8]) -> bool {
+pub fn ct_check(input: &[u8]) -> bool {
     cfg_if::cfg_if! {
         if #[cfg(feature = "force-generic")] {
             ct_scalar::check(input)
@@ -279,7 +279,7 @@ pub(crate) fn ct_check(input: &[u8]) -> bool {
 
 /// Check if every byte in `input` is a valid hex ASCII character.
 #[inline]
-pub(crate) fn check(input: &[u8]) -> bool {
+pub fn check(input: &[u8]) -> bool {
     cfg_if::cfg_if! {
         if #[cfg(feature = "force-generic")] {
             scalar::check(input)
