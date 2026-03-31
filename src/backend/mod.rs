@@ -20,6 +20,7 @@
 //! to avoid unnecessary zeroing.
 
 pub mod scalar;
+pub(crate) mod ct_scalar;
 
 // Conditionally compile SIMD submodules.
 #[cfg(all(
