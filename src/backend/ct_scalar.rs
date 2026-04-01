@@ -99,7 +99,8 @@ const fn ct_decode_nibble(byte: u8) -> u16 {
 #[allow(dead_code)]
 pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
     debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
-    for (&byte, pair) in input.iter().zip(output.chunks_exact_mut(2)) {
+    let (pairs, _) = output.as_chunks_mut::<2>();
+    for (&byte, pair) in input.iter().zip(pairs) {
         pair[0].write(ct_encode_nibble::<UPPER>(byte >> 4));
         pair[1].write(ct_encode_nibble::<UPPER>(byte & 0x0F));
     }

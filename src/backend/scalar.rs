@@ -100,7 +100,8 @@ static DECODE_LUT: [u8; 256] = {
 pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
     debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
     let table = if UPPER { HEX_UPPER } else { HEX_LOWER };
-    for (&byte, pair) in input.iter().zip(output.chunks_exact_mut(2)) {
+    let (pairs, _) = output.as_chunks_mut::<2>();
+    for (&byte, pair) in input.iter().zip(pairs) {
         pair[0].write(table[usize::from(byte >> 4)]);
         pair[1].write(table[usize::from(byte & 0x0f)]);
     }
