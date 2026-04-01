@@ -1,0 +1,89 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  benchmark:
+    name: Performance check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: bench-
+
+      - name: Run benchmarks
+        run: |
+          cargo bench --features _bench_internals,serde \
+            --bench encode --bench decode --bench check \
+            -- --output-format bencher \
+            | tee bench_output.txt
+
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: better-hex Benchmarks
+          tool: cargo
+          output-file-path: bench_output.txt
+          auto-push: ${{ github.ref == 'refs/heads/main' }}
+          comment-on-alert: true
+          # Alert if performance regresses by more than 15%
+          alert-threshold: '115%'
+          fail-on-alert: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          benchmark-data-dir-path: dev/bench
+
+  compare:
+    name: Compare vs other crates
+    runs-on: ubuntu-latest
+    # Only run comparison on main pushes to avoid noisy PR comments
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: bench-compare-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: bench-compare-
+
+      - name: Run comparison benchmarks
+        run: |
+          cargo bench \
+            --features _bench_internals,_bench_const_hex,_bench_faster_hex,_bench_hex,serde \
+            --bench compare \
+            -- --output-format bencher \
+            | tee compare_output.txt
+
+      - name: Upload comparison results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-comparison
+          path: compare_output.txt
