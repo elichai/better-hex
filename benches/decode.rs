@@ -4,7 +4,7 @@ use core::mem::MaybeUninit;
 #[cfg(feature = "_bench_internals")]
 use better_hex::bench_internals::{scalar, ct_scalar, dispatched_decode, dispatched_ct_decode};
 
-const SIZES: &[usize] = &[16, 32, 64, 256, 1024, 4096];
+const SIZES: &[usize] = &[4, 32, 64, 256, 1024, 4096, 16384];
 
 /// Pre-encode `size` bytes of input to valid lowercase hex, returning the hex
 /// string as a `Vec<u8>`.

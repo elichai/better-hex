@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
-const SIZES: &[usize] = &[1, 16, 64, 128, 256, 512, 1024, 4096];
+const SIZES: &[usize] = &[4, 32, 64, 256, 1024, 4096, 16384];
 
 fn bench_display(c: &mut Criterion) {
     let mut group = c.benchmark_group("display");

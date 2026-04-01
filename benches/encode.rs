@@ -4,7 +4,7 @@ use core::mem::MaybeUninit;
 #[cfg(feature = "_bench_internals")]
 use better_hex::bench_internals::{scalar, ct_scalar, dispatched_encode, dispatched_ct_encode};
 
-const SIZES: &[usize] = &[16, 32, 64, 256, 1024, 4096];
+const SIZES: &[usize] = &[4, 32, 64, 256, 1024, 4096, 16384];
 
 #[cfg(feature = "_bench_internals")]
 fn bench_encode(c: &mut Criterion) {

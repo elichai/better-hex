@@ -3,7 +3,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 #[cfg(feature = "_bench_internals")]
 use better_hex::bench_internals::{scalar, ct_scalar, dispatched_check, dispatched_ct_check};
 
-const SIZES: &[usize] = &[16, 32, 64, 256, 1024, 4096];
+const SIZES: &[usize] = &[4, 32, 64, 256, 1024, 4096, 16384];
 
 /// Pre-encode `size` bytes to valid lowercase hex for use as check input.
 fn make_hex(size: usize) -> Vec<u8> {
