@@ -10,11 +10,17 @@ default = ["std"]
 std = ["alloc"]
 alloc = []
 force-generic = []
+serde = ["dep:serde"]
+heapless = ["dep:heapless"]
+arrayvec = ["dep:arrayvec"]
 _bench_internals = []
 
 [dependencies]
 bytemuck = { version = "1", features = ["derive"] }
 cfg-if = "1"
+serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+heapless = { version = "0.8", default-features = false, optional = true }
+arrayvec = { version = "0.7", default-features = false, optional = true }
 
 [target.'cfg(all(not(feature = "std"), any(target_arch = "x86", target_arch = "x86_64")))'.dependencies]
 cpufeatures = "0.3"
@@ -23,6 +29,8 @@ cpufeatures = "0.3"
 bytemuck = "1"
 criterion = { version = "0.5", default-features = false }
 proptest = { version = "1", default-features = false, features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 proptest = "1"
@@ -37,4 +45,12 @@ harness = false
 
 [[bench]]
 name = "check"
+harness = false
+
+[[bench]]
+name = "display"
+harness = false
+
+[[bench]]
+name = "traits"
 harness = false
