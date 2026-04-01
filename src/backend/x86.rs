@@ -252,45 +252,38 @@ unsafe fn decode_delta_rebase_128() -> __m128i {
 }
 
 /// Decode a single 128-bit register (16 hex chars → 8 output bytes) using
-/// the Lemire algorithm. Returns `(packed_bytes, valid)` where `valid` is
-/// true iff all 16 input chars were valid hex.
+/// the Lemire algorithm. Returns `(packed_bytes, check_vector)`.
+///
+/// The `check_vector` has MSB set in each lane where the input byte was
+/// invalid. Callers should OR multiple check vectors together and do a
+/// single `_mm_movemask_epi8` at the end — this halves the number of
+/// expensive horizontal-reduce operations per iteration.
 ///
 /// # Safety
 ///
 /// Caller must ensure SSSE3 is available.
+#[inline]
 #[target_feature(enable = "ssse3")]
 unsafe fn decode_chunk_128(
     chunk: __m128i,
     delta_check: __m128i,
     delta_rebase: __m128i,
-) -> (__m128i, bool) {
-    let one = _mm_set1_epi8(1);
-    let mask_hi = _mm_set1_epi8(0x0F);
-
-    // Step 1: vm1 = v - 1
+    one: __m128i,
+    mask_hi: __m128i,
+    weights: __m128i,
+) -> (__m128i, __m128i) {
     let vm1 = _mm_sub_epi8(chunk, one);
-
-    // Step 2: hash_key = (vm1 >> 4) & 0x0F
     let hash_key = _mm_and_si128(_mm_srli_epi16(vm1, 4), mask_hi);
 
-    // Step 3: check = vm1 + shuffle(delta_check, hash_key)
+    // check has MSB set for invalid bytes.
     let check = _mm_add_epi8(vm1, _mm_shuffle_epi8(delta_check, hash_key));
-
-    // Step 4: nibbles = vm1 + shuffle(delta_rebase, hash_key)
     let nibbles = _mm_add_epi8(vm1, _mm_shuffle_epi8(delta_rebase, hash_key));
 
-    // Step 5: validate — all MSBs must be clear (movemask == 0)
-    let valid = _mm_movemask_epi8(check) == 0;
-
-    // Step 6: pack adjacent nibble pairs into bytes.
-    // pmaddubsw treats the first operand as unsigned bytes, the second as
-    // signed bytes, multiplies pairwise and adds adjacent pairs into i16.
-    // With weights {16, 1}: result[i] = nibbles[2i]*16 + nibbles[2i+1].
-    let weights = _mm_set1_epi16(0x0110); // {16, 1} as bytes in little-endian
+    // Pack nibble pairs: hi*16 + lo via pmaddubsw, then narrow to u8.
     let packed16 = _mm_maddubs_epi16(nibbles, weights);
-    let packed8 = _mm_packus_epi16(packed16, packed16); // only low 8 bytes matter
+    let packed8 = _mm_packus_epi16(packed16, packed16);
 
-    (packed8, valid)
+    (packed8, check)
 }
 
 /// Hex-decode `input` into `output` using SSSE3.
@@ -317,30 +310,36 @@ unsafe fn decode_ssse3_inner<const SHORT_CIRCUIT: bool>(
     unsafe {
         let delta_check = decode_delta_check_128();
         let delta_rebase = decode_delta_rebase_128();
+        // Hoist constants out of the loop.
+        let one = _mm_set1_epi8(1);
+        let mask_hi = _mm_set1_epi8(0x0F);
+        let weights = _mm_set1_epi16(0x0110);
 
-        let mut i = 0usize; // index into input
-        let mut o = 0usize; // index into output
-        let mut err_accum = 0u32;
-        // Each iteration: 32 hex chars → 16 output bytes.
+        let mut i = 0usize;
+        let mut o = 0usize;
+        let mut err_accum = 0i32;
         let simd_end = input.len() & !31;
 
         while i < simd_end {
             let chunk0 = _mm_loadu_si128(input.as_ptr().add(i).cast());
             let chunk1 = _mm_loadu_si128(input.as_ptr().add(i + 16).cast());
 
-            let (decoded0, valid0) = decode_chunk_128(chunk0, delta_check, delta_rebase);
-            let (decoded1, valid1) = decode_chunk_128(chunk1, delta_check, delta_rebase);
+            let (decoded0, check0) = decode_chunk_128(chunk0, delta_check, delta_rebase, one, mask_hi, weights);
+            let (decoded1, check1) = decode_chunk_128(chunk1, delta_check, delta_rebase, one, mask_hi, weights);
+
+            // Fuse: OR check vectors first, then a single movemask.
+            // This halves the number of movemask operations per iteration.
+            let combined_check = _mm_or_si128(check0, check1);
+            let mask = _mm_movemask_epi8(combined_check);
 
             if SHORT_CIRCUIT {
-                if !(valid0 & valid1) {
-                    // Fall back to scalar for precise error reporting.
+                if mask != 0 {
                     return scalar::decode(input, output);
                 }
             } else {
-                err_accum |= if valid0 { 0 } else { 1 } | if valid1 { 0 } else { 1 };
+                err_accum |= mask;
             }
 
-            // Store 8 bytes from each decoded half → 16 output bytes.
             _mm_storel_epi64(output.as_mut_ptr().add(o).cast(), decoded0);
             _mm_storel_epi64(output.as_mut_ptr().add(o + 8).cast(), decoded1);
 
@@ -352,7 +351,6 @@ unsafe fn decode_ssse3_inner<const SHORT_CIRCUIT: bool>(
             return Err(Error::InvalidEncoding);
         }
 
-        // Tail for remaining bytes.
         if i < input.len() {
             if SHORT_CIRCUIT {
                 scalar::decode(&input[i..], &mut output[o..])
@@ -412,39 +410,31 @@ pub(crate) unsafe fn ct_decode_ssse3(
 ///
 /// Caller must ensure AVX2 is available.
 #[target_feature(enable = "avx2")]
+/// Same as [`decode_chunk_128`] but for 256-bit AVX2 registers.
+/// Returns `(packed_bytes, check_vector)` — caller ORs check vectors
+/// then does a single `_mm256_movemask_epi8`.
+#[inline]
+#[target_feature(enable = "avx2")]
 unsafe fn decode_chunk_256(
     chunk: __m256i,
     delta_check: __m256i,
     delta_rebase: __m256i,
-) -> (__m256i, bool) {
-    let one = _mm256_set1_epi8(1);
-    let mask_hi = _mm256_set1_epi8(0x0F);
-
+    one: __m256i,
+    mask_hi: __m256i,
+    weights: __m256i,
+) -> (__m256i, __m256i) {
     let vm1 = _mm256_sub_epi8(chunk, one);
     let hash_key = _mm256_and_si256(_mm256_srli_epi16(vm1, 4), mask_hi);
 
     let check = _mm256_add_epi8(vm1, _mm256_shuffle_epi8(delta_check, hash_key));
     let nibbles = _mm256_add_epi8(vm1, _mm256_shuffle_epi8(delta_rebase, hash_key));
 
-    let valid = _mm256_movemask_epi8(check) == 0;
-
-    // Pack: {16, 1} weighting merges nibble pairs into bytes.
-    let weights = _mm256_set1_epi16(0x0110);
     let packed16 = _mm256_maddubs_epi16(nibbles, weights);
     let packed8 = _mm256_packus_epi16(packed16, packed16);
-
-    // packuswb interleaves within lanes, producing:
-    //   [lane0_lo_bytes | lane0_lo_bytes | lane1_lo_bytes | lane1_lo_bytes]
-    // (each half of each lane is duplicated because we passed the same
-    // operand twice to packus). We need to gather the unique 8 bytes from
-    // each lane into a contiguous 16 bytes.
-    //
-    // permute4x64 with 0b_11_01_10_00 = 0xD8 reorders the 64-bit chunks:
-    //   qword0(lane0_lo), qword2(lane1_lo), qword1(lane0_dup), qword3(lane1_dup)
-    // The low 128 bits then contain the 16 decoded bytes in order.
+    // Fix cross-lane ordering from packuswb.
     let result = _mm256_permute4x64_epi64(packed8, 0b_11_01_10_00);
 
-    (result, valid)
+    (result, check)
 }
 
 /// Hex-decode `input` into `output` using AVX2.
@@ -471,26 +461,31 @@ unsafe fn decode_avx2_inner<const SHORT_CIRCUIT: bool>(
     unsafe {
         let delta_check = _mm256_broadcastsi128_si256(decode_delta_check_128());
         let delta_rebase = _mm256_broadcastsi128_si256(decode_delta_rebase_128());
+        let one = _mm256_set1_epi8(1);
+        let mask_hi = _mm256_set1_epi8(0x0F);
+        let weights = _mm256_set1_epi16(0x0110);
 
         let mut i = 0usize;
         let mut o = 0usize;
-        let mut err_accum = 0u32;
-        // Each iteration: 64 hex chars → 32 output bytes.
+        let mut err_accum = 0i32;
         let simd_end = input.len() & !63;
 
         while i < simd_end {
             let chunk0 = _mm256_loadu_si256(input.as_ptr().add(i).cast());
             let chunk1 = _mm256_loadu_si256(input.as_ptr().add(i + 32).cast());
 
-            let (decoded0, valid0) = decode_chunk_256(chunk0, delta_check, delta_rebase);
-            let (decoded1, valid1) = decode_chunk_256(chunk1, delta_check, delta_rebase);
+            let (decoded0, check0) = decode_chunk_256(chunk0, delta_check, delta_rebase, one, mask_hi, weights);
+            let (decoded1, check1) = decode_chunk_256(chunk1, delta_check, delta_rebase, one, mask_hi, weights);
+
+            let combined_check = _mm256_or_si256(check0, check1);
+            let mask = _mm256_movemask_epi8(combined_check);
 
             if SHORT_CIRCUIT {
-                if !(valid0 & valid1) {
+                if mask != 0 {
                     return scalar::decode(input, output);
                 }
             } else {
-                err_accum |= if valid0 { 0 } else { 1 } | if valid1 { 0 } else { 1 };
+                err_accum |= mask;
             }
 
             // Store low 16 bytes of each decoded __m256i.
