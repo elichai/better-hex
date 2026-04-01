@@ -7,7 +7,8 @@
 //!
 //! 1. Load a 16-byte hex character LUT (`0123456789abcdef` or uppercase) into
 //!    a NEON register.
-//! 2. For each 16-byte chunk of input:
+//! 2. Main loop processes 32 bytes (2x16) per iteration for reduced loop
+//!    overhead. For each 16-byte chunk of input:
 //!    a. Split each byte into high nibble (`byte >> 4`) and low nibble
 //!       (`byte & 0x0F`).
 //!    b. Use `vqtbl1q_u8` (table lookup) to convert each nibble to its
@@ -15,7 +16,11 @@
 //!    c. Interleave the high and low nibble results with `vzipq_u8` so
 //!       that each input byte produces two adjacent hex characters.
 //!    d. Store the resulting 32 bytes to the output buffer.
-//! 3. Any remaining bytes (< 16) are handled by the scalar fallback.
+//! 3. Handle a remaining aligned 16-byte chunk if present.
+//! 4. For the final < 16 bytes, if the input is >= 16 bytes total, use
+//!    an overlapping NEON read of the last 16 input bytes (the overlapping
+//!    portion produces identical output, so the overwrite is harmless).
+//!    Only inputs < 16 bytes fall back to scalar.
 //!
 //! # Decoding algorithm (Mula-Langdale variant)
 //!
@@ -73,10 +78,11 @@ use crate::error::Error;
 use core::arch::aarch64::*;
 use core::mem::MaybeUninit;
 
-/// NEON hex encoder — processes 16 input bytes (producing 32 hex chars) per
-/// iteration using table lookup, with a scalar tail.
-///
-/// See module-level documentation for the full algorithm description.
+/// NEON hex encoder — processes 32 input bytes (producing 64 hex chars) per
+/// main loop iteration using 2x-unrolled table lookup. A single remaining
+/// 16-byte chunk is handled separately, and the final < 16 bytes use an
+/// overlapping NEON read (re-encoding the last 16 bytes) to avoid the
+/// scalar fallback for inputs >= 16 bytes.
 pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
     debug_assert_eq!(
         output.len(),
@@ -94,44 +100,81 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
     let lut = unsafe { vld1q_u8(lut_bytes.as_ptr()) };
     let mask_lo = unsafe { vdupq_n_u8(0x0F) };
 
+    let in_base = input.as_ptr();
+    let out_base = output.as_mut_ptr().cast::<u8>();
+    let len = input.len();
     let mut i = 0usize;
-    let simd_end = input.len() / 16 * 16;
 
-    while i < simd_end {
-        // SAFETY: `i + 16 <= input.len()` because `i < simd_end` and
-        // `simd_end` is a multiple of 16 not exceeding `input.len()`.
-        let chunk = unsafe { vld1q_u8(input.as_ptr().add(i)) };
-
-        // Split each byte into high and low nibbles.
-        let hi_nibbles = unsafe { vshrq_n_u8::<4>(chunk) };
-        let lo_nibbles = unsafe { vandq_u8(chunk, mask_lo) };
-
-        // Table-lookup: convert nibble values (0-15) to hex ASCII characters.
-        let hi_hex = unsafe { vqtbl1q_u8(lut, hi_nibbles) };
-        let lo_hex = unsafe { vqtbl1q_u8(lut, lo_nibbles) };
-
-        // Interleave so that for input byte at position k, the output is
-        // [hi_hex[k], lo_hex[k]] at positions [2k, 2k+1].
-        // vzipq_u8 produces two 16-byte vectors:
-        //   .0 = interleave low halves, .1 = interleave high halves
-        let zipped = unsafe { vzipq_u8(hi_hex, lo_hex) };
-
-        // SAFETY: Writing 32 bytes (two 16-byte stores) to `output` at
-        // offset `i * 2`. Since `i + 16 <= input.len()` and
-        // `output.len() == input.len() * 2`, we have
-        // `i * 2 + 32 <= output.len()`.
-        let out_ptr = output.as_mut_ptr().cast::<u8>().wrapping_add(i * 2);
+    // Process 32 bytes (2x16) per iteration to reduce loop overhead
+    // and give the OoO engine more independent work per iteration.
+    let simd_end_2x = len / 32 * 32;
+    while i < simd_end_2x {
         unsafe {
-            vst1q_u8(out_ptr, zipped.0);
-            vst1q_u8(out_ptr.add(16), zipped.1);
-        }
+            // Load two 16-byte chunks.
+            let chunk_a = vld1q_u8(in_base.add(i));
+            let chunk_b = vld1q_u8(in_base.add(i + 16));
 
+            // Process chunk A.
+            let hi_a = vshrq_n_u8::<4>(chunk_a);
+            let lo_a = vandq_u8(chunk_a, mask_lo);
+            let hi_hex_a = vqtbl1q_u8(lut, hi_a);
+            let lo_hex_a = vqtbl1q_u8(lut, lo_a);
+            let zipped_a = vzipq_u8(hi_hex_a, lo_hex_a);
+
+            // Process chunk B.
+            let hi_b = vshrq_n_u8::<4>(chunk_b);
+            let lo_b = vandq_u8(chunk_b, mask_lo);
+            let hi_hex_b = vqtbl1q_u8(lut, hi_b);
+            let lo_hex_b = vqtbl1q_u8(lut, lo_b);
+            let zipped_b = vzipq_u8(hi_hex_b, lo_hex_b);
+
+            // Store all 64 output bytes.
+            let out = out_base.add(i * 2);
+            vst1q_u8(out, zipped_a.0);
+            vst1q_u8(out.add(16), zipped_a.1);
+            vst1q_u8(out.add(32), zipped_b.0);
+            vst1q_u8(out.add(48), zipped_b.1);
+        }
+        i += 32;
+    }
+
+    // Handle a remaining 16-byte chunk if `len % 32 >= 16`.
+    // (There can be at most one, since the 2x loop handles pairs.)
+    if i + 16 <= len {
+        unsafe {
+            let chunk = vld1q_u8(in_base.add(i));
+            let hi_nibbles = vshrq_n_u8::<4>(chunk);
+            let lo_nibbles = vandq_u8(chunk, mask_lo);
+            let hi_hex = vqtbl1q_u8(lut, hi_nibbles);
+            let lo_hex = vqtbl1q_u8(lut, lo_nibbles);
+            let zipped = vzipq_u8(hi_hex, lo_hex);
+            let out = out_base.add(i * 2);
+            vst1q_u8(out, zipped.0);
+            vst1q_u8(out.add(16), zipped.1);
+        }
         i += 16;
     }
 
-    // Scalar fallback for remaining bytes.
-    if i < input.len() {
-        scalar::encode::<UPPER>(&input[i..], &mut output[i * 2..]);
+    // Handle the final < 16 bytes. If at least one SIMD chunk was
+    // processed, use an overlapping NEON read of the last 16 input
+    // bytes to avoid the scalar fallback. The overlapping portion
+    // produces identical hex characters, so the overwrite is harmless.
+    if i < len {
+        if len >= 16 {
+            unsafe {
+                let chunk = vld1q_u8(in_base.add(len - 16));
+                let hi_nibbles = vshrq_n_u8::<4>(chunk);
+                let lo_nibbles = vandq_u8(chunk, mask_lo);
+                let hi_hex = vqtbl1q_u8(lut, hi_nibbles);
+                let lo_hex = vqtbl1q_u8(lut, lo_nibbles);
+                let zipped = vzipq_u8(hi_hex, lo_hex);
+                let out = out_base.add((len - 16) * 2);
+                vst1q_u8(out, zipped.0);
+                vst1q_u8(out.add(16), zipped.1);
+            }
+        } else {
+            scalar::encode::<UPPER>(&input[i..], &mut output[i * 2..]);
+        }
     }
 }
 
