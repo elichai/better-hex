@@ -109,3 +109,15 @@ fn decode_vec_empty() {
 fn decode_vec_odd() {
     assert!(better_hex::decode("abc").is_err());
 }
+
+#[test]
+fn decode_to_vec() {
+    let v: Vec<u8> = better_hex::decode_to("deadbeef").unwrap();
+    assert_eq!(v, vec![0xde, 0xad, 0xbe, 0xef]);
+}
+
+#[test]
+fn decode_to_array() {
+    let a: [u8; 4] = better_hex::decode_to("deadbeef").unwrap();
+    assert_eq!(a, [0xde, 0xad, 0xbe, 0xef]);
+}

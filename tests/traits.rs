@@ -120,3 +120,61 @@ fn write_hex_appends_to_existing() {
     [0xab_u8].write_hex(&mut buf, false).unwrap();
     assert_eq!(buf, "prefix:ab");
 }
+
+#[cfg(feature = "heapless")]
+mod heapless_from_hex {
+    use better_hex::FromHex;
+
+    #[test]
+    fn heapless_vec_from_hex() {
+        let v = heapless::Vec::<u8, 4>::from_hex("deadbeef").unwrap();
+        assert_eq!(&v[..], &[0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    #[test]
+    fn heapless_vec_from_hex_capacity_overflow() {
+        let err = heapless::Vec::<u8, 2>::from_hex("deadbeef");
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn heapless_vec_from_hex_empty() {
+        let v = heapless::Vec::<u8, 4>::from_hex("").unwrap();
+        assert!(v.is_empty());
+    }
+
+    #[test]
+    fn heapless_vec_from_hex_odd_length() {
+        let err = heapless::Vec::<u8, 4>::from_hex("abc");
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn heapless_vec_from_hex_invalid_char() {
+        let err = heapless::Vec::<u8, 4>::from_hex("zzzz");
+        assert!(err.is_err());
+    }
+}
+
+#[cfg(feature = "arrayvec")]
+mod arrayvec_from_hex {
+    use better_hex::FromHex;
+
+    #[test]
+    fn arrayvec_vec_from_hex() {
+        let v = arrayvec::ArrayVec::<u8, 4>::from_hex("deadbeef").unwrap();
+        assert_eq!(&v[..], &[0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    #[test]
+    fn arrayvec_vec_from_hex_capacity_overflow() {
+        let err = arrayvec::ArrayVec::<u8, 2>::from_hex("deadbeef");
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn arrayvec_vec_from_hex_empty() {
+        let v = arrayvec::ArrayVec::<u8, 4>::from_hex("").unwrap();
+        assert!(v.is_empty());
+    }
+}

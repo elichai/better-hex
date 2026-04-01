@@ -76,3 +76,67 @@ fn encode_to_roundtrip() {
     let decoded = better_hex::decode_to_array::<8>(&hex).unwrap();
     assert_eq!(decoded, original);
 }
+
+#[cfg(feature = "heapless")]
+mod heapless_tests {
+    use better_hex::HexTarget;
+
+    #[test]
+    fn heapless_string_encode_hex() {
+        let s = heapless::String::<8>::encode_hex(&[0xde, 0xad]).unwrap();
+        assert_eq!(s.as_str(), "dead");
+    }
+
+    #[test]
+    fn heapless_string_encode_hex_upper() {
+        let s = heapless::String::<8>::encode_hex_upper(&[0xde, 0xad]).unwrap();
+        assert_eq!(s.as_str(), "DEAD");
+    }
+
+    #[test]
+    fn heapless_string_capacity_overflow() {
+        let err = heapless::String::<3>::encode_hex(&[0xde, 0xad]);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn heapless_string_empty() {
+        let s = heapless::String::<0>::encode_hex(&[]).unwrap();
+        assert_eq!(s.as_str(), "");
+    }
+
+    #[test]
+    fn heapless_string_exact_capacity() {
+        let s = heapless::String::<4>::encode_hex(&[0xab, 0xcd]).unwrap();
+        assert_eq!(s.as_str(), "abcd");
+    }
+}
+
+#[cfg(feature = "arrayvec")]
+mod arrayvec_tests {
+    use better_hex::HexTarget;
+
+    #[test]
+    fn arrayvec_string_encode_hex() {
+        let s = arrayvec::ArrayString::<8>::encode_hex(&[0xde, 0xad]).unwrap();
+        assert_eq!(s.as_str(), "dead");
+    }
+
+    #[test]
+    fn arrayvec_string_encode_hex_upper() {
+        let s = arrayvec::ArrayString::<8>::encode_hex_upper(&[0xde, 0xad]).unwrap();
+        assert_eq!(s.as_str(), "DEAD");
+    }
+
+    #[test]
+    fn arrayvec_string_capacity_overflow() {
+        let err = arrayvec::ArrayString::<3>::encode_hex(&[0xde, 0xad]);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn arrayvec_string_empty() {
+        let s = arrayvec::ArrayString::<0>::encode_hex(&[]).unwrap();
+        assert_eq!(s.as_str(), "");
+    }
+}

@@ -152,7 +152,7 @@ fn encode_arrayvec<const CAP: usize, const UPPER: bool>(
     let spare = unsafe {
         core::slice::from_raw_parts_mut(s.as_mut_ptr().cast::<MaybeUninit<u8>>(), CAP)
     };
-    backend::encode::<UPPER>(input, spare);
+    backend::encode::<UPPER>(input, &mut spare[..hex_len]);
     // SAFETY: backend wrote hex_len valid hex ASCII bytes (valid UTF-8).
     unsafe { s.set_len(hex_len) };
     Ok(s)
