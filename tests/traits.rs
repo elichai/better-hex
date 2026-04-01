@@ -19,10 +19,12 @@ fn to_hex_write_hex_uppercase() {
 }
 
 #[test]
-fn to_hex_string_convenience() {
+fn encode_hex_convenience() {
     let data = vec![0xca, 0xfe];
-    assert_eq!(data.to_hex_string(), "cafe");
-    assert_eq!(data.to_upper_hex_string(), "CAFE");
+    let lower: String = data.encode_hex().unwrap();
+    let upper: String = data.encode_hex_upper().unwrap();
+    assert_eq!(lower, "cafe");
+    assert_eq!(upper, "CAFE");
 }
 
 #[test]
@@ -34,15 +36,16 @@ fn to_hex_empty() {
 }
 
 #[test]
-fn to_hex_single_byte() {
-    let data = [0x00];
-    assert_eq!(data.to_hex_string(), "00");
+fn encode_hex_single_byte() {
+    let data = [0x00_u8];
+    let hex: String = data.encode_hex().unwrap();
+    assert_eq!(hex, "00");
 }
 
 #[test]
-fn to_hex_all_bytes() {
+fn encode_hex_all_bytes() {
     let data: Vec<u8> = (0u8..=255).collect();
-    let hex = data.to_hex_string();
+    let hex: String = data.encode_hex().unwrap();
     assert_eq!(hex.len(), 512);
     assert_eq!(&hex[0..2], "00");
     assert_eq!(&hex[510..512], "ff");
@@ -62,7 +65,6 @@ fn from_hex_array() {
 
 #[test]
 fn from_hex_array_wrong_length() {
-    // "dead" decodes to 2 bytes; [u8; 4] needs 8 hex chars.
     let result = <[u8; 4]>::from_hex("dead");
     assert!(result.is_err());
 }
@@ -107,7 +109,7 @@ fn from_hex_accepts_bytes() {
 #[test]
 fn to_hex_roundtrip() {
     let original: Vec<u8> = (0u8..=255).collect();
-    let hex = original.to_hex_string();
+    let hex: String = original.encode_hex().unwrap();
     let decoded = Vec::<u8>::from_hex(&hex).unwrap();
     assert_eq!(decoded, original);
 }
@@ -115,6 +117,6 @@ fn to_hex_roundtrip() {
 #[test]
 fn write_hex_appends_to_existing() {
     let mut buf = String::from("prefix:");
-    [0xab].write_hex(&mut buf, false).unwrap();
+    [0xab_u8].write_hex(&mut buf, false).unwrap();
     assert_eq!(buf, "prefix:ab");
 }
