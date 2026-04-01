@@ -3,36 +3,36 @@
 #[test]
 fn encode_to_string_lowercase() {
     let input = [0xde, 0xad, 0xbe, 0xef];
-    let result: Option<String> = better_hex::encode_to(&input);
-    assert_eq!(result, Some("deadbeef".to_string()));
+    let result: Result<String, _> = better_hex::encode_to(&input);
+    assert_eq!(result, Ok("deadbeef".to_string()));
 }
 
 #[test]
 fn encode_to_string_uppercase() {
     let input = [0xde, 0xad, 0xbe, 0xef];
-    let result: Option<String> = better_hex::encode_upper_to(&input);
-    assert_eq!(result, Some("DEADBEEF".to_string()));
+    let result: Result<String, _> = better_hex::encode_upper_to(&input);
+    assert_eq!(result, Ok("DEADBEEF".to_string()));
 }
 
 #[test]
 fn encode_to_string_empty() {
     let input: [u8; 0] = [];
-    let result: Option<String> = better_hex::encode_to(&input);
-    assert_eq!(result, Some(String::new()));
+    let result: Result<String, _> = better_hex::encode_to(&input);
+    assert_eq!(result, Ok(String::new()));
 }
 
 #[test]
 fn encode_to_string_single_byte() {
     let input = [0xff];
-    let result: Option<String> = better_hex::encode_to(&input);
-    assert_eq!(result, Some("ff".to_string()));
+    let result: Result<String, _> = better_hex::encode_to(&input);
+    assert_eq!(result, Ok("ff".to_string()));
 }
 
 #[test]
 fn encode_to_string_all_zeros() {
     let input = [0u8; 32];
-    let result: Option<String> = better_hex::encode_to(&input);
-    assert_eq!(result, Some("0".repeat(64)));
+    let result: Result<String, _> = better_hex::encode_to(&input);
+    assert_eq!(result, Ok("0".repeat(64)));
 }
 
 #[test]
@@ -64,8 +64,8 @@ fn encode_to_large_input() {
 #[test]
 fn encode_to_string_never_returns_none() {
     let input = [0u8; 1];
-    let result: Option<String> = better_hex::encode_to(&input);
-    assert!(result.is_some());
+    let result: Result<String, _> = better_hex::encode_to(&input);
+    assert!(result.is_ok());
 }
 
 /// Roundtrip: encode_to then decode_to_array.

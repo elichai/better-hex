@@ -37,13 +37,12 @@ pub trait ToHex {
 
     /// Encode to lowercase hex into any [`HexTarget`] (zero-copy).
     ///
-    /// Returns `None` if the target cannot hold `self.len() * 2` bytes.
-    /// This is the fastest encoding path — SIMD writes directly into the
-    /// target's internal buffer with no intermediate copies.
-    fn encode_hex<T: HexTarget>(&self) -> Option<T>;
+    /// Returns `Err` if the target cannot hold the output (e.g., fixed-capacity
+    /// buffer too small). For `String`, this is infallible.
+    fn encode_hex<T: HexTarget>(&self) -> Result<T, T::Error>;
 
     /// Encode to uppercase hex into any [`HexTarget`] (zero-copy).
-    fn encode_hex_upper<T: HexTarget>(&self) -> Option<T>;
+    fn encode_hex_upper<T: HexTarget>(&self) -> Result<T, T::Error>;
 }
 
 impl<S: AsRef<[u8]>> ToHex for S {
@@ -51,11 +50,11 @@ impl<S: AsRef<[u8]>> ToHex for S {
         write_hex_to::<256, W>(self.as_ref(), w, upper)
     }
 
-    fn encode_hex<T: HexTarget>(&self) -> Option<T> {
+    fn encode_hex<T: HexTarget>(&self) -> Result<T, T::Error> {
         hex_target::encode_to(self.as_ref())
     }
 
-    fn encode_hex_upper<T: HexTarget>(&self) -> Option<T> {
+    fn encode_hex_upper<T: HexTarget>(&self) -> Result<T, T::Error> {
         hex_target::encode_upper_to(self.as_ref())
     }
 }

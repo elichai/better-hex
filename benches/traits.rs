@@ -12,7 +12,7 @@ fn bench_encode_to(c: &mut Criterion) {
         // encode_to::<String> — zero-copy via HexTarget
         group.bench_with_input(BenchmarkId::new("hex_target_string", size), &input, |b, input| {
             b.iter(|| {
-                let s: Option<String> = better_hex::encode_to(black_box(input));
+                let s: Result<String, _> = better_hex::encode_to(black_box(input));
                 black_box(s);
             });
         });
