@@ -11,7 +11,7 @@
 use crate::display::write_hex_to;
 use crate::error::Error;
 use crate::hex_target::{self, HexTarget};
-use core::fmt;
+use core::{fmt, mem::MaybeUninit};
 
 /// Trait for types that can be hex-encoded.
 ///
@@ -86,7 +86,21 @@ impl FromHex for alloc::vec::Vec<u8> {
     type Error = Error;
 
     fn from_hex(hex: impl AsRef<[u8]>) -> Result<Self, Self::Error> {
-        crate::decode::decode_vec(hex.as_ref())
+        fn decode_vec(input: &[u8]) -> Result<alloc::vec::Vec<u8>, Error> {
+            if !input.len().is_multiple_of(2) {
+                return Err(Error::InvalidLength {
+                    expected: input.len() + 1,
+                    got: input.len(),
+                });
+            }
+            let len = input.len() / 2;
+            let mut out = alloc::vec::Vec::with_capacity(len);
+            crate::backend::decode(input, &mut out.spare_capacity_mut()[..len])?;
+            // SAFETY: backend wrote exactly `len` valid bytes.
+            unsafe { out.set_len(len) };
+            Ok(out)
+        }
+        decode_vec(hex.as_ref())
     }
 }
 
