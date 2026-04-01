@@ -887,3 +887,92 @@ pub(crate) unsafe fn ct_decode_avx512(
     // SAFETY: caller guarantees AVX-512BW.
     unsafe { decode_avx512_inner::<false>(input, output) }
 }
+
+// ---------------------------------------------------------------------------
+// Check — AVX-512BW
+// ---------------------------------------------------------------------------
+
+/// Check whether every byte in `input` is a valid hex ASCII character,
+/// using AVX-512BW SIMD.
+///
+/// Reuses the Lemire `delta_check` validation: for each 64-byte chunk,
+/// computes `vm1 + shuffle(delta_check, hash_key)` and checks that
+/// `_mm512_movepi8_mask == 0` (all MSBs clear ⇒ all chars valid).
+/// Falls back to AVX2/SSSE3/scalar for any remaining tail.
+///
+/// When `SHORT_CIRCUIT` is true, returns `false` immediately on the first
+/// invalid chunk. When `SHORT_CIRCUIT` is false, accumulates validity across
+/// all chunks without early exit (constant-time).
+///
+/// # Safety
+///
+/// Caller must ensure the CPU supports AVX-512BW.
+#[inline]
+#[target_feature(enable = "avx512bw")]
+unsafe fn check_avx512_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
+    // SAFETY: all intrinsics below require AVX-512BW, guaranteed by #[target_feature].
+    unsafe {
+        let delta_check = _mm512_broadcast_i32x4(decode_delta_check_128());
+        let one = _mm512_set1_epi8(1);
+        let mask_hi = _mm512_set1_epi8(0x0F);
+
+        let mut i = 0usize;
+        let mut all_valid = true;
+        let simd_end = input.len() & !63;
+
+        while i < simd_end {
+            let chunk = _mm512_loadu_si512(input.as_ptr().add(i).cast());
+
+            let vm1 = _mm512_sub_epi8(chunk, one);
+            let hash_key = _mm512_and_si512(_mm512_srli_epi16(vm1, 4), mask_hi);
+            let check = _mm512_add_epi8(vm1, _mm512_shuffle_epi8(delta_check, hash_key));
+
+            if SHORT_CIRCUIT {
+                if _mm512_movepi8_mask(check) != 0 {
+                    return false;
+                }
+            } else {
+                all_valid &= _mm512_movepi8_mask(check) == 0;
+            }
+
+            i += 64;
+        }
+
+        // Tail: fall through to SSSE3/scalar.
+        let tail_valid = if SHORT_CIRCUIT {
+            check_ssse3(&input[i..])
+        } else {
+            ct_check_ssse3(&input[i..])
+        };
+
+        all_valid & tail_valid
+    }
+}
+
+/// Check whether every byte in `input` is a valid hex ASCII character,
+/// using AVX-512BW SIMD.
+///
+/// Returns `false` immediately upon encountering the first invalid chunk.
+///
+/// # Safety
+///
+/// Caller must ensure the CPU supports AVX-512BW.
+#[target_feature(enable = "avx512bw")]
+pub(crate) unsafe fn check_avx512(input: &[u8]) -> bool {
+    // SAFETY: caller guarantees AVX-512BW.
+    unsafe { check_avx512_inner::<true>(input) }
+}
+
+/// Constant-time check whether every byte in `input` is a valid hex ASCII
+/// character, using AVX-512BW SIMD.
+///
+/// Processes all chunks without short-circuiting on invalid input.
+///
+/// # Safety
+///
+/// Caller must ensure the CPU supports AVX-512BW.
+#[target_feature(enable = "avx512bw")]
+pub(crate) unsafe fn ct_check_avx512(input: &[u8]) -> bool {
+    // SAFETY: caller guarantees AVX-512BW.
+    unsafe { check_avx512_inner::<false>(input) }
+}

@@ -12,7 +12,7 @@
 //! | Target          | Detection        | Priority                  |
 //! |-----------------|------------------|---------------------------|
 //! | aarch64 (NEON)  | compile-time     | baseline on aarch64       |
-//! | x86/x86_64      | runtime (std) or `cpufeatures` (no_std) | AVX2 > SSSE3 > scalar |
+//! | x86/x86_64      | runtime (std) or `cpufeatures` (no_std) | AVX-512BW > AVX2 > SSSE3 > scalar |
 //! | wasm32 (SIMD128)| compile-time     | when `target_feature="simd128"` |
 //! | everything else | —                | scalar fallback           |
 //!
@@ -62,10 +62,13 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
         } else if #[cfg(all(target_arch = "aarch64", target_feature = "neon"))] {
             neon::encode::<UPPER>(input, output);
         } else if #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {
-            // Runtime detection: prefer AVX2, then SSSE3, then scalar.
+            // Runtime detection: prefer AVX-512BW, then AVX2, then SSSE3, then scalar.
             cfg_if::cfg_if! {
                 if #[cfg(feature = "std")] {
-                    if std::is_x86_feature_detected!("avx2") {
+                    if std::is_x86_feature_detected!("avx512bw") {
+                        // SAFETY: we just confirmed AVX-512BW is available.
+                        unsafe { x86::encode_avx512::<UPPER>(input, output) }
+                    } else if std::is_x86_feature_detected!("avx2") {
                         // SAFETY: we just confirmed AVX2 is available.
                         unsafe { x86::encode_avx2::<UPPER>(input, output) }
                     } else if std::is_x86_feature_detected!("ssse3") {
@@ -76,19 +79,26 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
                     }
                 } else {
                     // no_std: use cpufeatures crate for runtime detection.
+                    cpufeatures::new!(cpuid_avx512bw, "avx512bw");
                     cpufeatures::new!(cpuid_avx2, "avx2");
                     cpufeatures::new!(cpuid_ssse3, "ssse3");
-                    let token_avx2 = cpuid_avx2::init();
-                    if token_avx2.get() {
-                        // SAFETY: we just confirmed AVX2 is available.
-                        unsafe { x86::encode_avx2::<UPPER>(input, output) }
+                    let token_avx512bw = cpuid_avx512bw::init();
+                    if token_avx512bw.get() {
+                        // SAFETY: we just confirmed AVX-512BW is available.
+                        unsafe { x86::encode_avx512::<UPPER>(input, output) }
                     } else {
-                        let token_ssse3 = cpuid_ssse3::init();
-                        if token_ssse3.get() {
-                            // SAFETY: we just confirmed SSSE3 is available.
-                            unsafe { x86::encode_ssse3::<UPPER>(input, output) }
+                        let token_avx2 = cpuid_avx2::init();
+                        if token_avx2.get() {
+                            // SAFETY: we just confirmed AVX2 is available.
+                            unsafe { x86::encode_avx2::<UPPER>(input, output) }
                         } else {
-                            scalar::encode::<UPPER>(input, output);
+                            let token_ssse3 = cpuid_ssse3::init();
+                            if token_ssse3.get() {
+                                // SAFETY: we just confirmed SSSE3 is available.
+                                unsafe { x86::encode_ssse3::<UPPER>(input, output) }
+                            } else {
+                                scalar::encode::<UPPER>(input, output);
+                            }
                         }
                     }
                 }
@@ -119,7 +129,10 @@ pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error>
         } else if #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "std")] {
-                    if std::is_x86_feature_detected!("avx2") {
+                    if std::is_x86_feature_detected!("avx512bw") {
+                        // SAFETY: we just confirmed AVX-512BW is available.
+                        unsafe { x86::decode_avx512(input, output) }
+                    } else if std::is_x86_feature_detected!("avx2") {
                         // SAFETY: we just confirmed AVX2 is available.
                         unsafe { x86::decode_avx2(input, output) }
                     } else if std::is_x86_feature_detected!("ssse3") {
@@ -129,19 +142,26 @@ pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error>
                         scalar::decode(input, output)
                     }
                 } else {
+                    cpufeatures::new!(cpuid_avx512bw, "avx512bw");
                     cpufeatures::new!(cpuid_avx2, "avx2");
                     cpufeatures::new!(cpuid_ssse3, "ssse3");
-                    let token_avx2 = cpuid_avx2::init();
-                    if token_avx2.get() {
-                        // SAFETY: we just confirmed AVX2 is available.
-                        unsafe { x86::decode_avx2(input, output) }
+                    let token_avx512bw = cpuid_avx512bw::init();
+                    if token_avx512bw.get() {
+                        // SAFETY: we just confirmed AVX-512BW is available.
+                        unsafe { x86::decode_avx512(input, output) }
                     } else {
-                        let token_ssse3 = cpuid_ssse3::init();
-                        if token_ssse3.get() {
-                            // SAFETY: we just confirmed SSSE3 is available.
-                            unsafe { x86::decode_ssse3(input, output) }
+                        let token_avx2 = cpuid_avx2::init();
+                        if token_avx2.get() {
+                            // SAFETY: we just confirmed AVX2 is available.
+                            unsafe { x86::decode_avx2(input, output) }
                         } else {
-                            scalar::decode(input, output)
+                            let token_ssse3 = cpuid_ssse3::init();
+                            if token_ssse3.get() {
+                                // SAFETY: we just confirmed SSSE3 is available.
+                                unsafe { x86::decode_ssse3(input, output) }
+                            } else {
+                                scalar::decode(input, output)
+                            }
                         }
                     }
                 }
@@ -167,7 +187,9 @@ pub fn ct_encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]
         } else if #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "std")] {
-                    if std::is_x86_feature_detected!("avx2") {
+                    if std::is_x86_feature_detected!("avx512bw") {
+                        unsafe { x86::encode_avx512::<UPPER>(input, output) }
+                    } else if std::is_x86_feature_detected!("avx2") {
                         unsafe { x86::encode_avx2::<UPPER>(input, output) }
                     } else if std::is_x86_feature_detected!("ssse3") {
                         unsafe { x86::encode_ssse3::<UPPER>(input, output) }
@@ -175,17 +197,23 @@ pub fn ct_encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]
                         ct_scalar::encode::<UPPER>(input, output);
                     }
                 } else {
+                    cpufeatures::new!(cpuid_avx512bw, "avx512bw");
                     cpufeatures::new!(cpuid_avx2, "avx2");
                     cpufeatures::new!(cpuid_ssse3, "ssse3");
-                    let token_avx2 = cpuid_avx2::init();
-                    if token_avx2.get() {
-                        unsafe { x86::encode_avx2::<UPPER>(input, output) }
+                    let token_avx512bw = cpuid_avx512bw::init();
+                    if token_avx512bw.get() {
+                        unsafe { x86::encode_avx512::<UPPER>(input, output) }
                     } else {
-                        let token_ssse3 = cpuid_ssse3::init();
-                        if token_ssse3.get() {
-                            unsafe { x86::encode_ssse3::<UPPER>(input, output) }
+                        let token_avx2 = cpuid_avx2::init();
+                        if token_avx2.get() {
+                            unsafe { x86::encode_avx2::<UPPER>(input, output) }
                         } else {
-                            ct_scalar::encode::<UPPER>(input, output);
+                            let token_ssse3 = cpuid_ssse3::init();
+                            if token_ssse3.get() {
+                                unsafe { x86::encode_ssse3::<UPPER>(input, output) }
+                            } else {
+                                ct_scalar::encode::<UPPER>(input, output);
+                            }
                         }
                     }
                 }
@@ -211,7 +239,9 @@ pub fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Err
         } else if #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "std")] {
-                    if std::is_x86_feature_detected!("avx2") {
+                    if std::is_x86_feature_detected!("avx512bw") {
+                        unsafe { x86::ct_decode_avx512(input, output) }
+                    } else if std::is_x86_feature_detected!("avx2") {
                         unsafe { x86::ct_decode_avx2(input, output) }
                     } else if std::is_x86_feature_detected!("ssse3") {
                         unsafe { x86::ct_decode_ssse3(input, output) }
@@ -219,17 +249,23 @@ pub fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Err
                         ct_scalar::decode(input, output)
                     }
                 } else {
+                    cpufeatures::new!(cpuid_avx512bw, "avx512bw");
                     cpufeatures::new!(cpuid_avx2, "avx2");
                     cpufeatures::new!(cpuid_ssse3, "ssse3");
-                    let token_avx2 = cpuid_avx2::init();
-                    if token_avx2.get() {
-                        unsafe { x86::ct_decode_avx2(input, output) }
+                    let token_avx512bw = cpuid_avx512bw::init();
+                    if token_avx512bw.get() {
+                        unsafe { x86::ct_decode_avx512(input, output) }
                     } else {
-                        let token_ssse3 = cpuid_ssse3::init();
-                        if token_ssse3.get() {
-                            unsafe { x86::ct_decode_ssse3(input, output) }
+                        let token_avx2 = cpuid_avx2::init();
+                        if token_avx2.get() {
+                            unsafe { x86::ct_decode_avx2(input, output) }
                         } else {
-                            ct_scalar::decode(input, output)
+                            let token_ssse3 = cpuid_ssse3::init();
+                            if token_ssse3.get() {
+                                unsafe { x86::ct_decode_ssse3(input, output) }
+                            } else {
+                                ct_scalar::decode(input, output)
+                            }
                         }
                     }
                 }
@@ -254,18 +290,26 @@ pub fn ct_check(input: &[u8]) -> bool {
         } else if #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "std")] {
-                    if std::is_x86_feature_detected!("ssse3") {
+                    if std::is_x86_feature_detected!("avx512bw") {
+                        unsafe { x86::ct_check_avx512(input) }
+                    } else if std::is_x86_feature_detected!("ssse3") {
                         unsafe { x86::ct_check_ssse3(input) }
                     } else {
                         ct_scalar::check(input)
                     }
                 } else {
+                    cpufeatures::new!(cpuid_avx512bw, "avx512bw");
                     cpufeatures::new!(cpuid_ssse3, "ssse3");
-                    let token_ssse3 = cpuid_ssse3::init();
-                    if token_ssse3.get() {
-                        unsafe { x86::ct_check_ssse3(input) }
+                    let token_avx512bw = cpuid_avx512bw::init();
+                    if token_avx512bw.get() {
+                        unsafe { x86::ct_check_avx512(input) }
                     } else {
-                        ct_scalar::check(input)
+                        let token_ssse3 = cpuid_ssse3::init();
+                        if token_ssse3.get() {
+                            unsafe { x86::ct_check_ssse3(input) }
+                        } else {
+                            ct_scalar::check(input)
+                        }
                     }
                 }
             }
@@ -288,20 +332,30 @@ pub fn check(input: &[u8]) -> bool {
         } else if #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "std")] {
-                    if std::is_x86_feature_detected!("ssse3") {
+                    if std::is_x86_feature_detected!("avx512bw") {
+                        // SAFETY: we just confirmed AVX-512BW is available.
+                        unsafe { x86::check_avx512(input) }
+                    } else if std::is_x86_feature_detected!("ssse3") {
                         // SAFETY: we just confirmed SSSE3 is available.
                         unsafe { x86::check_ssse3(input) }
                     } else {
                         scalar::check(input)
                     }
                 } else {
+                    cpufeatures::new!(cpuid_avx512bw, "avx512bw");
                     cpufeatures::new!(cpuid_ssse3, "ssse3");
-                    let token_ssse3 = cpuid_ssse3::init();
-                    if token_ssse3.get() {
-                        // SAFETY: we just confirmed SSSE3 is available.
-                        unsafe { x86::check_ssse3(input) }
+                    let token_avx512bw = cpuid_avx512bw::init();
+                    if token_avx512bw.get() {
+                        // SAFETY: we just confirmed AVX-512BW is available.
+                        unsafe { x86::check_avx512(input) }
                     } else {
-                        scalar::check(input)
+                        let token_ssse3 = cpuid_ssse3::init();
+                        if token_ssse3.get() {
+                            // SAFETY: we just confirmed SSSE3 is available.
+                            unsafe { x86::check_ssse3(input) }
+                        } else {
+                            scalar::check(input)
+                        }
                     }
                 }
             }
