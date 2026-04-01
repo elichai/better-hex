@@ -89,18 +89,20 @@ static DECODE_LUT: [u8; 256] = {
 /// nibble (`byte & 0x0F`), then indexes into `HEX_LOWER` or `HEX_UPPER` to
 /// produce two ASCII hex characters.
 ///
-/// # Safety contract
+/// Uses `chunks_exact_mut(2)` with `zip` to avoid bounds checks without unsafe:
+/// the chunk size is known at compile time, and `zip` bounds the iteration
+/// to `min(input.len(), output.len() / 2)`.
 ///
-/// Caller must ensure `output` has exactly `input.len() * 2` elements.
-/// All elements of `output` will be initialized after this call.
+/// # Contract
+///
+/// Caller should ensure `output` has exactly `input.len() * 2` elements.
+/// Only `min(input.len(), output.len() / 2)` bytes will be encoded.
 pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
     debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
     let table = if UPPER { HEX_UPPER } else { HEX_LOWER };
-    let mut out_idx = 0;
-    for &byte in input {
-        output[out_idx].write(table[usize::from(byte >> 4)]);
-        output[out_idx + 1].write(table[usize::from(byte & 0x0f)]);
-        out_idx += 2;
+    for (&byte, pair) in input.iter().zip(output.chunks_exact_mut(2)) {
+        pair[0].write(table[usize::from(byte >> 4)]);
+        pair[1].write(table[usize::from(byte & 0x0f)]);
     }
 }
 

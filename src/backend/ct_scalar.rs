@@ -88,17 +88,20 @@ const fn ct_decode_nibble(byte: u8) -> u16 {
 /// Encodes every byte of `input` into exactly two hex ASCII characters written
 /// into `output`. Uses branchless nibble arithmetic; no lookup table.
 ///
-/// # Panics (debug only)
+/// Uses `chunks_exact_mut(2)` with `zip` to avoid bounds checks without unsafe:
+/// the chunk size is known at compile time, and `zip` bounds the iteration
+/// to `min(input.len(), output.len() / 2)`.
 ///
-/// Panics if `output.len() != input.len() * 2`.
+/// # Contract
+///
+/// Caller should ensure `output` has exactly `input.len() * 2` elements.
+/// Only `min(input.len(), output.len() / 2)` bytes will be encoded.
 #[allow(dead_code)]
 pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
     debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
-    let mut out_idx = 0;
-    for &byte in input {
-        output[out_idx].write(ct_encode_nibble::<UPPER>(byte >> 4));
-        output[out_idx + 1].write(ct_encode_nibble::<UPPER>(byte & 0x0F));
-        out_idx += 2;
+    for (&byte, pair) in input.iter().zip(output.chunks_exact_mut(2)) {
+        pair[0].write(ct_encode_nibble::<UPPER>(byte >> 4));
+        pair[1].write(ct_encode_nibble::<UPPER>(byte & 0x0F));
     }
 }
 
