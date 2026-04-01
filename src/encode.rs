@@ -1,12 +1,10 @@
 //! Hex encoding — public free functions.
 //!
-//! The slice-based functions (`encode_to_slice`, `encode_to_slice_upper`)
-//! encode into a caller-provided `&mut [u8]` buffer.
-//!
-//! The allocating functions (`encode`, `encode_upper`) delegate to
-//! [`encode_to::<String>()`](crate::encode_to) via the [`HexTarget`](crate::HexTarget) trait.
+//! - [`encode_to_slice`] / [`encode_to_slice_upper`] — encode into a caller-provided `&mut [u8]`.
+//! - [`encode_to`] / [`encode_upper_to`] — encode into any [`HexTarget`](crate::HexTarget).
+//! - [`encode`] / [`encode_upper`] — convenience wrappers returning `String`.
 
-use crate::{backend, error::Error, maybe_uninit};
+use crate::{backend, error::Error, maybe_uninit, traits::HexTarget};
 
 /// Encode `input` into a caller-provided `output` buffer, returning `&mut str`.
 fn encode_to_slice_inner<'a, const UPPER: bool>(input: &[u8], output: &'a mut [u8]) -> Result<&'a mut str, Error> {
@@ -36,20 +34,46 @@ pub fn encode_to_slice_upper<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&
     encode_to_slice_inner::<true>(input, output)
 }
 
+/// Encode bytes to lowercase hex into any [`HexTarget`].
+///
+/// Enables turbofish syntax: `encode_to::<String>(&bytes)`.
+///
+/// # Examples
+///
+/// ```rust
+/// let s: String = better_hex::encode_to(&[0xde, 0xad]).unwrap();
+/// assert_eq!(s, "dead");
+/// ```
+pub fn encode_to<T: HexTarget>(input: &[u8]) -> Result<T, T::Error> {
+    T::encode_hex(input)
+}
+
+/// Encode bytes to uppercase hex into any [`HexTarget`].
+///
+/// # Examples
+///
+/// ```rust
+/// let s: String = better_hex::encode_upper_to(&[0xde, 0xad]).unwrap();
+/// assert_eq!(s, "DEAD");
+/// ```
+pub fn encode_upper_to<T: HexTarget>(input: &[u8]) -> Result<T, T::Error> {
+    T::encode_hex_upper(input)
+}
+
 /// Encode bytes to a lowercase hex `String`.
 ///
-/// Delegates to [`HexTarget::encode_hex`](crate::HexTarget::encode_hex) on `String`.
+/// Delegates to [`HexTarget::encode_hex`] on `String`.
 #[cfg(feature = "alloc")]
 pub fn encode(input: &[u8]) -> alloc::string::String {
-    let Ok(s) = crate::hex_target::encode_to(input);
+    let Ok(s) = encode_to(input);
     s
 }
 
 /// Encode bytes to an uppercase hex `String`.
 ///
-/// Delegates to [`HexTarget::encode_hex_upper`](crate::HexTarget::encode_hex_upper) on `String`.
+/// Delegates to [`HexTarget::encode_hex_upper`] on `String`.
 #[cfg(feature = "alloc")]
 pub fn encode_upper(input: &[u8]) -> alloc::string::String {
-    let Ok(s) = crate::hex_target::encode_upper_to(input);
+    let Ok(s) = encode_upper_to(input);
     s
 }

@@ -15,7 +15,6 @@ mod display;
 mod encode;
 mod error;
 mod hex_str;
-mod hex_target;
 mod maybe_uninit;
 mod prefix;
 mod traits;
@@ -30,10 +29,9 @@ pub use serde_impl as serde;
 
 pub use decode::{check, check_raw, decode_to, decode_to_array, decode_to_slice};
 pub use display::{HexDisplay, display};
-pub use encode::{encode_to_slice, encode_to_slice_upper};
+pub use encode::{encode_to, encode_to_slice, encode_to_slice_upper, encode_upper_to};
 pub use error::Error;
 pub use hex_str::{HexStr, const_check, const_decode_to_array};
-pub use hex_target::{encode_to, encode_upper_to};
 pub use prefix::{NoPrefix, Prefix, WithPrefix};
 pub use traits::{FromHex, HexTarget, ToHex};
 
