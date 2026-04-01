@@ -17,10 +17,11 @@
 //!       that each input byte produces two adjacent hex characters.
 //!    d. Store the resulting 32 bytes to the output buffer.
 //! 3. Handle a remaining aligned 16-byte chunk if present.
-//! 4. For the final < 16 bytes, if the input is >= 16 bytes total, use
-//!    an overlapping NEON read of the last 16 input bytes (the overlapping
-//!    portion produces identical output, so the overwrite is harmless).
-//!    Only inputs < 16 bytes fall back to scalar.
+//! 4. For the final < 16 bytes, if the remaining tail is >= 4 bytes and the
+//!    total input is >= 16 bytes, use an overlapping NEON read of the last 16
+//!    input bytes (the overlapping portion produces identical output, so the
+//!    overwrite is harmless). Tiny tails (< 4 bytes) or inputs < 16 bytes fall
+//!    back to scalar, as scalar is cheaper for very short sequences.
 //!
 //! # Decoding algorithm (Mula-Langdale variant)
 //!
@@ -81,8 +82,8 @@ use core::mem::MaybeUninit;
 /// NEON hex encoder — processes 32 input bytes (producing 64 hex chars) per
 /// main loop iteration using 2x-unrolled table lookup. A single remaining
 /// 16-byte chunk is handled separately, and the final < 16 bytes use an
-/// overlapping NEON read (re-encoding the last 16 bytes) to avoid the
-/// scalar fallback for inputs >= 16 bytes.
+/// overlapping NEON read (re-encoding the last 16 bytes) when the tail is
+/// >= 4 bytes and the total input is >= 16 bytes; otherwise scalar is used.
 pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
     debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
 
@@ -151,12 +152,13 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
         i += 16;
     }
 
-    // Handle the final < 16 bytes. If at least one SIMD chunk was
-    // processed, use an overlapping NEON read of the last 16 input
-    // bytes to avoid the scalar fallback. The overlapping portion
-    // produces identical hex characters, so the overwrite is harmless.
+    // Handle the final < 16 bytes. Use an overlapping NEON read of the last
+    // 16 input bytes when the tail is >= 4 bytes (worth the SIMD overhead)
+    // and the total input is >= 16 bytes (so the overlap is valid). For
+    // tiny tails (< 4 bytes) the scalar path is cheaper.
     if i < len {
-        if len >= 16 {
+        let remaining = len - i;
+        if remaining >= 4 && len >= 16 {
             unsafe {
                 let chunk = vld1q_u8(in_base.add(len - 16));
                 let hi_nibbles = vshrq_n_u8::<4>(chunk);

@@ -41,6 +41,7 @@ pub fn decode_to_array<const N: usize>(input: impl AsRef<[u8]>) -> Result<[u8; N
 ///
 /// Returns [`Error::InvalidLength`] if `input.len() != output.len() * 2`.
 /// Returns [`Error::InvalidChar`] if any byte in `input` is not a valid hex character.
+#[inline]
 pub fn decode_to_slice<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a [u8], Error> {
     if input.len() != output.len() * 2 {
         return Err(Error::InvalidLength {

@@ -218,12 +218,11 @@ fn bench_display_format(c: &mut Criterion) {
             b.iter(|| format!("{}", better_hex::display(black_box(inp.as_slice()))));
         });
 
-        // const_hex exposes a Buffer<N> for stack-based formatting, but also
-        // implements Display for its encode result via the encode() function.
-        // The idiomatic display path uses format! with the string from encode().
+        // Use const_hex::display so both sides go through format! + Display,
+        // making this an apples-to-apples comparison of display overhead.
         #[cfg(feature = "_bench_const_hex")]
         group.bench_with_input(BenchmarkId::new("const_hex", size), &input, |b, inp| {
-            b.iter(|| const_hex::encode(black_box(inp.as_slice())));
+            b.iter(|| format!("{}", const_hex::display(black_box(inp.as_slice()))));
         });
     }
 

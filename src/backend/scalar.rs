@@ -126,13 +126,14 @@ pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error>
     for (i, (pair, out_byte)) in input.chunks_exact(2).zip(output.iter_mut()).enumerate() {
         let hi = DECODE_LUT[pair[0] as usize];
         let lo = DECODE_LUT[pair[1] as usize];
-        if hi == NIL {
-            return Err(Error::InvalidChar {
-                byte: pair[0],
-                index: i * 2,
-            });
-        }
-        if lo == NIL {
+        if (hi | lo) == NIL {
+            // Determine which nibble was invalid for the error message.
+            if hi == NIL {
+                return Err(Error::InvalidChar {
+                    byte: pair[0],
+                    index: i * 2,
+                });
+            }
             return Err(Error::InvalidChar {
                 byte: pair[1],
                 index: i * 2 + 1,

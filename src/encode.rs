@@ -7,6 +7,7 @@
 use crate::{backend, error::Error, maybe_uninit, traits::HexTarget};
 
 /// Encode `input` into a caller-provided `output` buffer, returning `&mut str`.
+#[inline]
 fn encode_to_slice_inner<'a, const UPPER: bool>(input: &[u8], output: &'a mut [u8]) -> Result<&'a mut str, Error> {
     let expected = input.len() * 2;
     if output.len() != expected {
@@ -23,6 +24,7 @@ fn encode_to_slice_inner<'a, const UPPER: bool>(input: &[u8], output: &'a mut [u
 /// Encode bytes to lowercase hex into `output`. Returns the hex string.
 ///
 /// Returns [`Error::InvalidLength`] if `output.len() != input.len() * 2`.
+#[inline]
 pub fn encode_to_slice<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a mut str, Error> {
     encode_to_slice_inner::<false>(input, output)
 }
@@ -30,6 +32,7 @@ pub fn encode_to_slice<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a mut
 /// Encode bytes to uppercase hex into `output`. Returns the hex string.
 ///
 /// Returns [`Error::InvalidLength`] if `output.len() != input.len() * 2`.
+#[inline]
 pub fn encode_to_slice_upper<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a mut str, Error> {
     encode_to_slice_inner::<true>(input, output)
 }
