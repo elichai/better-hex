@@ -1,4 +1,4 @@
-use better_hex::{HexStr, PrefixedHexStr};
+use better_hex::{HexStr, PrefixedHexStr, WithPrefix};
 
 #[test]
 fn hex_str_size_no_prefix() {
@@ -166,4 +166,114 @@ fn const_check() {
 fn const_encode_zero_len() {
     const HEX: HexStr<0> = HexStr::<0>::const_encode_lower(&[]);
     assert_eq!(HEX.as_str(), "");
+}
+
+// ── LowerHex / UpperHex fmt impls ─────────────────────────────────────────────
+
+#[test]
+fn lower_hex_fmt_normalizes_to_lowercase() {
+    // Encode as upper, then format via {:x} — must produce lowercase.
+    let hex: HexStr<4> = HexStr::encode_upper(&[0xde, 0xad, 0xbe, 0xef]);
+    let s = format!("{hex:x}");
+    assert_eq!(s, "deadbeef");
+}
+
+#[test]
+fn upper_hex_fmt_normalizes_to_uppercase() {
+    // Encode as lower, then format via {:X} — must produce uppercase.
+    let hex: HexStr<4> = HexStr::encode_lower(&[0xde, 0xad, 0xbe, 0xef]);
+    let s = format!("{hex:X}");
+    assert_eq!(s, "DEADBEEF");
+}
+
+#[test]
+fn lower_hex_fmt_no_prefix() {
+    // LowerHex impl strips any prefix — only outputs the hex digits.
+    let hex: PrefixedHexStr<2> = HexStr::encode_upper(&[0xab, 0xcd]);
+    let s = format!("{hex:x}");
+    assert_eq!(s, "abcd");
+}
+
+#[test]
+fn upper_hex_fmt_no_prefix() {
+    let hex: PrefixedHexStr<2> = HexStr::encode_lower(&[0xab, 0xcd]);
+    let s = format!("{hex:X}");
+    assert_eq!(s, "ABCD");
+}
+
+// ── Debug impl ────────────────────────────────────────────────────────────────
+
+#[test]
+fn debug_no_prefix() {
+    let hex: HexStr<2> = HexStr::encode_lower(&[0xab, 0xcd]);
+    let s = format!("{hex:?}");
+    assert_eq!(s, r#"HexStr("abcd")"#);
+}
+
+#[test]
+fn debug_with_prefix() {
+    let hex: PrefixedHexStr<2> = HexStr::encode_lower(&[0xab, 0xcd]);
+    let s = format!("{hex:?}");
+    assert_eq!(s, r#"HexStr("0xabcd")"#);
+}
+
+// ── AsRef impls ───────────────────────────────────────────────────────────────
+
+#[test]
+fn as_ref_str() {
+    let hex: HexStr<2> = HexStr::encode_lower(&[0xab, 0xcd]);
+    let s: &str = hex.as_ref();
+    assert_eq!(s, "abcd");
+}
+
+#[test]
+fn as_ref_bytes() {
+    let hex: HexStr<2> = HexStr::encode_lower(&[0xab, 0xcd]);
+    let b: &[u8] = hex.as_ref();
+    assert_eq!(b, b"abcd");
+}
+
+#[test]
+fn as_ref_str_prefixed() {
+    let hex: PrefixedHexStr<2> = HexStr::encode_lower(&[0xab, 0xcd]);
+    let s: &str = hex.as_ref();
+    assert_eq!(s, "0xabcd");
+}
+
+// ── PartialEq<HexStr> and zero() with prefix ─────────────────────────────────
+
+#[test]
+fn partial_eq_hex_str() {
+    let a: HexStr<4> = HexStr::encode_lower(&[0xde, 0xad, 0xbe, 0xef]);
+    let b: HexStr<4> = HexStr::encode_lower(&[0xde, 0xad, 0xbe, 0xef]);
+    let c: HexStr<4> = HexStr::encode_upper(&[0x00, 0x11, 0x22, 0x33]);
+    assert_eq!(a, b);
+    assert_ne!(a, c);
+}
+
+#[test]
+fn partial_eq_prefixed() {
+    let a: PrefixedHexStr<2> = HexStr::encode_lower(&[0xab, 0xcd]);
+    let b: PrefixedHexStr<2> = HexStr::encode_lower(&[0xab, 0xcd]);
+    assert_eq!(a, b);
+}
+
+#[test]
+fn zero_with_prefix() {
+    let hex: HexStr<4, WithPrefix> = HexStr::zero();
+    assert_eq!(hex.as_str(), "0x00000000");
+    assert_eq!(hex.decode(), [0u8; 4]);
+}
+
+// ── PrefixedHexStr encode/decode roundtrip ───────────────────────────────────
+
+#[test]
+fn prefixed_encode_decode_roundtrip() {
+    let input = [0xca, 0xfe, 0xba, 0xbe];
+    let lower: PrefixedHexStr<4> = HexStr::encode_lower(&input);
+    let upper: PrefixedHexStr<4> = HexStr::encode_upper(&input);
+    assert_eq!(lower.as_str(), "0xcafebabe");
+    assert_eq!(upper.as_str(), "0xCAFEBABE");
+    assert_eq!(lower.decode(), input);
+    assert_eq!(upper.decode(), input);
 }

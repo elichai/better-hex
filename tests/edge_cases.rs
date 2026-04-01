@@ -96,3 +96,46 @@ fn with_prefix_value_is_0x() {
 fn no_prefix_value() {
     let _ = NoPrefix::VALUE; // just verify it exists
 }
+
+// ── display.rs: UpperHex with alternate flag ──────────────────────────────────
+
+#[test]
+fn display_upper_hex_alternate_nonempty() {
+    // Exercises UpperHex::fmt with f.alternate() == true on non-empty data.
+    // Writes "0x" prefix then uppercase hex.
+    let s = format!("{:#X}", better_hex::display(&[0x01, 0x23, 0x45, 0x67]));
+    assert_eq!(s, "0x01234567");
+}
+
+#[test]
+fn display_upper_hex_alternate_empty() {
+    // Exercises UpperHex::fmt with f.alternate() == true on empty data.
+    let s = format!("{:#X}", better_hex::display(&[] as &[u8]));
+    assert_eq!(s, "0x");
+}
+
+#[test]
+fn display_lower_hex_alternate_empty() {
+    // Exercises LowerHex::fmt with f.alternate() == true on empty data.
+    let s = format!("{:#x}", better_hex::display(&[] as &[u8]));
+    assert_eq!(s, "0x");
+}
+
+#[test]
+fn display_exactly_one_chunk() {
+    // 128 bytes = exactly one full chunk (DEFAULT_BUF/2). Exercises the loop
+    // body without hitting the remainder branch.
+    let data: Vec<u8> = (0u8..128).collect();
+    let s = format!("{}", better_hex::display(&data));
+    assert_eq!(s.len(), 256);
+    assert!(s.chars().all(|c| c.is_ascii_hexdigit()));
+}
+
+#[test]
+fn display_one_byte_over_chunk() {
+    // 129 bytes = one full chunk + 1 byte remainder. Exercises both the loop
+    // body and the remainder path in write_hex_to.
+    let data: Vec<u8> = (0u8..=128).collect();
+    let s = format!("{}", better_hex::display(&data));
+    assert_eq!(s.len(), 258);
+}

@@ -482,3 +482,83 @@ fn single_byte_vec() {
     let decoded: WithVec = serde_json::from_str(&json).unwrap();
     assert_eq!(decoded, original);
 }
+
+// ── visitor expecting() paths — triggered by wrong JSON type ─────────────────
+
+#[test]
+fn hex_visitor_expecting_no_prefix_wrong_type() {
+    // Passing a JSON integer triggers the visitor's `expecting()` message.
+    let json = r#"{"data":42}"#;
+    let result: Result<WithVec, _> = serde_json::from_str(json);
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("hex string"), "got: {err}");
+}
+
+#[test]
+fn hex_visitor_expecting_with_prefix_wrong_type() {
+    // WithPrefixed uses HexVisitor { prefix: true }.
+    let json = r#"{"data":42}"#;
+    let result: Result<WithPrefixed, _> = serde_json::from_str(json);
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("0x"), "got: {err}");
+}
+
+#[test]
+fn ct_hex_visitor_expecting_no_prefix_wrong_type() {
+    let json = r#"{"data":42}"#;
+    let result: Result<WithCt, _> = serde_json::from_str(json);
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("hex string"), "got: {err}");
+}
+
+#[test]
+fn ct_hex_visitor_expecting_with_prefix_wrong_type() {
+    let json = r#"{"data":42}"#;
+    let result: Result<WithCtPrefixed, _> = serde_json::from_str(json);
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("0x"), "got: {err}");
+}
+
+// ── [u8; N] via CT path — error cases ────────────────────────────────────────
+
+#[test]
+fn ct_array_odd_length_returns_error() {
+    // [u8; 4] expects 8 hex chars; odd-length input hits the odd-length branch.
+    let json = r#"{"data":"abc"}"#;
+    let result: Result<WithCt, _> = serde_json::from_str(json);
+    assert!(result.is_err(), "expected error for odd-length hex for [u8; N]");
+}
+
+#[test]
+fn ct_array_invalid_chars_returns_error() {
+    let json = r#"{"data":"gggggggg"}"#;
+    let result: Result<WithCt, _> = serde_json::from_str(json);
+    assert!(result.is_err(), "expected error for invalid hex chars for [u8; N]");
+}
+
+#[test]
+fn array_wrong_length_fast_path_returns_error() {
+    // [u8; 4] expects 8 hex chars; 6 chars = wrong length, hits fast-path error.
+    let json = r#"{"data":"deadbe"}"#;
+    let result: Result<WithArray, _> = serde_json::from_str(json);
+    assert!(result.is_err(), "expected error for too-short hex for [u8; 4]");
+}
+
+// ── CtHexDisplayAdapter with prefix=true and upper=true ──────────────────────
+
+#[test]
+fn ct_upper_prefixed_serialization_format() {
+    // Explicitly verify both upper=true and prefix=true in the CT adapter.
+    let original = WithCtUpperPrefixed { data: [0xde, 0xad, 0xbe, 0xef] };
+    let json = serde_json::to_string(&original).unwrap();
+    assert_eq!(json, r#"{"data":"0xDEADBEEF"}"#);
+    let decoded: WithCtUpperPrefixed = serde_json::from_str(&json).unwrap();
+    assert_eq!(decoded, original);
+}
+
+#[test]
+fn ct_upper_prefixed_wrong_length_error() {
+    let json = r#"{"data":"0xdeadbeefaa"}"#;
+    let result: Result<WithCtUpperPrefixed, _> = serde_json::from_str(json);
+    assert!(result.is_err(), "expected error for wrong length in ct::upper_prefixed");
+}
