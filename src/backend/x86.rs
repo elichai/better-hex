@@ -724,3 +724,166 @@ pub(crate) unsafe fn encode_avx512<const UPPER: bool>(
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Decode — AVX-512BW (Lemire 2023)
+// ---------------------------------------------------------------------------
+
+/// Decode a single 512-bit register (64 hex chars → 32 output bytes) using
+/// the Lemire algorithm, AVX-512BW variant.
+///
+/// Returns `(packed_bytes, mask)` where `mask` is a `u64` bitmask from
+/// `_mm512_movepi8_mask` — one bit per byte, set if that byte was invalid.
+/// Callers OR multiple masks together, then branch once.
+///
+/// # Safety
+///
+/// Caller must ensure AVX-512BW is available.
+#[inline]
+#[target_feature(enable = "avx512bw")]
+unsafe fn decode_chunk_512(
+    chunk: __m512i,
+    delta_check: __m512i,
+    delta_rebase: __m512i,
+    one: __m512i,
+    mask_hi: __m512i,
+    weights: __m512i,
+    perm_idx: __m512i,
+) -> (__m512i, u64) {
+    let vm1 = _mm512_sub_epi8(chunk, one);
+    let hash_key = _mm512_and_si512(_mm512_srli_epi16(vm1, 4), mask_hi);
+
+    let check = _mm512_add_epi8(vm1, _mm512_shuffle_epi8(delta_check, hash_key));
+    let nibbles = _mm512_add_epi8(vm1, _mm512_shuffle_epi8(delta_rebase, hash_key));
+
+    // movepi8_mask: one bit per byte, set if MSB is set (invalid).
+    let mask = _mm512_movepi8_mask(check);
+
+    // Pack nibble pairs: hi*16 + lo via pmaddubsw, then narrow to u8.
+    let packed16 = _mm512_maddubs_epi16(nibbles, weights);
+    let packed8 = _mm512_packus_epi16(packed16, packed16);
+    // Fix cross-lane ordering from packuswb.
+    let result = _mm512_permutexvar_epi64(perm_idx, packed8);
+
+    (result, mask)
+}
+
+/// Hex-decode `input` into `output` using AVX-512BW.
+///
+/// Processes 128 hex chars (two `__m512i` loads → 64 output bytes) per
+/// iteration. When `SHORT_CIRCUIT` is true, falls back to scalar on the first
+/// invalid chunk. When `SHORT_CIRCUIT` is false, processes all chunks without
+/// branching on validity (constant-time).
+///
+/// # Safety
+///
+/// Caller must ensure the CPU supports AVX-512BW.
+#[inline]
+#[target_feature(enable = "avx512bw")]
+unsafe fn decode_avx512_inner<const SHORT_CIRCUIT: bool>(
+    input: &[u8],
+    output: &mut [MaybeUninit<u8>],
+) -> Result<(), Error> {
+    debug_assert_eq!(output.len(), input.len() / 2, "output buffer wrong size for decode");
+    debug_assert!(input.len() % 2 == 0, "input length must be even");
+
+    // SAFETY: all intrinsics below require AVX-512BW (implies AVX-512F),
+    // guaranteed by #[target_feature].
+    unsafe {
+        let delta_check = _mm512_broadcast_i32x4(decode_delta_check_128());
+        let delta_rebase = _mm512_broadcast_i32x4(decode_delta_rebase_128());
+        let one = _mm512_set1_epi8(1);
+        let mask_hi = _mm512_set1_epi8(0x0F);
+        let weights = _mm512_set1_epi16(0x0110);
+        // Cross-lane fixup for packuswb: [0,4,1,5,2,6,3,7].
+        let perm_idx = _mm512_setr_epi64(0, 4, 1, 5, 2, 6, 3, 7);
+
+        let mut i = 0usize;
+        let mut o = 0usize;
+        let mut err_accum = 0u64;
+        let simd_end = input.len() & !127;
+
+        while i < simd_end {
+            let chunk0 = _mm512_loadu_si512(input.as_ptr().add(i).cast());
+            let chunk1 = _mm512_loadu_si512(input.as_ptr().add(i + 64).cast());
+
+            let (decoded0, mask0) = decode_chunk_512(chunk0, delta_check, delta_rebase, one, mask_hi, weights, perm_idx);
+            let (decoded1, mask1) = decode_chunk_512(chunk1, delta_check, delta_rebase, one, mask_hi, weights, perm_idx);
+
+            // Fuse: OR masks, then a single branch.
+            let combined_mask = mask0 | mask1;
+
+            if SHORT_CIRCUIT {
+                if combined_mask != 0 {
+                    return scalar::decode(input, output);
+                }
+            } else {
+                err_accum |= combined_mask;
+            }
+
+            // Store low 32 bytes of each decoded __m512i.
+            let out_ptr = output.as_mut_ptr().add(o);
+            _mm256_storeu_si256(
+                out_ptr.cast(),
+                _mm512_castsi512_si256(decoded0),
+            );
+            _mm256_storeu_si256(
+                out_ptr.add(32).cast(),
+                _mm512_castsi512_si256(decoded1),
+            );
+
+            i += 128;
+            o += 64;
+        }
+
+        if !SHORT_CIRCUIT && err_accum != 0 {
+            return Err(Error::InvalidEncoding);
+        }
+
+        // Tail: fall through to AVX2, then SSSE3, then scalar.
+        if i < input.len() {
+            if SHORT_CIRCUIT {
+                decode_avx2(&input[i..], &mut output[o..])
+            } else {
+                ct_decode_avx2(&input[i..], &mut output[o..])
+            }
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// Hex-decode `input` into `output` using AVX-512BW.
+///
+/// Falls through to [`decode_avx2`] for the tail. On validation failure,
+/// falls back to scalar for precise error position.
+///
+/// # Safety
+///
+/// Caller must ensure the CPU supports AVX-512BW.
+#[target_feature(enable = "avx512bw")]
+pub(crate) unsafe fn decode_avx512(
+    input: &[u8],
+    output: &mut [MaybeUninit<u8>],
+) -> Result<(), Error> {
+    // SAFETY: caller guarantees AVX-512BW.
+    unsafe { decode_avx512_inner::<true>(input, output) }
+}
+
+/// Constant-time hex-decode `input` into `output` using AVX-512BW.
+///
+/// Processes all chunks without short-circuiting on invalid input.
+/// Falls through to [`ct_decode_avx2`] for the tail.
+/// Returns `Err(Error::InvalidEncoding)` if any byte was invalid.
+///
+/// # Safety
+///
+/// Caller must ensure the CPU supports AVX-512BW.
+#[target_feature(enable = "avx512bw")]
+pub(crate) unsafe fn ct_decode_avx512(
+    input: &[u8],
+    output: &mut [MaybeUninit<u8>],
+) -> Result<(), Error> {
+    // SAFETY: caller guarantees AVX-512BW.
+    unsafe { decode_avx512_inner::<false>(input, output) }
+}
