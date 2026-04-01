@@ -136,11 +136,7 @@ pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error>
         out_byte.write(((hi << 4) | lo) as u8);
     }
 
-    if err != 0 {
-        Err(Error::InvalidEncoding)
-    } else {
-        Ok(())
-    }
+    if err != 0 { Err(Error::InvalidEncoding) } else { Ok(()) }
 }
 
 /// Constant-time hex validator.
@@ -217,10 +213,7 @@ mod tests {
             let val = ct_decode_nibble(byte);
             if valid {
                 // Valid bytes produce a value in 0..=15 with no high bits set.
-                assert!(
-                    val <= 15,
-                    "valid byte 0x{byte:02x} produced out-of-range nibble {val}"
-                );
+                assert!(val <= 15, "valid byte 0x{byte:02x} produced out-of-range nibble {val}");
             } else {
                 // Invalid bytes must signal error via high bit.
                 assert!(
@@ -245,10 +238,8 @@ mod tests {
         encode::<false>(&input, &mut lower_out);
 
         // Collect the initialized hex ASCII bytes.
-        let upper_bytes: [u8; 512] =
-            core::array::from_fn(|i| unsafe { upper_out[i].assume_init() });
-        let lower_bytes: [u8; 512] =
-            core::array::from_fn(|i| unsafe { lower_out[i].assume_init() });
+        let upper_bytes: [u8; 512] = core::array::from_fn(|i| unsafe { upper_out[i].assume_init() });
+        let lower_bytes: [u8; 512] = core::array::from_fn(|i| unsafe { lower_out[i].assume_init() });
 
         // Decode back and compare.
         let mut decoded = [MaybeUninit::uninit(); 256];
@@ -278,12 +269,7 @@ mod tests {
         let inputs: &[&[u8]] = &[b"zz", b"zg", b"gz"];
         for &inp in inputs {
             let mut out = [MaybeUninit::uninit(); 1];
-            assert_eq!(
-                decode(inp, &mut out),
-                Err(Error::InvalidEncoding),
-                "input {:?}",
-                inp
-            );
+            assert_eq!(decode(inp, &mut out), Err(Error::InvalidEncoding), "input {:?}", inp);
         }
     }
 

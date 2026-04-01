@@ -1,16 +1,13 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 #[cfg(feature = "_bench_internals")]
-use better_hex::bench_internals::{scalar, ct_scalar, dispatched_check, dispatched_ct_check};
+use better_hex::bench_internals::{ct_scalar, dispatched_check, dispatched_ct_check, scalar};
 
 const SIZES: &[usize] = &[4, 32, 64, 256, 1024, 4096, 16384];
 
 /// Pre-encode `size` bytes to valid lowercase hex for use as check input.
 fn make_hex(size: usize) -> Vec<u8> {
-    let input: Vec<u8> = (0u8..=(size as u8).wrapping_sub(1))
-        .cycle()
-        .take(size)
-        .collect();
+    let input: Vec<u8> = (0u8..=(size as u8).wrapping_sub(1)).cycle().take(size).collect();
     let mut hex = vec![0u8; size * 2];
     better_hex::encode_to_slice(&input, &mut hex).unwrap();
     hex
@@ -37,16 +34,12 @@ fn bench_check(c: &mut Criterion) {
 
         #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
         group.bench_with_input(BenchmarkId::new("neon", size), &size, |b, _| {
-            b.iter(|| {
-                better_hex::bench_internals::neon::check(std::hint::black_box(hex.as_slice()))
-            })
+            b.iter(|| better_hex::bench_internals::neon::check(std::hint::black_box(hex.as_slice())))
         });
 
         #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
         group.bench_with_input(BenchmarkId::new("neon_ct", size), &size, |b, _| {
-            b.iter(|| {
-                better_hex::bench_internals::neon::ct_check(std::hint::black_box(hex.as_slice()))
-            })
+            b.iter(|| better_hex::bench_internals::neon::ct_check(std::hint::black_box(hex.as_slice())))
         });
 
         group.bench_with_input(BenchmarkId::new("dispatched", size), &size, |b, _| {

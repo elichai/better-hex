@@ -13,9 +13,7 @@ use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, 
 
 const SIZES: &[usize] = &[4, 32, 64, 256, 1024, 4096, 16384];
 
-const TAIL_SIZES: &[usize] = &[
-    4, 15, 17, 31, 33, 63, 65, 127, 129, 255, 257, 1023, 4096, 16384,
-];
+const TAIL_SIZES: &[usize] = &[4, 15, 17, 31, 33, 63, 65, 127, 129, 255, 257, 1023, 4096, 16384];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -87,9 +85,7 @@ fn bench_encode_to_slice(c: &mut Criterion) {
 
         #[cfg(feature = "_bench_const_hex")]
         group.bench_with_input(BenchmarkId::new("const_hex", size), &input, |b, inp| {
-            b.iter(|| {
-                const_hex::encode_to_slice(black_box(inp), black_box(dst.as_mut_slice()))
-            });
+            b.iter(|| const_hex::encode_to_slice(black_box(inp), black_box(dst.as_mut_slice())));
         });
 
         #[cfg(feature = "_bench_faster_hex")]
@@ -130,9 +126,7 @@ fn bench_decode_alloc(c: &mut Criterion) {
         {
             let mut dst = vec![0u8; size];
             group.bench_with_input(BenchmarkId::new("faster_hex", size), &hex, |b, h| {
-                b.iter(|| {
-                    faster_hex::hex_decode(black_box(h.as_slice()), black_box(dst.as_mut_slice()))
-                });
+                b.iter(|| faster_hex::hex_decode(black_box(h.as_slice()), black_box(dst.as_mut_slice())));
             });
         }
 
@@ -168,16 +162,12 @@ fn bench_decode_to_slice(c: &mut Criterion) {
         // const_hex::decode_to_slice accepts AsRef<[u8]>.
         #[cfg(feature = "_bench_const_hex")]
         group.bench_with_input(BenchmarkId::new("const_hex", size), &hex, |b, h| {
-            b.iter(|| {
-                const_hex::decode_to_slice(black_box(h.as_slice()), black_box(dst.as_mut_slice()))
-            });
+            b.iter(|| const_hex::decode_to_slice(black_box(h.as_slice()), black_box(dst.as_mut_slice())));
         });
 
         #[cfg(feature = "_bench_faster_hex")]
         group.bench_with_input(BenchmarkId::new("faster_hex", size), &hex, |b, h| {
-            b.iter(|| {
-                faster_hex::hex_decode(black_box(h.as_slice()), black_box(dst.as_mut_slice()))
-            });
+            b.iter(|| faster_hex::hex_decode(black_box(h.as_slice()), black_box(dst.as_mut_slice())));
         });
     }
 
@@ -274,25 +264,17 @@ fn bench_serde_serialize(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(size as u64));
 
         let bh_val = BetterHexWrap { data: data.clone() };
-        group.bench_with_input(
-            BenchmarkId::new("better_hex", size),
-            &bh_val,
-            |b, val| {
-                b.iter(|| serde_json::to_string(black_box(val)).unwrap());
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("better_hex", size), &bh_val, |b, val| {
+            b.iter(|| serde_json::to_string(black_box(val)).unwrap());
+        });
 
         #[cfg(feature = "_bench_const_hex")]
         {
             use serde_bench::ConstHexWrap;
             let ch_val = ConstHexWrap { data: data.clone() };
-            group.bench_with_input(
-                BenchmarkId::new("const_hex", size),
-                &ch_val,
-                |b, val| {
-                    b.iter(|| serde_json::to_string(black_box(val)).unwrap());
-                },
-            );
+            group.bench_with_input(BenchmarkId::new("const_hex", size), &ch_val, |b, val| {
+                b.iter(|| serde_json::to_string(black_box(val)).unwrap());
+            });
         }
     }
 
@@ -311,28 +293,18 @@ fn bench_serde_deserialize(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(size as u64));
 
         // Pre-build JSON strings outside the measurement loop.
-        let bh_json =
-            serde_json::to_string(&BetterHexWrap { data: data.clone() }).unwrap();
-        group.bench_with_input(
-            BenchmarkId::new("better_hex", size),
-            &bh_json,
-            |b, json| {
-                b.iter(|| serde_json::from_str::<BetterHexWrap>(black_box(json)).unwrap());
-            },
-        );
+        let bh_json = serde_json::to_string(&BetterHexWrap { data: data.clone() }).unwrap();
+        group.bench_with_input(BenchmarkId::new("better_hex", size), &bh_json, |b, json| {
+            b.iter(|| serde_json::from_str::<BetterHexWrap>(black_box(json)).unwrap());
+        });
 
         #[cfg(feature = "_bench_const_hex")]
         {
             use serde_bench::ConstHexWrap;
-            let ch_json =
-                serde_json::to_string(&ConstHexWrap { data: data.clone() }).unwrap();
-            group.bench_with_input(
-                BenchmarkId::new("const_hex", size),
-                &ch_json,
-                |b, json| {
-                    b.iter(|| serde_json::from_str::<ConstHexWrap>(black_box(json)).unwrap());
-                },
-            );
+            let ch_json = serde_json::to_string(&ConstHexWrap { data: data.clone() }).unwrap();
+            group.bench_with_input(BenchmarkId::new("const_hex", size), &ch_json, |b, json| {
+                b.iter(|| serde_json::from_str::<ConstHexWrap>(black_box(json)).unwrap());
+            });
         }
     }
 

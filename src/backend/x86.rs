@@ -64,10 +64,7 @@ use core::mem::MaybeUninit;
 ///
 /// Caller must ensure the CPU supports SSSE3.
 #[target_feature(enable = "ssse3")]
-pub(crate) unsafe fn encode_ssse3<const UPPER: bool>(
-    input: &[u8],
-    output: &mut [MaybeUninit<u8>],
-) {
+pub(crate) unsafe fn encode_ssse3<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
     debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
 
     // SAFETY: all intrinsics below require SSSE3, guaranteed by #[target_feature].
@@ -135,22 +132,15 @@ pub(crate) unsafe fn encode_ssse3<const UPPER: bool>(
 ///
 /// Caller must ensure the CPU supports AVX2.
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn encode_avx2<const UPPER: bool>(
-    input: &[u8],
-    output: &mut [MaybeUninit<u8>],
-) {
+pub(crate) unsafe fn encode_avx2<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
     debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
 
     // SAFETY: all intrinsics below require AVX2, guaranteed by #[target_feature].
     unsafe {
         let lut = if UPPER {
-            _mm256_broadcastsi128_si256(_mm_loadu_si128(
-                b"0123456789ABCDEF".as_ptr().cast(),
-            ))
+            _mm256_broadcastsi128_si256(_mm_loadu_si128(b"0123456789ABCDEF".as_ptr().cast()))
         } else {
-            _mm256_broadcastsi128_si256(_mm_loadu_si128(
-                b"0123456789abcdef".as_ptr().cast(),
-            ))
+            _mm256_broadcastsi128_si256(_mm_loadu_si128(b"0123456789abcdef".as_ptr().cast()))
         };
         let mask_lo = _mm256_set1_epi8(0x0F);
 
@@ -247,7 +237,14 @@ unsafe fn decode_delta_rebase_128() -> __m128i {
         0,
         -87 + 1, // hash 6: lowercase 'a'-'f'
         0,
-        0, 0, 0, 0, 0, 0, 0, 0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
     )
 }
 
@@ -376,10 +373,7 @@ unsafe fn decode_ssse3_inner<const SHORT_CIRCUIT: bool>(
 ///
 /// Caller must ensure the CPU supports SSSE3.
 #[target_feature(enable = "ssse3")]
-pub(crate) unsafe fn decode_ssse3(
-    input: &[u8],
-    output: &mut [MaybeUninit<u8>],
-) -> Result<(), Error> {
+pub(crate) unsafe fn decode_ssse3(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     // SAFETY: caller guarantees SSSE3.
     unsafe { decode_ssse3_inner::<true>(input, output) }
 }
@@ -393,10 +387,7 @@ pub(crate) unsafe fn decode_ssse3(
 ///
 /// Caller must ensure the CPU supports SSSE3.
 #[target_feature(enable = "ssse3")]
-pub(crate) unsafe fn ct_decode_ssse3(
-    input: &[u8],
-    output: &mut [MaybeUninit<u8>],
-) -> Result<(), Error> {
+pub(crate) unsafe fn ct_decode_ssse3(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     // SAFETY: caller guarantees SSSE3.
     unsafe { decode_ssse3_inner::<false>(input, output) }
 }
@@ -495,14 +486,8 @@ unsafe fn decode_avx2_inner<const SHORT_CIRCUIT: bool>(
 
             // Store low 16 bytes of each decoded __m256i.
             let out_ptr = output.as_mut_ptr().add(o);
-            _mm_storeu_si128(
-                out_ptr.cast(),
-                _mm256_castsi256_si128(decoded0),
-            );
-            _mm_storeu_si128(
-                out_ptr.add(16).cast(),
-                _mm256_castsi256_si128(decoded1),
-            );
+            _mm_storeu_si128(out_ptr.cast(), _mm256_castsi256_si128(decoded0));
+            _mm_storeu_si128(out_ptr.add(16).cast(), _mm256_castsi256_si128(decoded1));
 
             i += 64;
             o += 32;
@@ -539,10 +524,7 @@ unsafe fn decode_avx2_inner<const SHORT_CIRCUIT: bool>(
 ///
 /// Caller must ensure the CPU supports AVX2.
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn decode_avx2(
-    input: &[u8],
-    output: &mut [MaybeUninit<u8>],
-) -> Result<(), Error> {
+pub(crate) unsafe fn decode_avx2(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     // SAFETY: caller guarantees AVX2.
     unsafe { decode_avx2_inner::<true>(input, output) }
 }
@@ -557,10 +539,7 @@ pub(crate) unsafe fn decode_avx2(
 ///
 /// Caller must ensure the CPU supports AVX2.
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn ct_decode_avx2(
-    input: &[u8],
-    output: &mut [MaybeUninit<u8>],
-) -> Result<(), Error> {
+pub(crate) unsafe fn ct_decode_avx2(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     // SAFETY: caller guarantees AVX2.
     unsafe { decode_avx2_inner::<false>(input, output) }
 }
@@ -677,10 +656,7 @@ pub(crate) unsafe fn ct_check_ssse3(input: &[u8]) -> bool {
 ///
 /// Caller must ensure the CPU supports AVX-512BW.
 #[target_feature(enable = "avx512bw")]
-pub(crate) unsafe fn encode_avx512<const UPPER: bool>(
-    input: &[u8],
-    output: &mut [MaybeUninit<u8>],
-) {
+pub(crate) unsafe fn encode_avx512<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
     debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
 
     // SAFETY: all intrinsics below require AVX-512BW (implies AVX-512F),
@@ -817,8 +793,10 @@ unsafe fn decode_avx512_inner<const SHORT_CIRCUIT: bool>(
             let chunk0 = _mm512_loadu_si512(input.as_ptr().add(i).cast());
             let chunk1 = _mm512_loadu_si512(input.as_ptr().add(i + 64).cast());
 
-            let (decoded0, mask0) = decode_chunk_512(chunk0, delta_check, delta_rebase, one, mask_hi, weights, perm_idx);
-            let (decoded1, mask1) = decode_chunk_512(chunk1, delta_check, delta_rebase, one, mask_hi, weights, perm_idx);
+            let (decoded0, mask0) =
+                decode_chunk_512(chunk0, delta_check, delta_rebase, one, mask_hi, weights, perm_idx);
+            let (decoded1, mask1) =
+                decode_chunk_512(chunk1, delta_check, delta_rebase, one, mask_hi, weights, perm_idx);
 
             // Fuse: OR masks, then a single branch.
             let combined_mask = mask0 | mask1;
@@ -833,14 +811,8 @@ unsafe fn decode_avx512_inner<const SHORT_CIRCUIT: bool>(
 
             // Store low 32 bytes of each decoded __m512i.
             let out_ptr = output.as_mut_ptr().add(o);
-            _mm256_storeu_si256(
-                out_ptr.cast(),
-                _mm512_castsi512_si256(decoded0),
-            );
-            _mm256_storeu_si256(
-                out_ptr.add(32).cast(),
-                _mm512_castsi512_si256(decoded1),
-            );
+            _mm256_storeu_si256(out_ptr.cast(), _mm512_castsi512_si256(decoded0));
+            _mm256_storeu_si256(out_ptr.add(32).cast(), _mm512_castsi512_si256(decoded1));
 
             i += 128;
             o += 64;
@@ -877,10 +849,7 @@ unsafe fn decode_avx512_inner<const SHORT_CIRCUIT: bool>(
 ///
 /// Caller must ensure the CPU supports AVX-512BW.
 #[target_feature(enable = "avx512bw")]
-pub(crate) unsafe fn decode_avx512(
-    input: &[u8],
-    output: &mut [MaybeUninit<u8>],
-) -> Result<(), Error> {
+pub(crate) unsafe fn decode_avx512(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     // SAFETY: caller guarantees AVX-512BW.
     unsafe { decode_avx512_inner::<true>(input, output) }
 }
@@ -895,10 +864,7 @@ pub(crate) unsafe fn decode_avx512(
 ///
 /// Caller must ensure the CPU supports AVX-512BW.
 #[target_feature(enable = "avx512bw")]
-pub(crate) unsafe fn ct_decode_avx512(
-    input: &[u8],
-    output: &mut [MaybeUninit<u8>],
-) -> Result<(), Error> {
+pub(crate) unsafe fn ct_decode_avx512(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     // SAFETY: caller guarantees AVX-512BW.
     unsafe { decode_avx512_inner::<false>(input, output) }
 }

@@ -78,14 +78,9 @@ pub(crate) fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<
         // output[2k+1] = lo_ascii[k].
         //
         // First 16 output bytes (positions 0..8 from each vector):
-        let out0 = u8x16_shuffle::<0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23>(
-            hi_ascii, lo_ascii,
-        );
+        let out0 = u8x16_shuffle::<0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23>(hi_ascii, lo_ascii);
         // Second 16 output bytes (positions 8..16 from each vector):
-        let out1 =
-            u8x16_shuffle::<8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31>(
-                hi_ascii, lo_ascii,
-            );
+        let out1 = u8x16_shuffle::<8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31>(hi_ascii, lo_ascii);
 
         // SAFETY: dst has at least 32 bytes of MaybeUninit<u8>.
         unsafe {
@@ -112,10 +107,7 @@ pub(crate) fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<
 /// bits across every chunk without branching on validity, then delegates the
 /// tail to `ct_scalar::decode`.
 #[inline]
-fn decode_inner<const SHORT_CIRCUIT: bool>(
-    input: &[u8],
-    output: &mut [MaybeUninit<u8>],
-) -> Result<(), Error> {
+fn decode_inner<const SHORT_CIRCUIT: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     debug_assert_eq!(output.len(), input.len() / 2, "output buffer wrong size for decode");
     debug_assert!(input.len() % 2 == 0, "input length must be even");
 
@@ -154,7 +146,10 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(
                 // Fall back to scalar on the remaining input to get precise error info.
                 let consumed = i * 32;
                 return scalar::decode(&input[consumed..], &mut output[consumed / 2..]).map_err(|e| match e {
-                    Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + consumed },
+                    Error::InvalidChar { byte, index } => Error::InvalidChar {
+                        byte,
+                        index: index + consumed,
+                    },
                     other => other,
                 });
             }
@@ -169,12 +164,8 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(
         // nib1 contains nibbles for hex chars at positions 16..31.
         // Even positions (0,2,4,...) are the high nibbles of each output byte,
         // odd positions (1,3,5,...) are the low nibbles.
-        let hi = u8x16_shuffle::<0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30>(
-            nibbles0, nibbles1,
-        );
-        let lo = u8x16_shuffle::<1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31>(
-            nibbles0, nibbles1,
-        );
+        let hi = u8x16_shuffle::<0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30>(nibbles0, nibbles1);
+        let lo = u8x16_shuffle::<1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31>(nibbles0, nibbles1);
         let packed = v128_or(u8x16_shl(hi, 4), lo);
 
         // SAFETY: dst has at least 16 bytes of MaybeUninit<u8>.
@@ -188,7 +179,10 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(
     if consumed < input.len() {
         if SHORT_CIRCUIT {
             scalar::decode(&input[consumed..], &mut output[consumed / 2..]).map_err(|e| match e {
-                Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + consumed },
+                Error::InvalidChar { byte, index } => Error::InvalidChar {
+                    byte,
+                    index: index + consumed,
+                },
                 other => other,
             })?;
         } else {
@@ -279,18 +273,9 @@ fn check_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
         //   '0' (0x30) ..= '9' (0x39)
         //   'A' (0x41) ..= 'F' (0x46)
         //   'a' (0x61) ..= 'f' (0x66)
-        let is_digit = v128_and(
-            u8x16_ge(v, u8x16_splat(b'0')),
-            u8x16_le(v, u8x16_splat(b'9')),
-        );
-        let is_upper = v128_and(
-            u8x16_ge(v, u8x16_splat(b'A')),
-            u8x16_le(v, u8x16_splat(b'F')),
-        );
-        let is_lower = v128_and(
-            u8x16_ge(v, u8x16_splat(b'a')),
-            u8x16_le(v, u8x16_splat(b'f')),
-        );
+        let is_digit = v128_and(u8x16_ge(v, u8x16_splat(b'0')), u8x16_le(v, u8x16_splat(b'9')));
+        let is_upper = v128_and(u8x16_ge(v, u8x16_splat(b'A')), u8x16_le(v, u8x16_splat(b'F')));
+        let is_lower = v128_and(u8x16_ge(v, u8x16_splat(b'a')), u8x16_le(v, u8x16_splat(b'f')));
 
         let is_hex = v128_or(v128_or(is_digit, is_upper), is_lower);
 

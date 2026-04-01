@@ -109,7 +109,9 @@ struct Tx {
 
 #[test]
 fn roundtrip_vec_lowercase() {
-    let original = WithVec { data: vec![0xde, 0xad, 0xbe, 0xef] };
+    let original = WithVec {
+        data: vec![0xde, 0xad, 0xbe, 0xef],
+    };
     let json = serde_json::to_string(&original).unwrap();
     assert_eq!(json, r#"{"data":"deadbeef"}"#);
     let decoded: WithVec = serde_json::from_str(&json).unwrap();
@@ -118,7 +120,9 @@ fn roundtrip_vec_lowercase() {
 
 #[test]
 fn roundtrip_array_lowercase() {
-    let original = WithArray { data: [0xde, 0xad, 0xbe, 0xef] };
+    let original = WithArray {
+        data: [0xde, 0xad, 0xbe, 0xef],
+    };
     let json = serde_json::to_string(&original).unwrap();
     assert_eq!(json, r#"{"data":"deadbeef"}"#);
     let decoded: WithArray = serde_json::from_str(&json).unwrap();
@@ -200,7 +204,9 @@ fn deserialize_wrong_array_length_returns_error() {
 
 #[test]
 fn roundtrip_vec_upper() {
-    let original = WithUpper { data: vec![0xde, 0xad, 0xbe, 0xef] };
+    let original = WithUpper {
+        data: vec![0xde, 0xad, 0xbe, 0xef],
+    };
     let json = serde_json::to_string(&original).unwrap();
     assert_eq!(json, r#"{"data":"DEADBEEF"}"#);
     let decoded: WithUpper = serde_json::from_str(&json).unwrap();
@@ -209,7 +215,9 @@ fn roundtrip_vec_upper() {
 
 #[test]
 fn roundtrip_array_upper() {
-    let original = WithUpperArray { data: [0x0a, 0x0b, 0x0c, 0x0d] };
+    let original = WithUpperArray {
+        data: [0x0a, 0x0b, 0x0c, 0x0d],
+    };
     let json = serde_json::to_string(&original).unwrap();
     assert_eq!(json, r#"{"data":"0A0B0C0D"}"#);
     let decoded: WithUpperArray = serde_json::from_str(&json).unwrap();
@@ -220,7 +228,9 @@ fn roundtrip_array_upper() {
 
 #[test]
 fn roundtrip_vec_prefixed() {
-    let original = WithPrefixed { data: vec![0xde, 0xad, 0xbe, 0xef] };
+    let original = WithPrefixed {
+        data: vec![0xde, 0xad, 0xbe, 0xef],
+    };
     let json = serde_json::to_string(&original).unwrap();
     assert_eq!(json, r#"{"data":"0xdeadbeef"}"#);
     let decoded: WithPrefixed = serde_json::from_str(&json).unwrap();
@@ -229,7 +239,9 @@ fn roundtrip_vec_prefixed() {
 
 #[test]
 fn roundtrip_array_prefixed() {
-    let original = WithPrefixedArray { data: [0xca, 0xfe, 0xba, 0xbe] };
+    let original = WithPrefixedArray {
+        data: [0xca, 0xfe, 0xba, 0xbe],
+    };
     let json = serde_json::to_string(&original).unwrap();
     assert_eq!(json, r#"{"data":"0xcafebabe"}"#);
     let decoded: WithPrefixedArray = serde_json::from_str(&json).unwrap();
@@ -256,7 +268,9 @@ fn prefixed_empty_vec() {
 
 #[test]
 fn roundtrip_vec_upper_prefixed() {
-    let original = WithUpperPrefixed { data: vec![0xde, 0xad, 0xbe, 0xef] };
+    let original = WithUpperPrefixed {
+        data: vec![0xde, 0xad, 0xbe, 0xef],
+    };
     let json = serde_json::to_string(&original).unwrap();
     assert_eq!(json, r#"{"data":"0xDEADBEEF"}"#);
     let decoded: WithUpperPrefixed = serde_json::from_str(&json).unwrap();
@@ -265,7 +279,9 @@ fn roundtrip_vec_upper_prefixed() {
 
 #[test]
 fn roundtrip_array_upper_prefixed() {
-    let original = WithUpperPrefixedArray { data: [0x01, 0x23, 0x45, 0x67] };
+    let original = WithUpperPrefixedArray {
+        data: [0x01, 0x23, 0x45, 0x67],
+    };
     let json = serde_json::to_string(&original).unwrap();
     assert_eq!(json, r#"{"data":"0x01234567"}"#);
     let decoded: WithUpperPrefixedArray = serde_json::from_str(&json).unwrap();
@@ -276,7 +292,9 @@ fn roundtrip_array_upper_prefixed() {
 
 #[test]
 fn ct_roundtrip_array() {
-    let original = WithCt { data: [0xde, 0xad, 0xbe, 0xef] };
+    let original = WithCt {
+        data: [0xde, 0xad, 0xbe, 0xef],
+    };
     let json = serde_json::to_string(&original).unwrap();
     assert_eq!(json, r#"{"data":"deadbeef"}"#);
     let decoded: WithCt = serde_json::from_str(&json).unwrap();
@@ -301,7 +319,10 @@ fn ct_output_matches_fast_output() {
     let ct = WithCt { data };
     let fast_json = serde_json::to_string(&fast).unwrap();
     let ct_json = serde_json::to_string(&ct).unwrap();
-    assert_eq!(fast_json, ct_json, "CT and fast serialization must produce identical output");
+    assert_eq!(
+        fast_json, ct_json,
+        "CT and fast serialization must produce identical output"
+    );
 }
 
 #[test]
@@ -323,7 +344,9 @@ fn ct_deserialize_wrong_length_returns_error() {
 
 #[test]
 fn ct_upper_roundtrip() {
-    let original = WithCtUpper { data: [0xde, 0xad, 0xbe, 0xef] };
+    let original = WithCtUpper {
+        data: [0xde, 0xad, 0xbe, 0xef],
+    };
     let json = serde_json::to_string(&original).unwrap();
     assert_eq!(json, r#"{"data":"DEADBEEF"}"#);
     let decoded: WithCtUpper = serde_json::from_str(&json).unwrap();
@@ -334,7 +357,9 @@ fn ct_upper_roundtrip() {
 
 #[test]
 fn ct_prefixed_roundtrip() {
-    let original = WithCtPrefixed { data: [0xde, 0xad, 0xbe, 0xef] };
+    let original = WithCtPrefixed {
+        data: [0xde, 0xad, 0xbe, 0xef],
+    };
     let json = serde_json::to_string(&original).unwrap();
     assert_eq!(json, r#"{"data":"0xdeadbeef"}"#);
     let decoded: WithCtPrefixed = serde_json::from_str(&json).unwrap();
@@ -352,7 +377,9 @@ fn ct_prefixed_missing_prefix_returns_error() {
 
 #[test]
 fn ct_upper_prefixed_roundtrip() {
-    let original = WithCtUpperPrefixed { data: [0xde, 0xad, 0xbe, 0xef] };
+    let original = WithCtUpperPrefixed {
+        data: [0xde, 0xad, 0xbe, 0xef],
+    };
     let json = serde_json::to_string(&original).unwrap();
     assert_eq!(json, r#"{"data":"0xDEADBEEF"}"#);
     let decoded: WithCtUpperPrefixed = serde_json::from_str(&json).unwrap();
@@ -369,7 +396,10 @@ fn tx_roundtrip() {
         address: vec![0xca, 0xfe],
     };
     let json = serde_json::to_string(&tx).unwrap();
-    assert_eq!(json, r#"{"hash":"01020304","secret_key":"deadbeef","address":"0xcafe"}"#);
+    assert_eq!(
+        json,
+        r#"{"hash":"01020304","secret_key":"deadbeef","address":"0xcafe"}"#
+    );
     let decoded: Tx = serde_json::from_str(&json).unwrap();
     assert_eq!(decoded, tx);
 }
@@ -398,7 +428,9 @@ fn ct_deserialize_odd_length() {
 
 #[test]
 fn ct_vec_roundtrip() {
-    let original = CtHexVec { data: vec![0xde, 0xad, 0xbe, 0xef] };
+    let original = CtHexVec {
+        data: vec![0xde, 0xad, 0xbe, 0xef],
+    };
     let json = serde_json::to_string(&original).unwrap();
     assert_eq!(json, r#"{"data":"deadbeef"}"#);
     let decoded: CtHexVec = serde_json::from_str(&json).unwrap();
@@ -427,7 +459,9 @@ fn upper_prefixed_vec_roundtrip() {
 
 #[test]
 fn ct_upper_vec_roundtrip() {
-    let original = WithCtUpper { data: [0xab, 0xcd, 0xef, 0x01] };
+    let original = WithCtUpper {
+        data: [0xab, 0xcd, 0xef, 0x01],
+    };
     let json = serde_json::to_string(&original).unwrap();
     let decoded: WithCtUpper = serde_json::from_str(&json).unwrap();
     assert_eq!(decoded, original);
@@ -435,7 +469,9 @@ fn ct_upper_vec_roundtrip() {
 
 #[test]
 fn ct_prefixed_vec_roundtrip() {
-    let original = WithCtPrefixed { data: [0xab, 0xcd, 0xef, 0x01] };
+    let original = WithCtPrefixed {
+        data: [0xab, 0xcd, 0xef, 0x01],
+    };
     let json = serde_json::to_string(&original).unwrap();
     let decoded: WithCtPrefixed = serde_json::from_str(&json).unwrap();
     assert_eq!(decoded, original);
@@ -549,7 +585,9 @@ fn array_wrong_length_fast_path_returns_error() {
 #[test]
 fn ct_upper_prefixed_serialization_format() {
     // Explicitly verify both upper=true and prefix=true in the CT adapter.
-    let original = WithCtUpperPrefixed { data: [0xde, 0xad, 0xbe, 0xef] };
+    let original = WithCtUpperPrefixed {
+        data: [0xde, 0xad, 0xbe, 0xef],
+    };
     let json = serde_json::to_string(&original).unwrap();
     assert_eq!(json, r#"{"data":"0xDEADBEEF"}"#);
     let decoded: WithCtUpperPrefixed = serde_json::from_str(&json).unwrap();

@@ -67,24 +67,6 @@ pub fn check_raw(input: &[u8]) -> bool {
     backend::check(input)
 }
 
-/// Internal: decode hex into a Vec using the backend directly.
-/// Used by the `FromHex` impl for `Vec<u8>`.
-#[cfg(feature = "alloc")]
-pub(crate) fn decode_vec(input: &[u8]) -> Result<alloc::vec::Vec<u8>, Error> {
-    if !input.len().is_multiple_of(2) {
-        return Err(Error::InvalidLength {
-            expected: input.len() + 1,
-            got: input.len(),
-        });
-    }
-    let len = input.len() / 2;
-    let mut out = alloc::vec::Vec::with_capacity(len);
-    backend::decode(input, &mut out.spare_capacity_mut()[..len])?;
-    // SAFETY: backend wrote exactly `len` valid bytes.
-    unsafe { out.set_len(len) };
-    Ok(out)
-}
-
 /// Internal: decode hex into a fixed-size array using the backend directly.
 /// Used by the `FromHex` impl for `[u8; N]`.
 pub(crate) fn decode_array<const N: usize>(input: &[u8]) -> Result<[u8; N], Error> {

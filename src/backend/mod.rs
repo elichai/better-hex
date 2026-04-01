@@ -19,28 +19,17 @@
 //! The inner backend functions work with `MaybeUninit<u8>` output buffers
 //! to avoid unnecessary zeroing.
 
-pub mod scalar;
 pub mod ct_scalar;
+pub mod scalar;
 
 // Conditionally compile SIMD submodules.
-#[cfg(all(
-    not(feature = "disable-simd"),
-    target_arch = "aarch64",
-    target_feature = "neon"
-))]
+#[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
 pub mod neon;
 
-#[cfg(all(
-    not(feature = "disable-simd"),
-    any(target_arch = "x86", target_arch = "x86_64")
-))]
+#[cfg(all(not(feature = "disable-simd"), any(target_arch = "x86", target_arch = "x86_64")))]
 pub mod x86;
 
-#[cfg(all(
-    not(feature = "disable-simd"),
-    target_arch = "wasm32",
-    target_feature = "simd128"
-))]
+#[cfg(all(not(feature = "disable-simd"), target_arch = "wasm32", target_feature = "simd128"))]
 pub mod wasm;
 
 use crate::error::Error;

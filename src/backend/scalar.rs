@@ -2,7 +2,7 @@
 //!
 //! # Encoding algorithm
 //!
-//! Uses a 16-byte lookup table ([`HEX_LOWER`] / [`HEX_UPPER`]) indexed by
+//! Uses a 16-byte lookup table (`HEX_LOWER` / `HEX_UPPER`) indexed by
 //! nibble value. For each input byte:
 //! 1. High nibble: `table[byte >> 4]` → first hex character.
 //! 2. Low nibble:  `table[byte & 0x0F]` → second hex character.
@@ -13,8 +13,8 @@
 //!
 //! # Decoding algorithm
 //!
-//! Uses a 256-byte lookup table ([`DECODE_LUT`]) that maps each ASCII byte to
-//! its nibble value (0–15) or [`NIL`] (0xFF) for invalid characters. For each
+//! Uses a 256-byte lookup table (`DECODE_LUT`) that maps each ASCII byte to
+//! its nibble value (0–15) or `NIL` (0xFF) for invalid characters. For each
 //! pair of input hex characters:
 //! 1. `hi = DECODE_LUT[pair[0]]`, `lo = DECODE_LUT[pair[1]]`
 //! 2. If either is `NIL`, return `InvalidChar` error.
@@ -36,10 +36,10 @@ use core::mem::MaybeUninit;
 /// Indexed by `byte >> 4` (high nibble) or `byte & 0x0f` (low nibble).
 const HEX_LOWER: [u8; 16] = *b"0123456789abcdef";
 
-/// Same as [`HEX_LOWER`] but with uppercase letters (`b'A'..=b'F'`).
+/// Same as `HEX_LOWER` but with uppercase letters (`b'A'..=b'F'`).
 const HEX_UPPER: [u8; 16] = *b"0123456789ABCDEF";
 
-/// Sentinel value stored in [`DECODE_LUT`] for bytes that are not valid hex characters.
+/// Sentinel value stored in `DECODE_LUT` for bytes that are not valid hex characters.
 const NIL: u8 = u8::MAX;
 
 /// 256-byte lookup table mapping ASCII byte values to nibble values (0–15).
@@ -51,7 +51,7 @@ const NIL: u8 = u8::MAX;
 /// - `b'a'..=b'f'` → maps to `10..=15`
 /// - `b'A'..=b'F'` → maps to `10..=15`
 ///
-/// All other entries are [`NIL`] (`0xFF`), allowing callers to detect invalid
+/// All other entries are `NIL` (`0xFF`), allowing callers to detect invalid
 /// characters by comparing the lookup result against `NIL`.
 ///
 /// Both uppercase and lowercase letters map to the same nibble values,
@@ -111,8 +111,8 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
 ///
 /// # Algorithm
 ///
-/// For each pair of input hex ASCII bytes, looks up both in [`DECODE_LUT`].
-/// If either maps to [`NIL`], returns `InvalidChar` with the offending byte
+/// For each pair of input hex ASCII bytes, looks up both in `DECODE_LUT`.
+/// If either maps to `NIL`, returns `InvalidChar` with the offending byte
 /// and its index. Otherwise combines the two nibbles: `(hi << 4) | lo`.
 ///
 /// # Safety contract
@@ -145,7 +145,7 @@ pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error>
 
 /// Check if every byte in `input` is a valid hex ASCII character.
 ///
-/// Uses [`DECODE_LUT`]: a byte is valid iff its LUT entry is not [`NIL`].
+/// Uses `DECODE_LUT`: a byte is valid iff its LUT entry is not `NIL`.
 pub fn check(input: &[u8]) -> bool {
     input.iter().all(|&b| DECODE_LUT[b as usize] != NIL)
 }
@@ -154,7 +154,7 @@ pub fn check(input: &[u8]) -> bool {
 mod tests {
     use super::*;
 
-    /// Verify [`DECODE_LUT`] maps digits correctly.
+    /// Verify `DECODE_LUT` maps digits correctly.
     #[test]
     fn decode_lut_digits() {
         for (i, ch) in (b'0'..=b'9').enumerate() {
@@ -162,7 +162,7 @@ mod tests {
         }
     }
 
-    /// Verify [`DECODE_LUT`] maps lowercase letters correctly.
+    /// Verify `DECODE_LUT` maps lowercase letters correctly.
     #[test]
     fn decode_lut_lowercase() {
         for (i, ch) in (b'a'..=b'f').enumerate() {
@@ -175,7 +175,7 @@ mod tests {
         }
     }
 
-    /// Verify [`DECODE_LUT`] maps uppercase letters correctly.
+    /// Verify `DECODE_LUT` maps uppercase letters correctly.
     #[test]
     fn decode_lut_uppercase() {
         for (i, ch) in (b'A'..=b'F').enumerate() {
@@ -188,7 +188,7 @@ mod tests {
         }
     }
 
-    /// Verify [`DECODE_LUT`] rejects all non-hex bytes.
+    /// Verify `DECODE_LUT` rejects all non-hex bytes.
     #[test]
     fn decode_lut_rejects_non_hex() {
         for byte in 0..=255u8 {

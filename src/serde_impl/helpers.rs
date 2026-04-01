@@ -77,29 +77,27 @@ impl fmt::Display for CtHexDisplayAdapter<'_> {
 }
 
 /// Serialize `bytes` as hex using the fast (variable-time) SIMD path.
-pub(crate) fn serialize_fast<S>(
-    bytes: &[u8],
-    serializer: S,
-    upper: bool,
-    prefix: bool,
-) -> Result<S::Ok, S::Error>
+pub(crate) fn serialize_fast<S>(bytes: &[u8], serializer: S, upper: bool, prefix: bool) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    serializer.collect_str(&HexDisplayAdapter { data: bytes, upper, prefix })
+    serializer.collect_str(&HexDisplayAdapter {
+        data: bytes,
+        upper,
+        prefix,
+    })
 }
 
 /// Serialize `bytes` as hex using the constant-time path.
-pub(crate) fn serialize_ct<S>(
-    bytes: &[u8],
-    serializer: S,
-    upper: bool,
-    prefix: bool,
-) -> Result<S::Ok, S::Error>
+pub(crate) fn serialize_ct<S>(bytes: &[u8], serializer: S, upper: bool, prefix: bool) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    serializer.collect_str(&CtHexDisplayAdapter { data: bytes, upper, prefix })
+    serializer.collect_str(&CtHexDisplayAdapter {
+        data: bytes,
+        upper,
+        prefix,
+    })
 }
 
 // ── deserialization — sealed dispatch trait ───────────────────────────────────
@@ -219,7 +217,10 @@ pub(crate) fn do_deserialize<'de, D: Deserializer<'de>, T: FromHexHelper>(
     deserializer: D,
     prefix: bool,
 ) -> Result<T, D::Error> {
-    deserializer.deserialize_str(HexVisitor::<T> { prefix, _marker: core::marker::PhantomData })
+    deserializer.deserialize_str(HexVisitor::<T> {
+        prefix,
+        _marker: core::marker::PhantomData,
+    })
 }
 
 /// Serialize `bytes` as hex (CT path).
@@ -239,7 +240,10 @@ pub(crate) fn do_ct_deserialize<'de, D: Deserializer<'de>, T: FromHexHelper>(
     deserializer: D,
     prefix: bool,
 ) -> Result<T, D::Error> {
-    deserializer.deserialize_str(CtHexVisitor::<T> { prefix, _marker: core::marker::PhantomData })
+    deserializer.deserialize_str(CtHexVisitor::<T> {
+        prefix,
+        _marker: core::marker::PhantomData,
+    })
 }
 
 // ── utilities ─────────────────────────────────────────────────────────────────

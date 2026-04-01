@@ -1,8 +1,8 @@
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use core::mem::MaybeUninit;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 #[cfg(feature = "_bench_internals")]
-use better_hex::bench_internals::{scalar, ct_scalar, dispatched_encode, dispatched_ct_encode};
+use better_hex::bench_internals::{ct_scalar, dispatched_ct_encode, dispatched_encode, scalar};
 
 const SIZES: &[usize] = &[4, 32, 64, 256, 1024, 4096, 16384];
 
@@ -11,10 +11,7 @@ fn bench_encode(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode");
 
     for &size in SIZES {
-        let input: Vec<u8> = (0u8..=(size as u8).wrapping_sub(1))
-            .cycle()
-            .take(size)
-            .collect();
+        let input: Vec<u8> = (0u8..=(size as u8).wrapping_sub(1)).cycle().take(size).collect();
         let mut output: Vec<MaybeUninit<u8>> = vec![MaybeUninit::uninit(); size * 2];
 
         group.throughput(Throughput::Bytes(size as u64));

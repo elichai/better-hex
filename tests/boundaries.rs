@@ -5,12 +5,7 @@
 //! off-by-one errors in the chunk/tail transition.
 
 const BOUNDARY_SIZES: &[usize] = &[
-    0, 1, 2,
-    15, 16, 17,
-    31, 32, 33,
-    63, 64, 65,
-    127, 128, 129,
-    255, 256, 257,
+    0, 1, 2, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257,
 ];
 
 #[test]
@@ -51,7 +46,9 @@ fn check_at_boundaries() {
 #[test]
 fn decode_invalid_at_boundaries() {
     for &size in BOUNDARY_SIZES {
-        if size < 2 { continue; }
+        if size < 2 {
+            continue;
+        }
         let input: Vec<u8> = (0..size).map(|i| (i & 0xFF) as u8).collect();
         let mut hex = better_hex::encode(&input).into_bytes();
         *hex.last_mut().unwrap() = b'G';

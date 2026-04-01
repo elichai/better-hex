@@ -7,7 +7,7 @@ mod sealed {
 
 /// A zero-sized prefix marker (no "0x" prefix).
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Pod, Zeroable)]
-#[repr(C)]
+#[repr(transparent)]
 pub struct NoPrefix;
 
 /// A prefix marker that stores the "0x" prefix.

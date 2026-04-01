@@ -84,11 +84,7 @@ use core::mem::MaybeUninit;
 /// overlapping NEON read (re-encoding the last 16 bytes) to avoid the
 /// scalar fallback for inputs >= 16 bytes.
 pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
-    debug_assert_eq!(
-        output.len(),
-        input.len() * 2,
-        "output buffer wrong size for encode"
-    );
+    debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
 
     let lut_bytes: [u8; 16] = if UPPER {
         *b"0123456789ABCDEF"
@@ -188,15 +184,8 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
 ///   end if any invalid character was seen. Tail bytes use `ct_scalar::decode`.
 ///
 /// See module-level documentation for the full algorithm description.
-fn decode_inner<const SHORT_CIRCUIT: bool>(
-    input: &[u8],
-    output: &mut [MaybeUninit<u8>],
-) -> Result<(), Error> {
-    debug_assert_eq!(
-        output.len(),
-        input.len() / 2,
-        "output buffer wrong size for decode"
-    );
+fn decode_inner<const SHORT_CIRCUIT: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
+    debug_assert_eq!(output.len(), input.len() / 2, "output buffer wrong size for decode");
     debug_assert!(input.len().is_multiple_of(2), "input length must be even");
 
     let simd_end = input.len() / 32 * 32;

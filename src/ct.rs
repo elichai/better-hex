@@ -30,20 +30,16 @@ pub fn encode_upper<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a mut st
 }
 
 /// Shared implementation for CT encode.
-fn encode_inner<'a, const UPPER: bool>(
-    input: &[u8],
-    output: &'a mut [u8],
-) -> Result<&'a mut str, Error> {
+fn encode_inner<'a, const UPPER: bool>(input: &[u8], output: &'a mut [u8]) -> Result<&'a mut str, Error> {
     let expected = input.len() * 2;
     if output.len() != expected {
-        return Err(Error::InvalidLength { expected, got: output.len() });
+        return Err(Error::InvalidLength {
+            expected,
+            got: output.len(),
+        });
     }
-    let uninit = unsafe {
-        core::slice::from_raw_parts_mut(
-            output.as_mut_ptr().cast::<MaybeUninit<u8>>(),
-            output.len(),
-        )
-    };
+    let uninit =
+        unsafe { core::slice::from_raw_parts_mut(output.as_mut_ptr().cast::<MaybeUninit<u8>>(), output.len()) };
     backend::ct_encode::<UPPER>(input, uninit);
     debug_assert!(output.iter().all(|b| b.is_ascii()), "ct encode produced non-ASCII");
     Ok(unsafe { core::str::from_utf8_unchecked_mut(output) })
@@ -59,14 +55,13 @@ fn encode_inner<'a, const UPPER: bool>(
 pub fn decode<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a [u8], Error> {
     let expected = output.len() * 2;
     if input.len() != expected {
-        return Err(Error::InvalidLength { expected, got: input.len() });
+        return Err(Error::InvalidLength {
+            expected,
+            got: input.len(),
+        });
     }
-    let uninit = unsafe {
-        core::slice::from_raw_parts_mut(
-            output.as_mut_ptr().cast::<MaybeUninit<u8>>(),
-            output.len(),
-        )
-    };
+    let uninit =
+        unsafe { core::slice::from_raw_parts_mut(output.as_mut_ptr().cast::<MaybeUninit<u8>>(), output.len()) };
     backend::ct_decode(input, uninit)?;
     Ok(output)
 }
@@ -77,7 +72,10 @@ pub fn decode<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a [u8], Error>
 pub fn decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; N], Error> {
     let expected = N * 2;
     if input.len() != expected {
-        return Err(Error::InvalidLength { expected, got: input.len() });
+        return Err(Error::InvalidLength {
+            expected,
+            got: input.len(),
+        });
     }
     let mut out: [MaybeUninit<u8>; N] = maybe_uninit::uninit_array();
     backend::ct_decode(input, &mut out)?;

@@ -33,9 +33,9 @@ pub use display::{HexDisplay, display};
 pub use encode::{encode_to_slice, encode_to_slice_upper};
 pub use error::Error;
 pub use hex_str::{HexStr, const_check, const_decode_to_array};
-pub use hex_target::{HexTarget, encode_to, encode_upper_to};
+pub use hex_target::{encode_to, encode_upper_to};
 pub use prefix::{NoPrefix, Prefix, WithPrefix};
-pub use traits::{FromHex, ToHex};
+pub use traits::{FromHex, HexTarget, ToHex};
 
 #[cfg(feature = "alloc")]
 pub use decode::decode;
@@ -48,7 +48,7 @@ pub type PrefixedHexStr<const N: usize> = HexStr<N, WithPrefix>;
 /// Backend internals for benchmarks and fuzz targets.
 #[doc(hidden)]
 pub mod bench_internals {
-    pub use crate::backend::{scalar, ct_scalar};
+    pub use crate::backend::{ct_scalar, scalar};
 
     #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
     pub use crate::backend::neon;
@@ -60,11 +60,7 @@ pub mod bench_internals {
     pub use crate::backend::wasm;
 
     pub use crate::backend::{
-        encode as dispatched_encode,
-        decode as dispatched_decode,
-        check as dispatched_check,
-        ct_encode as dispatched_ct_encode,
-        ct_decode as dispatched_ct_decode,
-        ct_check as dispatched_ct_check,
+        check as dispatched_check, ct_check as dispatched_ct_check, ct_decode as dispatched_ct_decode,
+        ct_encode as dispatched_ct_encode, decode as dispatched_decode, encode as dispatched_encode,
     };
 }

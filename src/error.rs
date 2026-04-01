@@ -41,3 +41,9 @@ impl fmt::Display for Error {
 
 #[cfg(feature = "std")]
 impl std::error::Error for Error {}
+
+impl From<core::convert::Infallible> for Error {
+    fn from(v: core::convert::Infallible) -> Self {
+        match v {}
+    }
+}

@@ -1,18 +1,15 @@
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use core::mem::MaybeUninit;
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 #[cfg(feature = "_bench_internals")]
-use better_hex::bench_internals::{scalar, ct_scalar, dispatched_decode, dispatched_ct_decode};
+use better_hex::bench_internals::{ct_scalar, dispatched_ct_decode, dispatched_decode, scalar};
 
 const SIZES: &[usize] = &[4, 32, 64, 256, 1024, 4096, 16384];
 
 /// Pre-encode `size` bytes of input to valid lowercase hex, returning the hex
 /// string as a `Vec<u8>`.
 fn make_hex(size: usize) -> Vec<u8> {
-    let input: Vec<u8> = (0u8..=(size as u8).wrapping_sub(1))
-        .cycle()
-        .take(size)
-        .collect();
+    let input: Vec<u8> = (0u8..=(size as u8).wrapping_sub(1)).cycle().take(size).collect();
     let mut hex = vec![0u8; size * 2];
     better_hex::encode_to_slice(&input, &mut hex).unwrap();
     hex
