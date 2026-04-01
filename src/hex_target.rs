@@ -106,12 +106,19 @@ impl<const CAP: usize> HexTarget for heapless::String<CAP> {
 fn encode_heapless<const CAP: usize, const UPPER: bool>(
     input: &[u8],
 ) -> Result<heapless::String<CAP>, crate::error::Error> {
+    use core::mem::MaybeUninit;
+
     let hex_len = input.len() * 2;
     if hex_len > CAP {
         return Err(crate::error::Error::InvalidLength { expected: CAP, got: hex_len });
     }
     let mut vec = heapless::Vec::<u8, CAP>::new();
-    backend::encode::<UPPER>(input, vec.spare_capacity_mut());
+    // SAFETY: heapless Vec backing buffer is [MaybeUninit<u8>; CAP] at ptr offset 0.
+    // We write into [0..hex_len) then set_len.
+    let spare = unsafe {
+        core::slice::from_raw_parts_mut(vec.as_mut_ptr().cast::<MaybeUninit<u8>>(), CAP)
+    };
+    backend::encode::<UPPER>(input, &mut spare[..hex_len]);
     // SAFETY: backend wrote exactly hex_len valid hex ASCII bytes.
     unsafe { vec.set_len(hex_len) };
     Ok(unsafe { heapless::String::from_utf8_unchecked(vec) })
