@@ -10,10 +10,6 @@
 //! - [`arrayvec::ArrayString<CAP>`] (feature `arrayvec`) — same
 
 use crate::backend;
-#[cfg(any(feature = "heapless", feature = "arrayvec"))]
-use crate::error::Error;
-#[cfg(feature = "arrayvec")]
-use core::mem::MaybeUninit;
 
 /// A type that can be constructed by hex-encoding raw bytes into it.
 ///
@@ -95,7 +91,7 @@ fn encode_string<const UPPER: bool>(input: &[u8]) -> alloc::string::String {
 
 #[cfg(feature = "heapless")]
 impl<const CAP: usize> HexTarget for heapless::String<CAP> {
-    type Error = Error;
+    type Error = crate::error::Error;
 
     fn encode_hex(bytes: &[u8]) -> Result<Self, Self::Error> {
         encode_heapless::<CAP, false>(bytes)
@@ -106,25 +102,24 @@ impl<const CAP: usize> HexTarget for heapless::String<CAP> {
     }
 }
 
-/// Encode into a `heapless::String<CAP>`. Verified against heapless 0.8.
 #[cfg(feature = "heapless")]
 fn encode_heapless<const CAP: usize, const UPPER: bool>(
     input: &[u8],
-) -> Result<heapless::String<CAP>, Error> {
+) -> Result<heapless::String<CAP>, crate::error::Error> {
     let hex_len = input.len() * 2;
     if hex_len > CAP {
-        return Err(Error::InvalidLength { expected: CAP, got: hex_len });
+        return Err(crate::error::Error::InvalidLength { expected: CAP, got: hex_len });
     }
     let mut vec = heapless::Vec::<u8, CAP>::new();
     backend::encode::<UPPER>(input, vec.spare_capacity_mut());
+    // SAFETY: backend wrote exactly hex_len valid hex ASCII bytes.
     unsafe { vec.set_len(hex_len) };
-    // SAFETY: encode_into_spare wrote exactly hex_len valid hex ASCII bytes.
-    Ok(unsafe {heapless::String::from_utf8_unchecked(vec)})
+    Ok(unsafe { heapless::String::from_utf8_unchecked(vec) })
 }
 
 #[cfg(feature = "arrayvec")]
 impl<const CAP: usize> HexTarget for arrayvec::ArrayString<CAP> {
-    type Error = Error;
+    type Error = crate::error::Error;
 
     fn encode_hex(bytes: &[u8]) -> Result<Self, Self::Error> {
         encode_arrayvec::<CAP, false>(bytes)
@@ -135,22 +130,23 @@ impl<const CAP: usize> HexTarget for arrayvec::ArrayString<CAP> {
     }
 }
 
-/// Encode into an `arrayvec::ArrayString<CAP>`. Verified against arrayvec 0.7.
 #[cfg(feature = "arrayvec")]
 fn encode_arrayvec<const CAP: usize, const UPPER: bool>(
     input: &[u8],
-) -> Result<arrayvec::ArrayString<CAP>, Error> {
+) -> Result<arrayvec::ArrayString<CAP>, crate::error::Error> {
+    use core::mem::MaybeUninit;
+
     let hex_len = input.len() * 2;
     if hex_len > CAP {
-        return Err(Error::InvalidLength { expected: CAP, got: hex_len });
+        return Err(crate::error::Error::InvalidLength { expected: CAP, got: hex_len });
     }
     let mut s = arrayvec::ArrayString::<CAP>::new();
-    // SAFETY: arrayvec 0.7 — as_mut_ptr() returns *mut u8 to the backing
-    // [MaybeUninit<u8>; CAP]. We write into [0..hex_len) then set_len.
+    // SAFETY: arrayvec 0.7 — as_mut_ptr() points to [MaybeUninit<u8>; CAP].
     let spare = unsafe {
         core::slice::from_raw_parts_mut(s.as_mut_ptr().cast::<MaybeUninit<u8>>(), CAP)
     };
     backend::encode::<UPPER>(input, spare);
+    // SAFETY: backend wrote hex_len valid hex ASCII bytes (valid UTF-8).
     unsafe { s.set_len(hex_len) };
     Ok(s)
 }
