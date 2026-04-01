@@ -153,7 +153,10 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(
             if ok0 != 0 || ok1 != 0 {
                 // Fall back to scalar on the remaining input to get precise error info.
                 let consumed = i * 32;
-                return scalar::decode(&input[consumed..], &mut output[consumed / 2..]);
+                return scalar::decode(&input[consumed..], &mut output[consumed / 2..]).map_err(|e| match e {
+                    Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + consumed },
+                    other => other,
+                });
             }
         } else {
             err_accum |= ok0 | ok1;
@@ -180,17 +183,26 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(
         }
     }
 
+    // Tail: delegate remaining bytes to scalar (or ct_scalar for CT path).
+    let consumed = chunks * 32;
+    if consumed < input.len() {
+        if SHORT_CIRCUIT {
+            scalar::decode(&input[consumed..], &mut output[consumed / 2..]).map_err(|e| match e {
+                Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + consumed },
+                other => other,
+            })?;
+        } else {
+            if ct_scalar::decode(&input[consumed..], &mut output[consumed / 2..]).is_err() {
+                err_accum |= 1;
+            }
+        }
+    }
+
     if !SHORT_CIRCUIT && err_accum != 0 {
         return Err(Error::InvalidEncoding);
     }
 
-    // Tail: delegate remaining bytes to scalar (or ct_scalar for CT path).
-    let consumed = chunks * 32;
-    if SHORT_CIRCUIT {
-        scalar::decode(&input[consumed..], &mut output[consumed / 2..])
-    } else {
-        ct_scalar::decode(&input[consumed..], &mut output[consumed / 2..])
-    }
+    Ok(())
 }
 
 /// Decode hex-encoded `input` into `output`, using SIMD128 for 32-byte chunks.

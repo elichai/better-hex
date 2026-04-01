@@ -232,7 +232,10 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(
 
         if SHORT_CIRCUIT {
             if chunk_err != 0 {
-                return scalar::decode(&input[i..], &mut output[i / 2..]);
+                return scalar::decode(&input[i..], &mut output[i / 2..]).map_err(|e| match e {
+                    Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
+                    other => other,
+                });
             }
         } else {
             err |= chunk_err;
@@ -250,12 +253,14 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(
 
     if i < input.len() {
         if SHORT_CIRCUIT {
-            scalar::decode(&input[i..], &mut output[i / 2..])?;
-        } else {
-            ct_scalar::decode(&input[i..], &mut output[i / 2..]).map_err(|_| {
-                err = 0x80;
-                Error::InvalidEncoding
+            scalar::decode(&input[i..], &mut output[i / 2..]).map_err(|e| match e {
+                Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
+                other => other,
             })?;
+        } else {
+            if ct_scalar::decode(&input[i..], &mut output[i / 2..]).is_err() {
+                err |= 0x80;
+            }
         }
     }
 

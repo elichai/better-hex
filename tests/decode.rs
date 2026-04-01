@@ -121,3 +121,41 @@ fn decode_to_array() {
     let a: [u8; 4] = better_hex::decode_to("deadbeef").unwrap();
     assert_eq!(a, [0xde, 0xad, 0xbe, 0xef]);
 }
+
+#[test]
+fn invalid_char_index_after_simd_chunk() {
+    // 64 hex chars = 32 bytes output. Put invalid byte at position 33.
+    let mut hex = better_hex::encode(&[0u8; 32]).into_bytes();
+    hex[33] = b'G';
+    let mut out = [0u8; 32];
+    match better_hex::decode_to_slice(&hex, &mut out) {
+        Err(better_hex::Error::InvalidChar { byte: b'G', index: 33 }) => {}
+        other => panic!("expected InvalidChar at index 33, got {other:?}"),
+    }
+}
+
+#[test]
+fn invalid_char_index_in_tail() {
+    // 34 hex chars = 17 bytes output. Put invalid byte at position 33 (in the tail).
+    let mut hex = better_hex::encode(&[0u8; 17]).into_bytes();
+    hex[33] = b'G';
+    let mut out = [0u8; 17];
+    match better_hex::decode_to_slice(&hex, &mut out) {
+        Err(better_hex::Error::InvalidChar { byte: b'G', index: 33 }) => {}
+        other => panic!("expected InvalidChar at index 33, got {other:?}"),
+    }
+}
+
+#[test]
+fn ct_decode_processes_all_bytes() {
+    // Put invalid bytes at start and end — CT should process all
+    let mut hex = better_hex::encode(&[0u8; 32]).into_bytes();
+    hex[0] = b'G';
+    hex[63] = b'G';
+    let mut out = [0u8; 32];
+    // CT decode should still return InvalidEncoding (not crash or skip tail)
+    assert_eq!(
+        better_hex::ct::decode(&hex, &mut out).unwrap_err(),
+        better_hex::Error::InvalidEncoding,
+    );
+}

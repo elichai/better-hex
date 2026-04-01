@@ -347,19 +347,24 @@ unsafe fn decode_ssse3_inner<const SHORT_CIRCUIT: bool>(
             o += 16;
         }
 
+        if i < input.len() {
+            if SHORT_CIRCUIT {
+                scalar::decode(&input[i..], &mut output[o..]).map_err(|e| match e {
+                    Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
+                    other => other,
+                })?;
+            } else {
+                if ct_scalar::decode(&input[i..], &mut output[o..]).is_err() {
+                    err_accum |= 1;
+                }
+            }
+        }
+
         if !SHORT_CIRCUIT && err_accum != 0 {
             return Err(Error::InvalidEncoding);
         }
 
-        if i < input.len() {
-            if SHORT_CIRCUIT {
-                scalar::decode(&input[i..], &mut output[o..])
-            } else {
-                ct_scalar::decode(&input[i..], &mut output[o..])
-            }
-        } else {
-            Ok(())
-        }
+        Ok(())
     }
 }
 
@@ -503,20 +508,25 @@ unsafe fn decode_avx2_inner<const SHORT_CIRCUIT: bool>(
             o += 32;
         }
 
+        // Tail: fall through to SSSE3, then scalar.
+        if i < input.len() {
+            if SHORT_CIRCUIT {
+                decode_ssse3(&input[i..], &mut output[o..]).map_err(|e| match e {
+                    Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
+                    other => other,
+                })?;
+            } else {
+                if ct_decode_ssse3(&input[i..], &mut output[o..]).is_err() {
+                    err_accum |= 1;
+                }
+            }
+        }
+
         if !SHORT_CIRCUIT && err_accum != 0 {
             return Err(Error::InvalidEncoding);
         }
 
-        // Tail: fall through to SSSE3, then scalar.
-        if i < input.len() {
-            if SHORT_CIRCUIT {
-                decode_ssse3(&input[i..], &mut output[o..])
-            } else {
-                ct_decode_ssse3(&input[i..], &mut output[o..])
-            }
-        } else {
-            Ok(())
-        }
+        Ok(())
     }
 }
 
@@ -836,20 +846,25 @@ unsafe fn decode_avx512_inner<const SHORT_CIRCUIT: bool>(
             o += 64;
         }
 
+        // Tail: fall through to AVX2, then SSSE3, then scalar.
+        if i < input.len() {
+            if SHORT_CIRCUIT {
+                decode_avx2(&input[i..], &mut output[o..]).map_err(|e| match e {
+                    Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
+                    other => other,
+                })?;
+            } else {
+                if ct_decode_avx2(&input[i..], &mut output[o..]).is_err() {
+                    err_accum |= 1;
+                }
+            }
+        }
+
         if !SHORT_CIRCUIT && err_accum != 0 {
             return Err(Error::InvalidEncoding);
         }
 
-        // Tail: fall through to AVX2, then SSSE3, then scalar.
-        if i < input.len() {
-            if SHORT_CIRCUIT {
-                decode_avx2(&input[i..], &mut output[o..])
-            } else {
-                ct_decode_avx2(&input[i..], &mut output[o..])
-            }
-        } else {
-            Ok(())
-        }
+        Ok(())
     }
 }
 
