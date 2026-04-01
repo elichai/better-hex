@@ -1,0 +1,221 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64 — default (SSSE3/AVX2 eligible)
+          - name: linux-x86_64-default
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            cargo_args: --target x86_64-unknown-linux-gnu
+
+          # Linux x86_64 — force scalar path only
+          - name: linux-x86_64-force-generic
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            cargo_args: --target x86_64-unknown-linux-gnu --features force-generic
+
+          # Linux x86_64 — all optional features
+          - name: linux-x86_64-all-features
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            cargo_args: --target x86_64-unknown-linux-gnu --features serde,heapless,arrayvec
+
+          # macOS ARM — default (NEON)
+          - name: macos-aarch64-default
+            os: macos-latest
+            target: aarch64-apple-darwin
+            cargo_args: --target aarch64-apple-darwin
+
+          # macOS ARM — all optional features
+          - name: macos-aarch64-all-features
+            os: macos-latest
+            target: aarch64-apple-darwin
+            cargo_args: --target aarch64-apple-darwin --features serde,heapless,arrayvec
+
+          # macOS x86_64 — via Rosetta
+          - name: macos-x86_64-default
+            os: macos-latest
+            target: x86_64-apple-darwin
+            cargo_args: --target x86_64-apple-darwin
+
+          # no_std, no alloc (bare-metal subset)
+          - name: linux-no-std-no-alloc
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            cargo_args: --target x86_64-unknown-linux-gnu --no-default-features
+
+          # no_std + alloc
+          - name: linux-no-std-alloc
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            cargo_args: --target x86_64-unknown-linux-gnu --no-default-features --features alloc
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: cargo test
+        run: cargo test ${{ matrix.cargo_args }}
+
+  test-wasm:
+    name: Test (wasm32-wasip1)
+    runs-on: ubuntu-latest
+    continue-on-error: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip1
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-wasm-
+
+      - name: Install wasmtime
+        uses: bytecodealliance/actions/wasmtime/setup@v1
+
+      - name: cargo test (WASM + simd128)
+        env:
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
+          RUSTFLAGS: "-C target-feature=+simd128"
+        run: cargo test --target wasm32-wasip1 --no-default-features --features alloc,serde,heapless,arrayvec
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-clippy-
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets --features serde,heapless,arrayvec -- -D warnings
+
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: cargo fmt
+        run: cargo fmt -- --check
+
+  doc:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-doc-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-doc-
+
+      - name: cargo doc
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --no-deps --all-features
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-coverage-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-coverage-
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Generate coverage
+        run: cargo llvm-cov --features serde,heapless,arrayvec --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
