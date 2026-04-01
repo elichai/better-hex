@@ -643,3 +643,84 @@ pub(crate) unsafe fn ct_check_ssse3(input: &[u8]) -> bool {
     // SAFETY: caller guarantees SSSE3.
     unsafe { check_ssse3_inner::<false>(input) }
 }
+
+// ---------------------------------------------------------------------------
+// Encode — AVX-512BW
+// ---------------------------------------------------------------------------
+
+/// Hex-encode `input` into `output` using AVX-512BW for the hot loop.
+///
+/// Processes 64 input bytes (→ 128 hex chars) per iteration, then falls
+/// through to [`encode_avx2`] for the 32–63 byte middle range, and finally
+/// down through SSSE3/scalar for smaller tails.
+///
+/// ## Cross-lane fixup
+///
+/// AVX-512 `vpunpcklbw`/`vpunpckhbw` operate independently on each 128-bit
+/// lane (four lanes in a 512-bit register), producing an interleaving that is
+/// correct *within* each lane but in the wrong lane order.
+/// `vpermq` (`_mm512_permutexvar_epi64`) with indices `[0,4,1,5,2,6,3,7]`
+/// reassembles the four lanes correctly (same idea as AVX2's `vperm2i128`
+/// but generalized for 4 lanes).
+///
+/// # Safety
+///
+/// Caller must ensure the CPU supports AVX-512BW.
+#[target_feature(enable = "avx512bw")]
+pub(crate) unsafe fn encode_avx512<const UPPER: bool>(
+    input: &[u8],
+    output: &mut [MaybeUninit<u8>],
+) {
+    debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
+
+    // SAFETY: all intrinsics below require AVX-512BW (implies AVX-512F),
+    // guaranteed by #[target_feature].
+    unsafe {
+        let lut = {
+            let lut128 = if UPPER {
+                _mm_loadu_si128(b"0123456789ABCDEF".as_ptr().cast())
+            } else {
+                _mm_loadu_si128(b"0123456789abcdef".as_ptr().cast())
+            };
+            _mm512_broadcast_i32x4(lut128)
+        };
+        let mask_lo = _mm512_set1_epi8(0x0F);
+        // Cross-lane fixup permutation: [0,4,1,5,2,6,3,7] as qword indices.
+        let perm_idx = _mm512_setr_epi64(0, 4, 1, 5, 2, 6, 3, 7);
+
+        let mut i = 0usize;
+        let simd_end = input.len() & !63; // round down to multiple of 64
+
+        while i < simd_end {
+            let chunk = _mm512_loadu_si512(input.as_ptr().add(i).cast());
+
+            // Split nibbles.
+            let lo = _mm512_and_si512(chunk, mask_lo);
+            let hi = _mm512_and_si512(_mm512_srli_epi16(chunk, 4), mask_lo);
+
+            // LUT lookup.
+            let hex_lo = _mm512_shuffle_epi8(lut, lo);
+            let hex_hi = _mm512_shuffle_epi8(lut, hi);
+
+            // Interleave within 128-bit lanes.
+            let interleaved_lo = _mm512_unpacklo_epi8(hex_hi, hex_lo);
+            let interleaved_hi = _mm512_unpackhi_epi8(hex_hi, hex_lo);
+
+            // Cross-lane fixup: reassemble the correct byte order.
+            let out0 = _mm512_permutexvar_epi64(perm_idx, interleaved_lo);
+            let out1 = _mm512_permutexvar_epi64(perm_idx, interleaved_hi);
+
+            // Store 128 bytes (two __m512i).
+            let out_ptr = output.as_mut_ptr().add(i * 2).cast::<__m512i>();
+            _mm512_storeu_si512(out_ptr.cast(), out0);
+            _mm512_storeu_si512(out_ptr.add(1).cast(), out1);
+
+            i += 64;
+        }
+
+        // Tail: fall through to AVX2 for any remaining 32+ bytes, then SSSE3, then scalar.
+        if i < input.len() {
+            encode_avx2::<UPPER>(&input[i..], &mut output[i * 2..]);
+        }
+    }
+}
