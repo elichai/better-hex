@@ -24,10 +24,10 @@ jobs:
             cargo_args: --target x86_64-unknown-linux-gnu
 
           # Linux x86_64 — force scalar path only
-          - name: linux-x86_64-force-generic
+          - name: linux-x86_64-disable-simd
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            cargo_args: --target x86_64-unknown-linux-gnu --features force-generic
+            cargo_args: --target x86_64-unknown-linux-gnu --features disable-simd
 
           # Linux x86_64 — all optional features
           - name: linux-x86_64-all-features

@@ -5,7 +5,7 @@
 //!
 //! ## Feature flag
 //!
-//! `force-generic` disables all SIMD and always uses the scalar backend.
+//! `disable-simd` disables all SIMD and always uses the scalar backend.
 //!
 //! ## Dispatch order
 //!
@@ -24,20 +24,20 @@ pub mod ct_scalar;
 
 // Conditionally compile SIMD submodules.
 #[cfg(all(
-    not(feature = "force-generic"),
+    not(feature = "disable-simd"),
     target_arch = "aarch64",
     target_feature = "neon"
 ))]
 pub mod neon;
 
 #[cfg(all(
-    not(feature = "force-generic"),
+    not(feature = "disable-simd"),
     any(target_arch = "x86", target_arch = "x86_64")
 ))]
 pub mod x86;
 
 #[cfg(all(
-    not(feature = "force-generic"),
+    not(feature = "disable-simd"),
     target_arch = "wasm32",
     target_feature = "simd128"
 ))]
@@ -57,7 +57,7 @@ use core::mem::MaybeUninit;
 #[inline]
 pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
     cfg_if::cfg_if! {
-        if #[cfg(feature = "force-generic")] {
+        if #[cfg(feature = "disable-simd")] {
             scalar::encode::<UPPER>(input, output);
         } else if #[cfg(all(target_arch = "aarch64", target_feature = "neon"))] {
             neon::encode::<UPPER>(input, output);
@@ -122,7 +122,7 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
 #[inline]
 pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     cfg_if::cfg_if! {
-        if #[cfg(feature = "force-generic")] {
+        if #[cfg(feature = "disable-simd")] {
             scalar::decode(input, output)
         } else if #[cfg(all(target_arch = "aarch64", target_feature = "neon"))] {
             neon::decode(input, output)
@@ -180,7 +180,7 @@ pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error>
 #[inline]
 pub fn ct_encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
     cfg_if::cfg_if! {
-        if #[cfg(feature = "force-generic")] {
+        if #[cfg(feature = "disable-simd")] {
             ct_scalar::encode::<UPPER>(input, output);
         } else if #[cfg(all(target_arch = "aarch64", target_feature = "neon"))] {
             neon::encode::<UPPER>(input, output);
@@ -232,7 +232,7 @@ pub fn ct_encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]
 #[inline]
 pub fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     cfg_if::cfg_if! {
-        if #[cfg(feature = "force-generic")] {
+        if #[cfg(feature = "disable-simd")] {
             ct_scalar::decode(input, output)
         } else if #[cfg(all(target_arch = "aarch64", target_feature = "neon"))] {
             neon::ct_decode(input, output)
@@ -283,7 +283,7 @@ pub fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Err
 #[inline]
 pub fn ct_check(input: &[u8]) -> bool {
     cfg_if::cfg_if! {
-        if #[cfg(feature = "force-generic")] {
+        if #[cfg(feature = "disable-simd")] {
             ct_scalar::check(input)
         } else if #[cfg(all(target_arch = "aarch64", target_feature = "neon"))] {
             neon::ct_check(input)
@@ -325,7 +325,7 @@ pub fn ct_check(input: &[u8]) -> bool {
 #[inline]
 pub fn check(input: &[u8]) -> bool {
     cfg_if::cfg_if! {
-        if #[cfg(feature = "force-generic")] {
+        if #[cfg(feature = "disable-simd")] {
             scalar::check(input)
         } else if #[cfg(all(target_arch = "aarch64", target_feature = "neon"))] {
             neon::check(input)

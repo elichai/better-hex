@@ -53,37 +53,3 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           benchmark-data-dir-path: dev/bench
 
-  compare:
-    name: Compare vs other crates
-    runs-on: ubuntu-latest
-    # Only run comparison on main pushes to avoid noisy PR comments
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: bench-compare-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: bench-compare-
-
-      - name: Run comparison benchmarks
-        run: |
-          cargo bench \
-            --features _bench_internals,_bench_const_hex,_bench_faster_hex,_bench_hex,serde \
-            --bench compare \
-            -- --output-format bencher \
-            | tee compare_output.txt
-
-      - name: Upload comparison results
-        uses: actions/upload-artifact@v4
-        with:
-          name: benchmark-comparison
-          path: compare_output.txt

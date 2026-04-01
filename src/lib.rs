@@ -50,13 +50,13 @@ pub type PrefixedHexStr<const N: usize> = HexStr<N, WithPrefix>;
 pub mod bench_internals {
     pub use crate::backend::{scalar, ct_scalar};
 
-    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
     pub use crate::backend::neon;
 
-    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    #[cfg(all(not(feature = "disable-simd"), any(target_arch = "x86", target_arch = "x86_64")))]
     pub use crate::backend::x86;
 
-    #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+    #[cfg(all(not(feature = "disable-simd"), target_arch = "wasm32", target_feature = "simd128"))]
     pub use crate::backend::wasm;
 
     pub use crate::backend::{
