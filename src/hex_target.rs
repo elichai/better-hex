@@ -12,6 +12,7 @@
 use crate::backend;
 #[cfg(any(feature = "heapless", feature = "arrayvec"))]
 use crate::error::Error;
+#[cfg(feature = "arrayvec")]
 use core::mem::MaybeUninit;
 
 /// A type that can be constructed by hex-encoding raw bytes into it.
@@ -66,16 +67,6 @@ pub fn encode_upper_to<T: HexTarget>(input: &[u8]) -> Result<T, T::Error> {
     T::encode_hex_upper(input)
 }
 
-/// Internal helper: encode `input` into `spare` buffer using the SIMD backend.
-///
-/// After return, the first `input.len() * 2` elements of `spare` are
-/// initialized with valid hex ASCII bytes.
-fn encode_into_spare<const UPPER: bool>(input: &[u8], spare: &mut [MaybeUninit<u8>]) {
-    let hex_len = input.len() * 2;
-    debug_assert!(spare.len() >= hex_len);
-    backend::encode::<UPPER>(input, &mut spare[..hex_len]);
-}
-
 #[cfg(feature = "alloc")]
 impl HexTarget for alloc::string::String {
     /// `String` allocation is infallible (barring OOM which panics).
@@ -94,7 +85,7 @@ impl HexTarget for alloc::string::String {
 fn encode_string<const UPPER: bool>(input: &[u8]) -> alloc::string::String {
     let hex_len = input.len() * 2;
     let mut buf = alloc::vec::Vec::<u8>::with_capacity(hex_len);
-    encode_into_spare::<UPPER>(input, &mut buf.spare_capacity_mut()[..hex_len]);
+    backend::encode::<UPPER>(input, &mut buf.spare_capacity_mut()[..hex_len]);
     // SAFETY: encode_into_spare wrote exactly hex_len valid hex ASCII bytes.
     unsafe { buf.set_len(hex_len) };
     debug_assert!(buf.iter().all(|b| b.is_ascii()));
@@ -124,17 +115,11 @@ fn encode_heapless<const CAP: usize, const UPPER: bool>(
     if hex_len > CAP {
         return Err(Error::InvalidLength { expected: CAP, got: hex_len });
     }
-    let mut s = heapless::String::<CAP>::new();
-    // SAFETY: heapless 0.8 — as_mut_vec() gives &mut Vec<u8, CAP> whose
-    // backing storage is [MaybeUninit<u8>; CAP]. We write into [0..hex_len)
-    // then set_len. The cast to MaybeUninit is valid (same layout).
-    let vec = unsafe { s.as_mut_vec() };
-    let spare = unsafe {
-        core::slice::from_raw_parts_mut(vec.as_mut_ptr().cast::<MaybeUninit<u8>>(), CAP)
-    };
-    encode_into_spare::<UPPER>(input, spare);
+    let mut vec = heapless::Vec::<u8, CAP>::new();
+    backend::encode::<UPPER>(input, vec.spare_capacity_mut());
     unsafe { vec.set_len(hex_len) };
-    Ok(s)
+    // SAFETY: encode_into_spare wrote exactly hex_len valid hex ASCII bytes.
+    Ok(unsafe {heapless::String::from_utf8_unchecked(vec)})
 }
 
 #[cfg(feature = "arrayvec")]
@@ -165,7 +150,7 @@ fn encode_arrayvec<const CAP: usize, const UPPER: bool>(
     let spare = unsafe {
         core::slice::from_raw_parts_mut(s.as_mut_ptr().cast::<MaybeUninit<u8>>(), CAP)
     };
-    encode_into_spare::<UPPER>(input, spare);
+    backend::encode::<UPPER>(input, spare);
     unsafe { s.set_len(hex_len) };
     Ok(s)
 }

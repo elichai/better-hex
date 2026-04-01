@@ -79,7 +79,7 @@ pub fn decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; N], Error> {
     if input.len() != expected {
         return Err(Error::InvalidLength { expected, got: input.len() });
     }
-    let mut out: [MaybeUninit<u8>; N] = maybe_uninit::array();
+    let mut out: [MaybeUninit<u8>; N] = maybe_uninit::uninit_array();
     backend::ct_decode(input, &mut out)?;
     Ok(unsafe { maybe_uninit::transpose(out).assume_init() })
 }

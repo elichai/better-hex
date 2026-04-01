@@ -4,15 +4,11 @@
 //! encode into a caller-provided `&mut [u8]` buffer.
 //!
 //! The allocating functions (`encode`, `encode_upper`) delegate to
-//! [`encode_to::<String>()`](crate::encode_to) via the [`HexTarget`](crate::HexTarget) trait,
-//! ensuring a single implementation for all String-producing paths.
+//! [`encode_to::<String>()`](crate::encode_to) via the [`HexTarget`](crate::HexTarget) trait.
 
-use crate::{backend, error::Error};
-use core::{mem::MaybeUninit, slice, str};
+use crate::{backend, error::Error, maybe_uninit};
 
 /// Encode `input` into a caller-provided `output` buffer, returning `&mut str`.
-///
-/// The output must be exactly `input.len() * 2` bytes long.
 fn encode_to_slice_inner<'a, const UPPER: bool>(
     input: &[u8],
     output: &'a mut [u8],
@@ -24,14 +20,9 @@ fn encode_to_slice_inner<'a, const UPPER: bool>(
             got: output.len(),
         });
     }
-    // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`. The backend
-    // overwrites every element.
-    let uninit =
-        unsafe { slice::from_raw_parts_mut(output.as_mut_ptr().cast::<MaybeUninit<u8>>(), output.len()) };
-    backend::encode::<UPPER>(input, uninit);
-    debug_assert!(output.iter().all(|b| b.is_ascii()), "encode produced non-ASCII bytes");
-    // SAFETY: hex ASCII is valid UTF-8.
-    Ok(unsafe { str::from_utf8_unchecked_mut(output) })
+    backend::encode::<UPPER>(input, maybe_uninit::slice_as_uninit_mut(output));
+    // SAFETY: backend wrote valid hex ASCII (valid UTF-8) into every byte.
+    Ok(unsafe { maybe_uninit::bytes_to_hex_str_mut(output) })
 }
 
 /// Encode bytes to lowercase hex into `output`. Returns the hex string.
@@ -53,18 +44,18 @@ pub fn encode_to_slice_upper<'a>(
 
 /// Encode bytes to a lowercase hex `String`.
 ///
-/// Delegates to [`encode_to::<String>()`](crate::encode_to) — the same
-/// zero-copy [`HexTarget`](crate::HexTarget) path.
+/// Delegates to [`HexTarget::encode_hex`](crate::HexTarget::encode_hex) on `String`.
 #[cfg(feature = "alloc")]
 pub fn encode(input: &[u8]) -> alloc::string::String {
-    // encode_to::<String> always succeeds (String has unlimited capacity).
-    crate::hex_target::encode_to(input).expect("String allocation failed")
+    let Ok(s) = crate::hex_target::encode_to(input);
+    s
 }
 
 /// Encode bytes to an uppercase hex `String`.
 ///
-/// Delegates to [`encode_upper_to::<String>()`](crate::encode_upper_to).
+/// Delegates to [`HexTarget::encode_hex_upper`](crate::HexTarget::encode_hex_upper) on `String`.
 #[cfg(feature = "alloc")]
 pub fn encode_upper(input: &[u8]) -> alloc::string::String {
-    crate::hex_target::encode_upper_to(input).expect("String allocation failed")
+    let Ok(s) = crate::hex_target::encode_upper_to(input);
+    s
 }

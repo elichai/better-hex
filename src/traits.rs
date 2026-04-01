@@ -42,7 +42,11 @@ pub trait ToHex {
 
 impl<S: AsRef<[u8]>> ToHex for S {
     fn write_hex<W: fmt::Write>(&self, w: &mut W, upper: bool) -> fmt::Result {
-        write_hex_to::<256, W>(self.as_ref(), w, upper)
+        if upper {
+            write_hex_to::<true, 128, W>(self.as_ref(), w)
+        } else {
+            write_hex_to::<false, 128, W>(self.as_ref(), w)
+        }
     }
 
     fn encode_hex<T: HexTarget>(&self) -> Result<T, T::Error> {

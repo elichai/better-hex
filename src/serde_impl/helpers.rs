@@ -27,7 +27,11 @@ impl fmt::Display for HexDisplayAdapter<'_> {
         if self.prefix {
             f.write_str("0x")?;
         }
-        crate::display::write_hex_to::<256, _>(self.data, f, self.upper)
+        if self.upper {
+            crate::display::write_hex_to::<true, 128, _>(self.data, f)
+        } else {
+            crate::display::write_hex_to::<false, 128, _>(self.data, f)
+        }
     }
 }
 

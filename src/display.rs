@@ -4,12 +4,13 @@
 //! that implements `Display`, `LowerHex`, and `UpperHex`. Formatting uses a
 //! stack buffer to batch `write_str` calls through `fmt::Formatter`.
 
-use crate::backend;
+use crate::{backend, maybe_uninit};
 use core::fmt;
 use core::mem::MaybeUninit;
 
-/// Default hex buffer size (in bytes of hex output) for fmt-based encoding.
-const DEFAULT_FMT_BUF: usize = 256;
+/// Default hex buffer size for fmt-based encoding (in hex output bytes).
+/// Each iteration processes `BUF / 2` input bytes.
+const DEFAULT_BUF: usize = 256;
 
 /// Returns a value that implements `Display`, `LowerHex`, and `UpperHex`
 /// for the given byte data.
@@ -44,61 +45,54 @@ impl<T: AsRef<[u8]>> fmt::LowerHex for HexDisplay<T> {
         if f.alternate() {
             f.write_str("0x")?;
         }
-        write_hex_to::<DEFAULT_FMT_BUF, _>(self.0.as_ref(), f, false)
+        write_hex_to::<false, DEFAULT_BUF, _>(self.0.as_ref(), f)
     }
 }
 
 impl<T: AsRef<[u8]>> fmt::UpperHex for HexDisplay<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // The '#' flag in format strings (e.g., "{:#X}") requests a "0x" prefix.
         if f.alternate() {
             f.write_str("0x")?;
         }
-        write_hex_to::<DEFAULT_FMT_BUF, _>(self.0.as_ref(), f, true)
+        write_hex_to::<true, DEFAULT_BUF, _>(self.0.as_ref(), f)
     }
 }
 
-/// Write hex encoding of `input` through any [`fmt::Write`] sink, using a
-/// `[MaybeUninit<u8>; BUF]` stack buffer to batch `write_str` calls.
+/// Write hex encoding of `input` through any [`fmt::Write`] sink.
 ///
-/// `BUF` is the hex output buffer size (must be even). Each iteration
-/// encodes up to `BUF / 2` input bytes, producing up to `BUF` hex
-/// characters, and flushes them as a single `&str` via `write_str`.
+/// Uses a `[MaybeUninit<u8>; BUF]` stack buffer. Each iteration encodes
+/// `BUF / 2` input bytes into `BUF` hex characters, then flushes via a
+/// single `write_str` call.
 ///
-/// Generic over `BUF` to allow benchmarking different buffer sizes.
-/// Generic over `W` so it works with both `fmt::Formatter` and any
-/// other `fmt::Write` implementor (e.g., `String`).
-///
-/// This is the single implementation backing both [`HexDisplay`] formatting
-/// and [`ToHex::write_hex`](crate::ToHex::write_hex).
-pub(crate) fn write_hex_to<const BUF: usize, W: fmt::Write>(
+/// `UPPER` selects lowercase vs uppercase at compile time (no branch in loop).
+/// `BUF` is the hex output buffer size in bytes (must be even; generic for benchmarking).
+pub(crate) fn write_hex_to<const UPPER: bool, const BUF: usize, W: fmt::Write>(
     input: &[u8],
     w: &mut W,
-    upper: bool,
 ) -> fmt::Result {
-    debug_assert!(BUF.is_multiple_of(2), "BUF must be even");
+    debug_assert!(BUF >= 2 && BUF.is_multiple_of(2), "BUF must be even and >= 2");
     let mut buf = [MaybeUninit::<u8>::uninit(); BUF];
     let chunk_size = BUF / 2;
 
-    for chunk in input.chunks(chunk_size) {
-        let hex_len = chunk.len() * 2;
-        let hex_buf = &mut buf[..hex_len];
-        if upper {
-            backend::encode::<true>(chunk, hex_buf);
-        } else {
-            backend::encode::<false>(chunk, hex_buf);
-        }
-        // SAFETY: the backend just initialized `hex_len` bytes with valid
-        // hex ASCII, which is valid UTF-8.
-        let s = unsafe {
-            let initialized = core::slice::from_raw_parts(hex_buf.as_ptr().cast::<u8>(), hex_len);
-            debug_assert!(
-                initialized.iter().all(|b| b.is_ascii()),
-                "encode produced non-ASCII bytes"
-            );
-            core::str::from_utf8_unchecked(initialized)
-        };
+    let mut pos = 0;
+    // Full chunks.
+    while pos + chunk_size <= input.len() {
+        backend::encode::<UPPER>(&input[pos..pos + chunk_size], &mut buf);
+        // SAFETY: backend initialized BUF bytes of valid hex ASCII.
+        let s = unsafe { maybe_uninit::assume_init_str(&buf) };
+        w.write_str(s)?;
+        pos += chunk_size;
+    }
+
+    // Remainder (< chunk_size bytes).
+    if pos < input.len() {
+        let rest = &input[pos..];
+        let hex_len = rest.len() * 2;
+        backend::encode::<UPPER>(rest, &mut buf[..hex_len]);
+        // SAFETY: backend initialized hex_len bytes of valid hex ASCII.
+        let s = unsafe { maybe_uninit::assume_init_str(&buf[..hex_len]) };
         w.write_str(s)?;
     }
+
     Ok(())
 }

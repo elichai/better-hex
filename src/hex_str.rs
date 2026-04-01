@@ -141,7 +141,7 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     pub fn decode(&self) -> [u8; N] {
         // SAFETY: `inner.bytes` is `[[u8; 2]; N]` — `N * 2` contiguous `u8`.
         let hex_bytes = unsafe { slice::from_raw_parts(self.inner.bytes.as_ptr().cast::<u8>(), N * 2) };
-        let mut out: [MaybeUninit<u8>; N] = maybe_uninit::array();
+        let mut out: [MaybeUninit<u8>; N] = maybe_uninit::uninit_array();
         let result = backend::decode(hex_bytes, &mut out);
         debug_assert!(result.is_ok(), "HexStr invariant violated: contained non-hex bytes");
         // SAFETY: backend initialized all N bytes on Ok.
@@ -288,7 +288,7 @@ impl<const N: usize> FromStr for HexStr<N, NoPrefix> {
         }
         let input = s.as_bytes();
         // Decode to validate hex content — captures InvalidChar errors.
-        let mut scratch: [MaybeUninit<u8>; N] = maybe_uninit::array();
+        let mut scratch: [MaybeUninit<u8>; N] = maybe_uninit::uninit_array();
         backend::decode(input, &mut scratch)?;
         // Input is valid hex. Use the consolidated constructor.
         Ok(Self::from_validated_hex(input))

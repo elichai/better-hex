@@ -94,7 +94,7 @@ pub(crate) fn decode_array<const N: usize>(input: &[u8]) -> Result<[u8; N], Erro
             got: input.len(),
         });
     }
-    let mut out = maybe_uninit::array::<N>();
+    let mut out = maybe_uninit::uninit_array::<N>();
     backend::decode(input, &mut out)?;
     // SAFETY: backend initialized all N bytes on Ok.
     Ok(unsafe { maybe_uninit::transpose(out).assume_init() })
