@@ -5,7 +5,8 @@
 //! [`HexTarget`](crate::HexTarget), zero-copy).
 //!
 //! [`FromHex`] provides [`from_hex`](FromHex::from_hex) for constructing types
-//! from hex strings.
+//! from hex strings — including `Vec<u8>`, `[u8; N]`, `heapless::Vec`, and
+//! `arrayvec::ArrayVec`.
 
 use crate::display::write_hex_to;
 use crate::error::Error;
@@ -30,15 +31,9 @@ use core::fmt;
 /// ```
 pub trait ToHex {
     /// Write hex encoding into any [`fmt::Write`] sink.
-    ///
-    /// If `upper` is `true`, uses uppercase hex characters (`A-F`).
-    /// Uses a 256-byte stack buffer to batch `write_str` calls.
     fn write_hex<W: fmt::Write>(&self, w: &mut W, upper: bool) -> fmt::Result;
 
     /// Encode to lowercase hex into any [`HexTarget`] (zero-copy).
-    ///
-    /// Returns `Err` if the target cannot hold the output (e.g., fixed-capacity
-    /// buffer too small). For `String`, this is infallible.
     fn encode_hex<T: HexTarget>(&self) -> Result<T, T::Error>;
 
     /// Encode to uppercase hex into any [`HexTarget`] (zero-copy).
@@ -80,12 +75,14 @@ pub trait FromHex: Sized {
     fn from_hex(hex: impl AsRef<[u8]>) -> Result<Self, Self::Error>;
 }
 
+// --- Core impls ---
+
 #[cfg(feature = "alloc")]
 impl FromHex for alloc::vec::Vec<u8> {
     type Error = Error;
 
     fn from_hex(hex: impl AsRef<[u8]>) -> Result<Self, Self::Error> {
-        crate::decode(hex)
+        crate::decode::decode_vec(hex.as_ref())
     }
 }
 
@@ -93,6 +90,74 @@ impl<const N: usize> FromHex for [u8; N] {
     type Error = Error;
 
     fn from_hex(hex: impl AsRef<[u8]>) -> Result<Self, Self::Error> {
-        crate::decode_to_array(hex)
+        crate::decode::decode_array(hex.as_ref())
+    }
+}
+
+// --- heapless::Vec impl ---
+
+#[cfg(feature = "heapless")]
+impl<const N: usize> FromHex for heapless::Vec<u8, N> {
+    type Error = Error;
+
+    /// Decode hex into a `heapless::Vec<u8, N>`.
+    ///
+    /// Returns [`Error::InvalidLength`] if the decoded output would exceed
+    /// capacity `N`, or if the input has odd length.
+    fn from_hex(hex: impl AsRef<[u8]>) -> Result<Self, Self::Error> {
+        let hex = hex.as_ref();
+        if !hex.len().is_multiple_of(2) {
+            return Err(Error::InvalidLength { expected: hex.len() + 1, got: hex.len() });
+        }
+        let out_len = hex.len() / 2;
+        if out_len > N {
+            return Err(Error::InvalidLength { expected: N * 2, got: hex.len() });
+        }
+        let mut out = heapless::Vec::<u8, N>::new();
+        // SAFETY: heapless 0.8 — as_mut_ptr() points to [MaybeUninit<u8>; N].
+        // We decode into [0..out_len), then set_len.
+        let spare = unsafe {
+            core::slice::from_raw_parts_mut(
+                out.as_mut_ptr().cast::<core::mem::MaybeUninit<u8>>(),
+                N,
+            )
+        };
+        crate::backend::decode(hex, &mut spare[..out_len])?;
+        unsafe { out.set_len(out_len) };
+        Ok(out)
+    }
+}
+
+// --- arrayvec::ArrayVec impl ---
+
+#[cfg(feature = "arrayvec")]
+impl<const N: usize> FromHex for arrayvec::ArrayVec<u8, N> {
+    type Error = Error;
+
+    /// Decode hex into an `arrayvec::ArrayVec<u8, N>`.
+    ///
+    /// Returns [`Error::InvalidLength`] if the decoded output would exceed
+    /// capacity `N`, or if the input has odd length.
+    fn from_hex(hex: impl AsRef<[u8]>) -> Result<Self, Self::Error> {
+        let hex = hex.as_ref();
+        if !hex.len().is_multiple_of(2) {
+            return Err(Error::InvalidLength { expected: hex.len() + 1, got: hex.len() });
+        }
+        let out_len = hex.len() / 2;
+        if out_len > N {
+            return Err(Error::InvalidLength { expected: N * 2, got: hex.len() });
+        }
+        let mut out = arrayvec::ArrayVec::<u8, N>::new();
+        // SAFETY: arrayvec 0.7 — as_mut_ptr() points to [MaybeUninit<u8>; N].
+        let spare = unsafe {
+            core::slice::from_raw_parts_mut(
+                out.as_mut_ptr().cast::<core::mem::MaybeUninit<u8>>(),
+                N,
+            )
+        };
+        crate::backend::decode(hex, &mut spare[..out_len])?;
+        // SAFETY: backend wrote out_len valid bytes.
+        unsafe { out.set_len(out_len) };
+        Ok(out)
     }
 }

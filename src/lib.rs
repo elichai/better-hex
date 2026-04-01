@@ -20,7 +20,15 @@ mod maybe_uninit;
 mod prefix;
 mod traits;
 
-pub use decode::{check, check_raw, decode_to_array, decode_to_slice};
+#[cfg(feature = "serde")]
+#[doc(hidden)]
+pub mod serde_impl;
+
+#[cfg(feature = "serde")]
+#[doc(inline)]
+pub use serde_impl as serde;
+
+pub use decode::{check, check_raw, decode_to, decode_to_array, decode_to_slice};
 pub use display::{HexDisplay, display};
 pub use encode::{encode_to_slice, encode_to_slice_upper};
 pub use error::Error;
