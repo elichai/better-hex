@@ -634,6 +634,101 @@ pub(crate) unsafe fn ct_check_ssse3(input: &[u8]) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Check — AVX2
+// ---------------------------------------------------------------------------
+
+/// Check whether every byte in `input` is a valid hex ASCII character,
+/// using AVX2 SIMD.
+///
+/// Reuses the Lemire `delta_check` validation from the decode path: for
+/// each 32-byte chunk, broadcasts the 128-bit delta_check table to 256 bits
+/// and computes `vm1 + shuffle(delta_check, hash_key)`, checking that
+/// `_mm256_movemask_epi8 == 0` (all MSBs clear ⇒ all chars valid).
+/// Falls back to `check_ssse3` / `ct_check_ssse3` for the sub-32-byte tail.
+///
+/// When `SHORT_CIRCUIT` is true, returns `false` immediately on the first
+/// invalid chunk. When `SHORT_CIRCUIT` is false, accumulates validity across
+/// all chunks without early exit (constant-time).
+///
+/// # Safety
+///
+/// Caller must ensure the CPU supports AVX2.
+#[inline]
+#[target_feature(enable = "avx2")]
+unsafe fn check_avx2_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
+    // SAFETY: all intrinsics below require AVX2, guaranteed by #[target_feature].
+    unsafe {
+        let delta_check = _mm256_broadcastsi128_si256(decode_delta_check_128());
+        let one = _mm256_set1_epi8(1);
+        let mask_hi = _mm256_set1_epi8(0x0F);
+
+        let mut i = 0usize;
+        let mut err_accum = 0i32;
+        let simd_end = input.len() & !31;
+
+        while i < simd_end {
+            let chunk = _mm256_loadu_si256(input.as_ptr().add(i).cast());
+
+            let vm1 = _mm256_sub_epi8(chunk, one);
+            let hash_key = _mm256_and_si256(_mm256_srli_epi16(vm1, 4), mask_hi);
+            let check = _mm256_add_epi8(vm1, _mm256_shuffle_epi8(delta_check, hash_key));
+
+            let mask = _mm256_movemask_epi8(check);
+            if SHORT_CIRCUIT {
+                if mask != 0 {
+                    return false;
+                }
+            } else {
+                err_accum |= mask;
+            }
+
+            i += 32;
+        }
+
+        // Tail: fall through to SSSE3/scalar.
+        let tail_valid = if SHORT_CIRCUIT {
+            check_ssse3(&input[i..])
+        } else {
+            ct_check_ssse3(&input[i..])
+        };
+
+        if SHORT_CIRCUIT {
+            tail_valid
+        } else {
+            (err_accum == 0) & tail_valid
+        }
+    }
+}
+
+/// Check whether every byte in `input` is a valid hex ASCII character,
+/// using AVX2 SIMD.
+///
+/// Returns `false` immediately upon encountering the first invalid chunk.
+///
+/// # Safety
+///
+/// Caller must ensure the CPU supports AVX2.
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn check_avx2(input: &[u8]) -> bool {
+    // SAFETY: caller guarantees AVX2.
+    unsafe { check_avx2_inner::<true>(input) }
+}
+
+/// Constant-time check whether every byte in `input` is a valid hex ASCII
+/// character, using AVX2 SIMD.
+///
+/// Processes all chunks without short-circuiting on invalid input.
+///
+/// # Safety
+///
+/// Caller must ensure the CPU supports AVX2.
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn ct_check_avx2(input: &[u8]) -> bool {
+    // SAFETY: caller guarantees AVX2.
+    unsafe { check_avx2_inner::<false>(input) }
+}
+
+// ---------------------------------------------------------------------------
 // Encode — AVX-512BW
 // ---------------------------------------------------------------------------
 
@@ -919,11 +1014,11 @@ unsafe fn check_avx512_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
             i += 64;
         }
 
-        // Tail: fall through to SSSE3/scalar.
+        // Tail: fall through to AVX2/SSSE3/scalar.
         let tail_valid = if SHORT_CIRCUIT {
-            check_ssse3(&input[i..])
+            check_avx2(&input[i..])
         } else {
-            ct_check_ssse3(&input[i..])
+            ct_check_avx2(&input[i..])
         };
 
         all_valid & tail_valid
@@ -956,4 +1051,62 @@ pub(crate) unsafe fn check_avx512(input: &[u8]) -> bool {
 pub(crate) unsafe fn ct_check_avx512(input: &[u8]) -> bool {
     // SAFETY: caller guarantees AVX-512BW.
     unsafe { check_avx512_inner::<false>(input) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::test_support::exercise_backend;
+
+    cpufeatures::new!(has_ssse3, "ssse3");
+    cpufeatures::new!(has_avx2, "avx2");
+    cpufeatures::new!(has_avx512bw, "avx512bw");
+
+    #[test]
+    fn ssse3_matches_scalar_oracle() {
+        if !has_ssse3::init().get() {
+            return;
+        }
+
+        exercise_backend(
+            |input, output| unsafe { encode_ssse3::<false>(input, output) },
+            |input, output| unsafe { encode_ssse3::<true>(input, output) },
+            |input, output| unsafe { decode_ssse3(input, output) },
+            |input, output| unsafe { ct_decode_ssse3(input, output) },
+            |input| unsafe { check_ssse3(input) },
+            |input| unsafe { ct_check_ssse3(input) },
+        );
+    }
+
+    #[test]
+    fn avx2_matches_scalar_oracle() {
+        if !has_avx2::init().get() {
+            return;
+        }
+
+        exercise_backend(
+            |input, output| unsafe { encode_avx2::<false>(input, output) },
+            |input, output| unsafe { encode_avx2::<true>(input, output) },
+            |input, output| unsafe { decode_avx2(input, output) },
+            |input, output| unsafe { ct_decode_avx2(input, output) },
+            |input| unsafe { check_avx2(input) },
+            |input| unsafe { ct_check_avx2(input) },
+        );
+    }
+
+    #[test]
+    fn avx512_matches_scalar_oracle() {
+        if !has_avx512bw::init().get() {
+            return;
+        }
+
+        exercise_backend(
+            |input, output| unsafe { encode_avx512::<false>(input, output) },
+            |input, output| unsafe { encode_avx512::<true>(input, output) },
+            |input, output| unsafe { decode_avx512(input, output) },
+            |input, output| unsafe { ct_decode_avx512(input, output) },
+            |input| unsafe { check_avx512(input) },
+            |input| unsafe { ct_check_avx512(input) },
+        );
+    }
 }

@@ -281,6 +281,9 @@ pub fn ct_check(input: &[u8]) -> bool {
                 if #[cfg(feature = "std")] {
                     if std::is_x86_feature_detected!("avx512bw") {
                         unsafe { x86::ct_check_avx512(input) }
+                    } else if std::is_x86_feature_detected!("avx2") {
+                        // SAFETY: we just confirmed AVX2 is available.
+                        unsafe { x86::ct_check_avx2(input) }
                     } else if std::is_x86_feature_detected!("ssse3") {
                         unsafe { x86::ct_check_ssse3(input) }
                     } else {
@@ -288,16 +291,23 @@ pub fn ct_check(input: &[u8]) -> bool {
                     }
                 } else {
                     cpufeatures::new!(cpuid_avx512bw, "avx512bw");
+                    cpufeatures::new!(cpuid_avx2, "avx2");
                     cpufeatures::new!(cpuid_ssse3, "ssse3");
                     let token_avx512bw = cpuid_avx512bw::init();
                     if token_avx512bw.get() {
                         unsafe { x86::ct_check_avx512(input) }
                     } else {
-                        let token_ssse3 = cpuid_ssse3::init();
-                        if token_ssse3.get() {
-                            unsafe { x86::ct_check_ssse3(input) }
+                        let token_avx2 = cpuid_avx2::init();
+                        if token_avx2.get() {
+                            // SAFETY: we just confirmed AVX2 is available.
+                            unsafe { x86::ct_check_avx2(input) }
                         } else {
-                            ct_scalar::check(input)
+                            let token_ssse3 = cpuid_ssse3::init();
+                            if token_ssse3.get() {
+                                unsafe { x86::ct_check_ssse3(input) }
+                            } else {
+                                ct_scalar::check(input)
+                            }
                         }
                     }
                 }
@@ -324,6 +334,9 @@ pub fn check(input: &[u8]) -> bool {
                     if std::is_x86_feature_detected!("avx512bw") {
                         // SAFETY: we just confirmed AVX-512BW is available.
                         unsafe { x86::check_avx512(input) }
+                    } else if std::is_x86_feature_detected!("avx2") {
+                        // SAFETY: we just confirmed AVX2 is available.
+                        unsafe { x86::check_avx2(input) }
                     } else if std::is_x86_feature_detected!("ssse3") {
                         // SAFETY: we just confirmed SSSE3 is available.
                         unsafe { x86::check_ssse3(input) }
@@ -332,18 +345,25 @@ pub fn check(input: &[u8]) -> bool {
                     }
                 } else {
                     cpufeatures::new!(cpuid_avx512bw, "avx512bw");
+                    cpufeatures::new!(cpuid_avx2, "avx2");
                     cpufeatures::new!(cpuid_ssse3, "ssse3");
                     let token_avx512bw = cpuid_avx512bw::init();
                     if token_avx512bw.get() {
                         // SAFETY: we just confirmed AVX-512BW is available.
                         unsafe { x86::check_avx512(input) }
                     } else {
-                        let token_ssse3 = cpuid_ssse3::init();
-                        if token_ssse3.get() {
-                            // SAFETY: we just confirmed SSSE3 is available.
-                            unsafe { x86::check_ssse3(input) }
+                        let token_avx2 = cpuid_avx2::init();
+                        if token_avx2.get() {
+                            // SAFETY: we just confirmed AVX2 is available.
+                            unsafe { x86::check_avx2(input) }
                         } else {
-                            scalar::check(input)
+                            let token_ssse3 = cpuid_ssse3::init();
+                            if token_ssse3.get() {
+                                // SAFETY: we just confirmed SSSE3 is available.
+                                unsafe { x86::check_ssse3(input) }
+                            } else {
+                                scalar::check(input)
+                            }
                         }
                     }
                 }
@@ -353,5 +373,118 @@ pub fn check(input: &[u8]) -> bool {
         } else {
             scalar::check(input)
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) mod test_support {
+    use super::{ct_scalar, scalar};
+    use crate::error::Error;
+    use core::mem::MaybeUninit;
+
+    pub(crate) const INPUT_LEN: usize = 160;
+    pub(crate) const HEX_LEN: usize = INPUT_LEN * 2;
+    pub(crate) const INVALID_INDEX: usize = 129;
+
+    pub(crate) fn sample_input() -> [u8; INPUT_LEN] {
+        core::array::from_fn(|i| ((i as u8).wrapping_mul(37)).wrapping_add(11))
+    }
+
+    pub(crate) fn assume_init<const N: usize>(buf: [MaybeUninit<u8>; N]) -> [u8; N] {
+        core::array::from_fn(|i| unsafe { buf[i].assume_init() })
+    }
+
+    fn scalar_hex<const UPPER: bool>(input: &[u8; INPUT_LEN]) -> [u8; HEX_LEN] {
+        let mut out = [MaybeUninit::uninit(); HEX_LEN];
+        scalar::encode::<UPPER>(input, &mut out);
+        assume_init(out)
+    }
+
+    pub(crate) fn exercise_encode_decode_backend<EL, EU, D, CD>(
+        encode_lower: EL,
+        encode_upper: EU,
+        decode: D,
+        ct_decode: CD,
+    ) where
+        EL: Fn(&[u8], &mut [MaybeUninit<u8>]),
+        EU: Fn(&[u8], &mut [MaybeUninit<u8>]),
+        D: Fn(&[u8], &mut [MaybeUninit<u8>]) -> Result<(), Error>,
+        CD: Fn(&[u8], &mut [MaybeUninit<u8>]) -> Result<(), Error>,
+    {
+        let input = sample_input();
+        let expected_lower = scalar_hex::<false>(&input);
+        let expected_upper = scalar_hex::<true>(&input);
+
+        let mut lower_out = [MaybeUninit::uninit(); HEX_LEN];
+        encode_lower(&input, &mut lower_out);
+        assert_eq!(assume_init(lower_out), expected_lower, "lower encode mismatch");
+
+        let mut upper_out = [MaybeUninit::uninit(); HEX_LEN];
+        encode_upper(&input, &mut upper_out);
+        assert_eq!(assume_init(upper_out), expected_upper, "upper encode mismatch");
+
+        let mut decoded = [MaybeUninit::uninit(); INPUT_LEN];
+        decode(&expected_lower, &mut decoded).expect("decode failed");
+        assert_eq!(assume_init(decoded), input, "decode mismatch");
+
+        let mut ct_decoded = [MaybeUninit::uninit(); INPUT_LEN];
+        ct_decode(&expected_lower, &mut ct_decoded).expect("ct decode failed");
+        assert_eq!(assume_init(ct_decoded), input, "ct decode mismatch");
+
+        let mut invalid = expected_lower;
+        invalid[INVALID_INDEX] = b'G';
+
+        let mut invalid_out = [MaybeUninit::uninit(); INPUT_LEN];
+        assert_eq!(
+            decode(&invalid, &mut invalid_out),
+            Err(Error::InvalidChar {
+                byte: b'G',
+                index: INVALID_INDEX,
+            }),
+            "decode returned wrong error for invalid input"
+        );
+
+        let mut invalid_ct_out = [MaybeUninit::uninit(); INPUT_LEN];
+        assert_eq!(
+            ct_decode(&invalid, &mut invalid_ct_out),
+            Err(Error::InvalidEncoding),
+            "ct decode returned wrong error for invalid input"
+        );
+
+        let mut scalar_out = [MaybeUninit::uninit(); INPUT_LEN];
+        scalar::decode(&expected_lower, &mut scalar_out).expect("scalar decode failed");
+        assert_eq!(assume_init(scalar_out), input, "scalar oracle mismatch");
+
+        let mut scalar_ct_out = [MaybeUninit::uninit(); INPUT_LEN];
+        ct_scalar::decode(&expected_lower, &mut scalar_ct_out).expect("ct scalar decode failed");
+        assert_eq!(assume_init(scalar_ct_out), input, "ct scalar oracle mismatch");
+    }
+
+    pub(crate) fn exercise_backend<EL, EU, D, CD, C, CC>(
+        encode_lower: EL,
+        encode_upper: EU,
+        decode: D,
+        ct_decode: CD,
+        check: C,
+        ct_check: CC,
+    ) where
+        EL: Fn(&[u8], &mut [MaybeUninit<u8>]),
+        EU: Fn(&[u8], &mut [MaybeUninit<u8>]),
+        D: Fn(&[u8], &mut [MaybeUninit<u8>]) -> Result<(), Error>,
+        CD: Fn(&[u8], &mut [MaybeUninit<u8>]) -> Result<(), Error>,
+        C: Fn(&[u8]) -> bool,
+        CC: Fn(&[u8]) -> bool,
+    {
+        let expected_lower = scalar_hex::<false>(&sample_input());
+        let mut invalid = expected_lower;
+        invalid[INVALID_INDEX] = b'G';
+
+        exercise_encode_decode_backend(encode_lower, encode_upper, decode, ct_decode);
+
+        assert!(check(&expected_lower), "check rejected valid hex");
+        assert!(ct_check(&expected_lower), "ct check rejected valid hex");
+        assert!(!check(&invalid), "check accepted invalid hex");
+        assert!(!ct_check(&invalid), "ct check accepted invalid hex");
     }
 }
