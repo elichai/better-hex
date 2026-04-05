@@ -383,84 +383,21 @@ pub(crate) mod test_support {
     use crate::error::Error;
     use core::mem::MaybeUninit;
 
-    pub(crate) const INPUT_LEN: usize = 160;
-    pub(crate) const HEX_LEN: usize = INPUT_LEN * 2;
-    pub(crate) const INVALID_INDEX: usize = 129;
+    const MAX_SIZE: usize = 512;
 
-    pub(crate) fn sample_input() -> [u8; INPUT_LEN] {
-        core::array::from_fn(|i| ((i as u8).wrapping_mul(37)).wrapping_add(11))
+    /// Deterministic input bytes for a given size.
+    pub(crate) fn make_input(size: usize) -> alloc::vec::Vec<u8> {
+        (0..size).map(|i| ((i as u8).wrapping_mul(37)).wrapping_add(11)).collect()
     }
 
-    pub(crate) fn assume_init<const N: usize>(buf: [MaybeUninit<u8>; N]) -> [u8; N] {
-        core::array::from_fn(|i| unsafe { buf[i].assume_init() })
-    }
-
-    fn scalar_hex<const UPPER: bool>(input: &[u8; INPUT_LEN]) -> [u8; HEX_LEN] {
-        let mut out = [MaybeUninit::uninit(); HEX_LEN];
+    fn scalar_encode<const UPPER: bool>(input: &[u8]) -> alloc::vec::Vec<u8> {
+        let mut out = alloc::vec![MaybeUninit::uninit(); input.len() * 2];
         scalar::encode::<UPPER>(input, &mut out);
-        assume_init(out)
+        out.into_iter().map(|m| unsafe { m.assume_init() }).collect()
     }
 
-    pub(crate) fn exercise_encode_decode_backend<EL, EU, D, CD>(
-        encode_lower: EL,
-        encode_upper: EU,
-        decode: D,
-        ct_decode: CD,
-    ) where
-        EL: Fn(&[u8], &mut [MaybeUninit<u8>]),
-        EU: Fn(&[u8], &mut [MaybeUninit<u8>]),
-        D: Fn(&[u8], &mut [MaybeUninit<u8>]) -> Result<(), Error>,
-        CD: Fn(&[u8], &mut [MaybeUninit<u8>]) -> Result<(), Error>,
-    {
-        let input = sample_input();
-        let expected_lower = scalar_hex::<false>(&input);
-        let expected_upper = scalar_hex::<true>(&input);
-
-        let mut lower_out = [MaybeUninit::uninit(); HEX_LEN];
-        encode_lower(&input, &mut lower_out);
-        assert_eq!(assume_init(lower_out), expected_lower, "lower encode mismatch");
-
-        let mut upper_out = [MaybeUninit::uninit(); HEX_LEN];
-        encode_upper(&input, &mut upper_out);
-        assert_eq!(assume_init(upper_out), expected_upper, "upper encode mismatch");
-
-        let mut decoded = [MaybeUninit::uninit(); INPUT_LEN];
-        decode(&expected_lower, &mut decoded).expect("decode failed");
-        assert_eq!(assume_init(decoded), input, "decode mismatch");
-
-        let mut ct_decoded = [MaybeUninit::uninit(); INPUT_LEN];
-        ct_decode(&expected_lower, &mut ct_decoded).expect("ct decode failed");
-        assert_eq!(assume_init(ct_decoded), input, "ct decode mismatch");
-
-        let mut invalid = expected_lower;
-        invalid[INVALID_INDEX] = b'G';
-
-        let mut invalid_out = [MaybeUninit::uninit(); INPUT_LEN];
-        assert_eq!(
-            decode(&invalid, &mut invalid_out),
-            Err(Error::InvalidChar {
-                byte: b'G',
-                index: INVALID_INDEX,
-            }),
-            "decode returned wrong error for invalid input"
-        );
-
-        let mut invalid_ct_out = [MaybeUninit::uninit(); INPUT_LEN];
-        assert_eq!(
-            ct_decode(&invalid, &mut invalid_ct_out),
-            Err(Error::InvalidEncoding),
-            "ct decode returned wrong error for invalid input"
-        );
-
-        let mut scalar_out = [MaybeUninit::uninit(); INPUT_LEN];
-        scalar::decode(&expected_lower, &mut scalar_out).expect("scalar decode failed");
-        assert_eq!(assume_init(scalar_out), input, "scalar oracle mismatch");
-
-        let mut scalar_ct_out = [MaybeUninit::uninit(); INPUT_LEN];
-        ct_scalar::decode(&expected_lower, &mut scalar_ct_out).expect("ct scalar decode failed");
-        assert_eq!(assume_init(scalar_ct_out), input, "ct scalar oracle mismatch");
-    }
-
+    /// Exercise a SIMD backend's encode/decode/check against the scalar oracle
+    /// for every size in 0..=512.
     pub(crate) fn exercise_backend<EL, EU, D, CD, C, CC>(
         encode_lower: EL,
         encode_upper: EU,
@@ -476,15 +413,64 @@ pub(crate) mod test_support {
         C: Fn(&[u8]) -> bool,
         CC: Fn(&[u8]) -> bool,
     {
-        let expected_lower = scalar_hex::<false>(&sample_input());
-        let mut invalid = expected_lower;
-        invalid[INVALID_INDEX] = b'G';
+        for size in 0..=MAX_SIZE {
+            let input = make_input(size);
+            let hex_len = size * 2;
+            let expected_lower = scalar_encode::<false>(&input);
+            let expected_upper = scalar_encode::<true>(&input);
 
-        exercise_encode_decode_backend(encode_lower, encode_upper, decode, ct_decode);
+            // Encode lower
+            let mut lower_out = alloc::vec![MaybeUninit::uninit(); hex_len];
+            encode_lower(&input, &mut lower_out);
+            let lower: alloc::vec::Vec<u8> = lower_out.iter().map(|m| unsafe { m.assume_init() }).collect();
+            assert_eq!(lower, expected_lower, "lower encode mismatch at size {size}");
 
-        assert!(check(&expected_lower), "check rejected valid hex");
-        assert!(ct_check(&expected_lower), "ct check rejected valid hex");
-        assert!(!check(&invalid), "check accepted invalid hex");
-        assert!(!ct_check(&invalid), "ct check accepted invalid hex");
+            // Encode upper
+            let mut upper_out = alloc::vec![MaybeUninit::uninit(); hex_len];
+            encode_upper(&input, &mut upper_out);
+            let upper: alloc::vec::Vec<u8> = upper_out.iter().map(|m| unsafe { m.assume_init() }).collect();
+            assert_eq!(upper, expected_upper, "upper encode mismatch at size {size}");
+
+            // Decode (fast path)
+            let mut decoded = alloc::vec![MaybeUninit::uninit(); size];
+            decode(&expected_lower, &mut decoded).unwrap_or_else(|e| panic!("decode failed at size {size}: {e}"));
+            let dec: alloc::vec::Vec<u8> = decoded.iter().map(|m| unsafe { m.assume_init() }).collect();
+            assert_eq!(dec, input, "decode mismatch at size {size}");
+
+            // Decode (CT path)
+            let mut ct_decoded = alloc::vec![MaybeUninit::uninit(); size];
+            ct_decode(&expected_lower, &mut ct_decoded)
+                .unwrap_or_else(|e| panic!("ct decode failed at size {size}: {e}"));
+            let ct_dec: alloc::vec::Vec<u8> = ct_decoded.iter().map(|m| unsafe { m.assume_init() }).collect();
+            assert_eq!(ct_dec, input, "ct decode mismatch at size {size}");
+
+            // Check (both paths)
+            assert!(check(&expected_lower), "check rejected valid hex at size {size}");
+            assert!(ct_check(&expected_lower), "ct_check rejected valid hex at size {size}");
+
+            // Invalid input: inject bad byte and verify error
+            if hex_len >= 4 {
+                let bad_index = hex_len / 2 + 1; // somewhere in the middle
+                let mut invalid = expected_lower.clone();
+                invalid[bad_index] = b'G';
+
+                let mut inv_out = alloc::vec![MaybeUninit::uninit(); size];
+                assert_eq!(
+                    decode(&invalid, &mut inv_out),
+                    Err(Error::InvalidChar { byte: b'G', index: bad_index }),
+                    "decode wrong error at size {size}"
+                );
+
+                let mut inv_ct_out = alloc::vec![MaybeUninit::uninit(); size];
+                assert_eq!(
+                    ct_decode(&invalid, &mut inv_ct_out),
+                    Err(Error::InvalidEncoding),
+                    "ct_decode wrong error at size {size}"
+                );
+
+                assert!(!check(&invalid), "check accepted invalid hex at size {size}");
+                assert!(!ct_check(&invalid), "ct_check accepted invalid hex at size {size}");
+            }
+        }
     }
 }
