@@ -209,7 +209,7 @@ mod tests {
     fn decode_nibble_invalid_bytes() {
         // Every byte not in [0-9a-fA-F] must have bit 8 set.
         for byte in 0u8..=255 {
-            let valid = matches!(byte, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F');
+            let valid = byte.is_ascii_hexdigit();
             let val = ct_decode_nibble(byte);
             if valid {
                 // Valid bytes produce a value in 0..=15 with no high bits set.
@@ -228,8 +228,8 @@ mod tests {
     fn encode_roundtrip() {
         // Build all 256 input bytes.
         let mut input = [0u8; 256];
-        for i in 0..256usize {
-            input[i] = i as u8;
+        for (i, item) in input.iter_mut().enumerate() {
+            *item = i as u8;
         }
 
         let mut upper_out = [MaybeUninit::uninit(); 512];
@@ -283,11 +283,11 @@ mod tests {
         assert!(!check(b"0g"));
         assert!(!check(b"zz"));
         // Boundary bytes just outside valid ranges.
-        assert!(!check(&[b'/'])); // one below '0'
-        assert!(!check(&[b':'])); // one above '9'
-        assert!(!check(&[b'@'])); // one below 'A'
-        assert!(!check(&[b'G'])); // one above 'F'
-        assert!(!check(&[b'`'])); // one below 'a'
-        assert!(!check(&[b'g'])); // one above 'f'
+        assert!(!check(b"/")); // one below '0'
+        assert!(!check(b":")); // one above '9'
+        assert!(!check(b"@")); // one below 'A'
+        assert!(!check(b"G")); // one above 'F'
+        assert!(!check(b"`")); // one below 'a'
+        assert!(!check(b"g")); // one above 'f'
     }
 }

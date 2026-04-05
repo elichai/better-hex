@@ -157,9 +157,9 @@ fn const_check() {
     const VALID: bool = better_hex::const_check(b"deadbeef");
     const INVALID: bool = better_hex::const_check(b"deadbeeG");
     const ODD: bool = better_hex::const_check(b"abc");
-    assert!(VALID);
-    assert!(!INVALID);
-    assert!(!ODD);
+    const { assert!(VALID) };
+    const { assert!(!INVALID) };
+    const { assert!(!ODD) };
 }
 
 #[test]

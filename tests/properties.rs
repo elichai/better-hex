@@ -14,7 +14,7 @@ fn naive_encode_lower(input: &[u8]) -> Vec<u8> {
 
 /// Naive reference decoder.
 fn naive_decode(input: &[u8]) -> Option<Vec<u8>> {
-    if input.len() % 2 != 0 {
+    if !input.len().is_multiple_of(2) {
         return None;
     }
     let mut out = Vec::with_capacity(input.len() / 2);

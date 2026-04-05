@@ -193,7 +193,7 @@ mod tests {
     #[test]
     fn decode_lut_rejects_non_hex() {
         for byte in 0..=255u8 {
-            let expected_valid = matches!(byte, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F');
+            let expected_valid = byte.is_ascii_hexdigit();
             let is_valid = DECODE_LUT[byte as usize] != NIL;
             assert_eq!(
                 is_valid,
