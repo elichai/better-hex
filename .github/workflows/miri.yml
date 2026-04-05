@@ -1,0 +1,83 @@
+name: Miri
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  miri:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    continue-on-error: false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Full API coverage under the scalar path. This keeps the integration
+          # suite in play without paying the SIMD backend cost on every row.
+          - name: Miri (x86_64 scalar API)
+            target: x86_64-unknown-linux-gnu
+            rustflags: ""
+            cargo_args: --target x86_64-unknown-linux-gnu --features disable-simd --lib --tests
+
+          # Direct backend coverage on x86_64 with the relevant virtual CPU features.
+          - name: Miri (x86_64 SSSE3 impl)
+            target: x86_64-unknown-linux-gnu
+            rustflags: -C target-feature=+ssse3
+            cargo_args: --target x86_64-unknown-linux-gnu --lib
+
+          - name: Miri (x86_64 AVX2 impl)
+            target: x86_64-unknown-linux-gnu
+            rustflags: -C target-feature=+avx2
+            cargo_args: --target x86_64-unknown-linux-gnu --lib
+
+          # Deliberately stop at AVX2 here. Miri aborts on the AVX-512
+          # `_mm512_permutexvar_epi64` path used by `encode_avx512`.
+          # Cover the 32-bit x86 backend as a distinct target.
+          - name: Miri (i686 SSSE3 impl)
+            target: i686-unknown-linux-gnu
+            rustflags: -C target-feature=+ssse3
+            cargo_args: --target i686-unknown-linux-gnu --lib
+
+          # Cross-interpret the AArch64 NEON backend on the same Linux runner.
+          # wasm stays out of Miri because Miri only promises Linux/macOS/Windows
+          # targets; the normal CI workflow already executes the wasm backend.
+          - name: Miri (aarch64 NEON impl)
+            target: aarch64-unknown-linux-gnu
+            rustflags: -C target-feature=+neon
+            cargo_args: --target aarch64-unknown-linux-gnu --lib
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust nightly with Miri
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Setup Miri
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        run: cargo miri setup --target ${{ matrix.target }}
+
+      - name: Run tests under Miri
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+          MIRIFLAGS: >-
+            -Zmiri-env-set=PROPTEST_CASES=8
+            -Zmiri-env-set=PROPTEST_MAX_SHRINK_ITERS=32
+            -Zmiri-env-set=PROPTEST_DISABLE_FAILURE_PERSISTENCE=1
+        run: cargo miri test --locked ${{ matrix.cargo_args }}

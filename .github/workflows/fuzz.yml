@@ -29,17 +29,17 @@ jobs:
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
 
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            fuzz -> fuzz/target
+          cache-all-crates: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: fuzz-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: fuzz-
 
       - name: Determine fuzz duration
         id: duration

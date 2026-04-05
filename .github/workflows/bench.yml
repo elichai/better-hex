@@ -22,19 +22,14 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo registry
-        uses: actions/cache@v4
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: bench-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: bench-
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run benchmarks
         run: |
-          cargo bench --features _bench_internals,serde \
+          cargo bench --locked --features _bench_internals,serde \
             --bench encode --bench decode --bench check \
             -- --output-format bencher \
             | tee bench_output.txt
@@ -52,4 +47,3 @@ jobs:
           fail-on-alert: false
           github-token: ${{ secrets.GITHUB_TOKEN }}
           benchmark-data-dir-path: dev/bench
-
