@@ -8,7 +8,7 @@
 //! from hex strings — including `Vec<u8>`, `[u8; N]`, `heapless::Vec`, and
 //! `arrayvec::ArrayVec`.
 
-use crate::{display::write_hex_to, error::Error};
+use crate::{HexStr, display::write_hex_to, error::Error, maybe_uninit, Prefix};
 use core::fmt;
 #[cfg(any(feature = "alloc", feature = "heapless", feature = "arrayvec"))]
 use core::mem::MaybeUninit;
@@ -187,18 +187,35 @@ impl<const CAP: usize> HexTarget for arrayvec::ArrayString<CAP> {
     }
 }
 
-#[cfg(any(feature = "alloc", feature = "heapless", feature = "arrayvec"))]
-fn to_hex_container<const UPPER: bool, C: Container>(input: &[u8]) -> Result<C, Error> {
-    let hex_len = input.len() * 2;
-    let mut out = C::new(hex_len)?;
-    crate::backend::encode::<UPPER>(input, &mut out.as_mut_slice()[..hex_len]);
-    // SAFETY: backend wrote hex_len bytes of valid hex ASCII (valid UTF-8 for string types).
-    unsafe { out.set_len(hex_len) };
-    Ok(out)
+impl<const N: usize, P: Prefix> HexTarget for HexStr<N, P> {
+    type Error = crate::error::Error;
+
+    fn encode_hex(bytes: &[u8]) -> Result<Self, Self::Error> {
+        to_hex_container::<false, Self>(bytes)
+    }
+
+    fn encode_hex_upper(bytes: &[u8]) -> Result<Self, Self::Error> {
+        to_hex_container::<true, Self>(bytes)
+    }
 }
 
 #[cfg(any(feature = "alloc", feature = "heapless", feature = "arrayvec"))]
+#[inline]
+fn to_hex_container<const UPPER: bool, C: Container>(input: &[u8]) -> Result<C, Error> {
+    let hex_len = input.len() * 2;
+    let mut out = C::new(hex_len)?;
+    crate::backend::encode::<UPPER>(input, &mut C::as_mut_slice(&mut out)[..hex_len]);
+    // SAFETY: the first `hex_len` bytes of the spare capacity have been
+    // initialized by `backend::encode` with valid hex ASCII characters.
+    // Hex ASCII is a subset of UTF-8, satisfying `set_len`'s requirement
+    // for `REQUIRES_UTF8` containers.
+    Ok(unsafe { C::set_len(out, hex_len) })
+}
+
+#[cfg(any(feature = "alloc", feature = "heapless", feature = "arrayvec"))]
+#[inline]
 fn from_hex_container<C: Container>(hex: &[u8]) -> Result<C, Error> {
+    const { assert!(!C::REQUIRES_UTF8, "from_hex_container writes raw decoded bytes, not valid UTF-8; use only with byte containers") }
     if !hex.len().is_multiple_of(2) {
         return Err(Error::InvalidLength {
             expected: hex.len() + 1,
@@ -207,12 +224,12 @@ fn from_hex_container<C: Container>(hex: &[u8]) -> Result<C, Error> {
     }
     let out_len = hex.len() / 2;
     let mut out = C::new(out_len)?;
-    crate::backend::decode(hex, &mut out.as_mut_slice()[..out_len])?;
-    // SAFETY: backend wrote out_len bytes of valid decoded hex.
-    // For string types this is raw bytes, not UTF-8, so only byte
-    // containers (Vec, heapless::Vec, arrayvec::ArrayVec) use this path.
-    unsafe { out.set_len(out_len) };
-    Ok(out)
+    crate::backend::decode(hex, &mut C::as_mut_slice(&mut out)[..out_len])?;
+    // SAFETY: the first `out_len` bytes of the spare capacity have been
+    // initialized by `backend::decode`. The const assertion above guarantees
+    // `C::REQUIRES_UTF8` is false (i.e. only byte containers like `Vec<u8>`,
+    // `heapless::Vec`, `arrayvec::ArrayVec`), so raw bytes are acceptable.
+    Ok(unsafe { C::set_len(out, out_len) })
 }
 
 /// Internal trait abstracting over growable byte/string containers.
@@ -227,15 +244,23 @@ fn from_hex_container<C: Container>(hex: &[u8]) -> Result<C, Error> {
 /// - `as_mut_slice()` returns a slice covering the full spare capacity.
 /// - After `set_len(n)`, the first `n` bytes are treated as initialized.
 ///   For string types, those bytes must be valid UTF-8.
+/// - `REQUIRES_UTF8` is `true` for types where `set_len` requires the
+///   written bytes to be valid UTF-8 (e.g. `String`, `ArrayString`),
+///   and `false` for types that accept arbitrary bytes (e.g. `Vec<u8>`).
+///   This is used by `from_hex_container` to reject string-typed containers
+///   at compile time, since decoded hex output is raw bytes, not UTF-8.
 #[cfg(any(feature = "alloc", feature = "heapless", feature = "arrayvec"))]
-trait Container: Sized {
+unsafe trait Container: Sized {
+    /// `true` if `set_len` requires the written bytes to be valid UTF-8.
+    const REQUIRES_UTF8: bool;
+    type Handle;
     /// Allocate or create a container with at least `min_capacity` bytes.
     /// Returns `Err(Error::InvalidLength)` if the capacity is insufficient
     /// (fixed-capacity types).
-    fn new(min_capacity: usize) -> Result<Self, Error>;
+    fn new(min_capacity: usize) -> Result<Self::Handle, Error>;
 
     /// Return the spare (uninitialized) capacity as a mutable slice.
-    fn as_mut_slice(&mut self) -> &mut [MaybeUninit<u8>];
+    fn as_mut_slice(handle: &mut Self::Handle) -> &mut [MaybeUninit<u8>];
 
     /// Mark the first `new_len` bytes as initialized.
     ///
@@ -243,46 +268,58 @@ trait Container: Sized {
     ///
     /// The first `new_len` bytes of the spare capacity must have been
     /// written. For string types, those bytes must be valid UTF-8.
-    unsafe fn set_len(&mut self, new_len: usize);
+    unsafe fn set_len(handle: Self::Handle, new_len: usize) -> Self;
 }
 
 #[cfg(feature = "alloc")]
-impl Container for alloc::vec::Vec<u8> {
+unsafe impl Container for alloc::vec::Vec<u8> {
+    const REQUIRES_UTF8: bool = false;
+    type Handle = Self;
+
     #[inline]
     fn new(min_capacity: usize) -> Result<Self, Error> {
         Ok(Self::with_capacity(min_capacity))
     }
     #[inline]
-    fn as_mut_slice(&mut self) -> &mut [MaybeUninit<u8>] {
-        self.spare_capacity_mut()
+    fn as_mut_slice(handle: &mut Self::Handle) -> &mut [MaybeUninit<u8>] {
+        handle.spare_capacity_mut()
     }
     #[inline]
-    unsafe fn set_len(&mut self, new_len: usize) {
-        // SAFETY: caller guarantees the first `new_len` bytes of `self` are initialized and valid.
-        unsafe { self.set_len(new_len) };
+    unsafe fn set_len(mut handle: Self::Handle, new_len: usize) -> Self {
+        // SAFETY: caller guarantees the first `new_len` bytes of `handle` are initialized and valid.
+        unsafe { handle.set_len(new_len) };
+        handle
     }
 }
 
 #[cfg(feature = "alloc")]
-impl Container for alloc::string::String {
+unsafe impl Container for alloc::string::String {
+    const REQUIRES_UTF8: bool = true;
+    type Handle = Self;
     #[inline]
     fn new(min_capacity: usize) -> Result<Self, Error> {
         Ok(Self::with_capacity(min_capacity))
     }
     #[inline]
-    fn as_mut_slice(&mut self) -> &mut [MaybeUninit<u8>] {
-        // SAFETY: `String`'s spare capacity is valid for `MaybeUninit<u8>` since `String` is guaranteed to have a contiguous buffer of bytes.
-        unsafe { self.as_mut_vec().spare_capacity_mut() }
+    fn as_mut_slice(handle: &mut Self::Handle) -> &mut [MaybeUninit<u8>] {
+        // SAFETY: `as_mut_vec()` is unsafe because it allows writing non-UTF-8
+        // bytes. Here we only access the spare capacity (beyond the string's
+        // current length); the caller (`to_hex_container`) will write valid
+        // hex ASCII before calling `set_len`.
+        unsafe { handle.as_mut_vec().spare_capacity_mut() }
     }
     #[inline]
-    unsafe fn set_len(&mut self, new_len: usize) {
-        // SAFETY: caller guarantees the first `new_len` bytes of `self` are initialized and valid UTF-8.
-        unsafe { self.as_mut_vec().set_len(new_len) };
+    unsafe fn set_len(mut handle: Self::Handle, new_len: usize) -> Self {
+        // SAFETY: caller guarantees the first `new_len` bytes of `handle` are initialized and valid UTF-8.
+        unsafe { handle.as_mut_vec().set_len(new_len) };
+        handle
     }
 }
 
 #[cfg(feature = "arrayvec")]
-impl<const N: usize> Container for arrayvec::ArrayVec<u8, N> {
+unsafe impl<const N: usize> Container for arrayvec::ArrayVec<u8, N> {
+    const REQUIRES_UTF8: bool = false;
+    type Handle = Self;
     #[inline]
     fn new(min_capacity: usize) -> Result<Self, Error> {
         if min_capacity > N {
@@ -294,21 +331,26 @@ impl<const N: usize> Container for arrayvec::ArrayVec<u8, N> {
         Ok(Self::new())
     }
     #[inline]
-    fn as_mut_slice(&mut self) -> &mut [MaybeUninit<u8>] {
-        // SAFETY: `ArrayVec` guarantees that its uninitialized capacity is valid for `MaybeUninit<u8>`.
-        let capacity = self.capacity();
-        let ptr = self.as_mut_ptr().cast::<MaybeUninit<u8>>();
+    fn as_mut_slice(handle: &mut Self::Handle) -> &mut [MaybeUninit<u8>] {
+        // SAFETY: `ArrayVec<u8, N>` has a backing array of N bytes.
+        // `as_mut_ptr()` points to its start, and `capacity()` returns N.
+        // `MaybeUninit<u8>` has the same layout as `u8`, so the cast is valid.
+        let capacity = handle.capacity();
+        let ptr = handle.as_mut_ptr().cast::<MaybeUninit<u8>>();
         unsafe { core::slice::from_raw_parts_mut(ptr, capacity) }
     }
     #[inline]
-    unsafe fn set_len(&mut self, new_len: usize) {
-        // SAFETY: caller guarantees the first `new_len` bytes of `self` are initialized and valid.
-        unsafe { self.set_len(new_len) };
+    unsafe fn set_len(mut handle: Self::Handle, new_len: usize) -> Self {
+        // SAFETY: caller guarantees the first `new_len` bytes of `handle` are initialized and valid.
+        unsafe { handle.set_len(new_len) };
+        handle
     }
 }
 
 #[cfg(feature = "arrayvec")]
-impl<const N: usize> Container for arrayvec::ArrayString<N> {
+unsafe impl<const N: usize> Container for arrayvec::ArrayString<N> {
+    const REQUIRES_UTF8: bool = true;
+    type Handle = Self;
     #[inline]
     fn new(min_capacity: usize) -> Result<Self, Error> {
         if min_capacity > N {
@@ -320,21 +362,29 @@ impl<const N: usize> Container for arrayvec::ArrayString<N> {
         Ok(Self::new())
     }
     #[inline]
-    fn as_mut_slice(&mut self) -> &mut [MaybeUninit<u8>] {
-        // SAFETY: `ArrayString` guarantees that its uninitialized capacity is valid for `MaybeUninit<u8>`.
-        let capacity = self.capacity();
-        let ptr = self.as_mut_ptr().cast::<MaybeUninit<u8>>();
+    fn as_mut_slice(handle: &mut Self::Handle) -> &mut [MaybeUninit<u8>] {
+        // SAFETY: `ArrayString<N>` has a backing byte array of N bytes.
+        // `as_mut_ptr()` points to its start, and `capacity()` returns N.
+        // `MaybeUninit<u8>` has the same layout as `u8`, so the cast is valid.
+        // `as_mut_ptr()` on ArrayString is unsafe because it allows writing
+        // non-UTF-8; the caller (`to_hex_container`) will write valid hex ASCII
+        // before calling `set_len`.
+        let capacity = handle.capacity();
+        let ptr = handle.as_mut_ptr().cast::<MaybeUninit<u8>>();
         unsafe { core::slice::from_raw_parts_mut(ptr, capacity) }
     }
     #[inline]
-    unsafe fn set_len(&mut self, new_len: usize) {
-        // SAFETY: caller guarantees the first `new_len` bytes of `self` are initialized and valid.
-        unsafe { self.set_len(new_len) };
+    unsafe fn set_len(mut handle: Self::Handle, new_len: usize) -> Self {
+        // SAFETY: caller guarantees the first `new_len` bytes of `handle` are initialized and valid.
+        unsafe { handle.set_len(new_len) };
+        handle
     }
 }
 
 #[cfg(feature = "heapless")]
-impl<const N: usize> Container for heapless::Vec<u8, N> {
+unsafe impl<const N: usize> Container for heapless::Vec<u8, N> {
+    const REQUIRES_UTF8: bool = false;
+    type Handle = Self;
     #[inline]
     fn new(min_capacity: usize) -> Result<Self, Error> {
         if min_capacity > N {
@@ -346,20 +396,24 @@ impl<const N: usize> Container for heapless::Vec<u8, N> {
         Ok(Self::new())
     }
     #[inline]
-    fn as_mut_slice(&mut self) -> &mut [MaybeUninit<u8>] {
+    fn as_mut_slice(handle: &mut Self::Handle) -> &mut [MaybeUninit<u8>] {
         // SAFETY: heapless 0.9 — as_mut_ptr() points to the backing [u8; N].
         // We expose the full buffer as MaybeUninit.
-        let ptr = self.as_mut_ptr().cast::<MaybeUninit<u8>>();
+        let ptr = handle.as_mut_ptr().cast::<MaybeUninit<u8>>();
         unsafe { core::slice::from_raw_parts_mut(ptr, N) }
     }
 
-    unsafe fn set_len(&mut self, new_len: usize) {
-        unsafe { self.set_len(new_len) };
+    unsafe fn set_len(mut handle: Self::Handle, new_len: usize) -> Self {
+        // SAFETY: caller guarantees the first `new_len` bytes of `handle` are initialized.
+        unsafe { handle.set_len(new_len) };
+        handle
     }
 }
 
 #[cfg(feature = "heapless")]
-impl<const N: usize> Container for heapless::String<N> {
+unsafe impl<const N: usize> Container for heapless::String<N> {
+    const REQUIRES_UTF8: bool = true;
+    type Handle = Self;
     #[inline]
     fn new(min_capacity: usize) -> Result<Self, Error> {
         if min_capacity > N {
@@ -371,17 +425,55 @@ impl<const N: usize> Container for heapless::String<N> {
         Ok(Self::new())
     }
     #[inline]
-    fn as_mut_slice(&mut self) -> &mut [MaybeUninit<u8>] {
-        // SAFETY: heapless 0.9 — as_mut_vec() gives mutable access to the
-        // inner Vec. We expose the full backing buffer as MaybeUninit.
-        let vec = unsafe { self.as_mut_vec() };
+    fn as_mut_slice(handle: &mut Self::Handle) -> &mut [MaybeUninit<u8>] {
+        // SAFETY: `as_mut_vec()` is unsafe because it allows writing non-UTF-8
+        // bytes. Here we only access the backing buffer for the caller
+        // (`to_hex_container`) to write valid hex ASCII before `set_len`.
+        let vec = unsafe { handle.as_mut_vec() };
+        // SAFETY: `as_mut_ptr()` points to the start of the heapless Vec's
+        // backing [u8; N]. `MaybeUninit<u8>` has the same layout as `u8`.
         let capacity = vec.capacity();
         let ptr = vec.as_mut_ptr().cast::<MaybeUninit<u8>>();
         unsafe { core::slice::from_raw_parts_mut(ptr, capacity) }
     }
     #[inline]
-    unsafe fn set_len(&mut self, new_len: usize) {
+    unsafe fn set_len(mut handle: Self::Handle, new_len: usize) -> Self {
         // SAFETY: caller guarantees first new_len bytes are valid UTF-8.
-        unsafe { self.as_mut_vec().set_len(new_len) };
+        unsafe { handle.as_mut_vec().set_len(new_len) };
+        handle
+    }
+}
+
+unsafe impl<const N: usize, P: Prefix> Container for HexStr<N, P> {
+    const REQUIRES_UTF8: bool = true;
+    type Handle = MaybeUninit::<crate::hex_str::RawHexStr<N, P>>;
+    #[inline]
+    fn new(min_capacity: usize) -> Result<Self::Handle, Error> {
+        if min_capacity > N * 2 {
+            return Err(Error::InvalidLength {
+                expected: N * 2,
+                got: min_capacity,
+            });
+        }
+        let mut out = MaybeUninit::<crate::hex_str::RawHexStr<N, P>>::uninit();
+        let bytes = maybe_uninit::as_bytes_mut(&mut out);
+        let prefix = P::VALUE;
+        let prefix_bytes = prefix.bytes();
+        bytes[..prefix_bytes.len()].copy_from_slice(prefix_bytes);
+        Ok(out)
+    }
+    #[inline]
+    fn as_mut_slice(handle: &mut Self::Handle) -> &mut [MaybeUninit<u8>] {
+       let bytes = maybe_uninit::as_bytes_mut(handle);
+       &mut bytes[P::LEN..]
+    }
+    #[inline]
+    unsafe fn set_len(handle: Self::Handle, new_len: usize) -> Self {
+        debug_assert_eq!(new_len, N * 2, "set_len receives hex content length, not total length with prefix");
+        // SAFETY: prefix was initialized in new(), hex content (new_len bytes)
+        // was initialized by the caller — the full RawHexStr is now init.
+        Self {
+            inner: unsafe { handle.assume_init() }
+        }
     }
 }

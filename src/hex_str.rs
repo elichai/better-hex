@@ -1,9 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use crate::{
-    backend,
-    error::Error,
-    maybe_uninit,
-    prefix::{NoPrefix, Prefix, WithPrefix},
+    FromHex, HexTarget, backend, error::Error, maybe_uninit, prefix::{NoPrefix, Prefix, WithPrefix}
 };
 use core::{fmt, mem::MaybeUninit, ops::Deref, slice, str::FromStr};
 
@@ -34,7 +31,7 @@ unsafe impl<const N: usize, P: Prefix> Pod for RawHexStr<N, P> {}
 /// so conversions to `&str` are always safe.
 #[derive(Copy, Clone)]
 pub struct HexStr<const N: usize, P: Prefix = NoPrefix> {
-    inner: RawHexStr<N, P>,
+    pub(crate) inner: RawHexStr<N, P>,
 }
 
 // All construction and raw-byte access lives in this single `impl` block
@@ -55,34 +52,12 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
 
     /// Encode `input` bytes into a lowercase hex string.
     pub fn encode_lower(input: &[u8; N]) -> Self {
-        Self::encode_with::<false>(input)
+        HexTarget::encode_hex(input).expect("Cannot fail, sizes are exact")
     }
 
     /// Encode `input` bytes into an uppercase hex string.
     pub fn encode_upper(input: &[u8; N]) -> Self {
-        Self::encode_with::<true>(input)
-    }
-
-    /// Shared implementation for [`encode_lower`](Self::encode_lower) and
-    /// [`encode_upper`](Self::encode_upper).
-    ///
-    /// Initializes a `MaybeUninit<RawHexStr>`, writes the prefix and hex
-    /// content into it, then `assume_init`s the whole thing. Avoids
-    /// unnecessary zero-initialization of the output buffer.
-    fn encode_with<const UPPER: bool>(input: &[u8; N]) -> Self {
-        let mut out = MaybeUninit::<RawHexStr<N, P>>::uninit();
-        let bytes = maybe_uninit::as_bytes_mut(&mut out);
-        let prefix = P::VALUE;
-        let prefix_bytes = prefix.bytes();
-        let (prefix_out, hex_out) = bytes.split_at_mut(prefix_bytes.len());
-        prefix_out.copy_from_slice(prefix_bytes);
-        backend::encode::<UPPER>(input, hex_out);
-        // SAFETY: both prefix and hex regions are now fully initialized.
-        unsafe {
-            Self {
-                inner: out.assume_init(),
-            }
-        }
+        HexTarget::encode_hex_upper(input).expect("Cannot fail, sizes are exact")
     }
 
     /// Construct a `HexStr` from a validated hex string.
@@ -104,7 +79,7 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
         debug_assert!(
             {
                 // SAFETY: we just initialized every byte above.
-                let check = unsafe { slice::from_raw_parts(bytes.as_ptr().cast::<u8>(), bytes.len()) };
+                let check = unsafe { maybe_uninit::assume_init_slice(bytes) };
                 core::str::from_utf8(check).is_ok()
             },
             "from_validated_hex: result is not valid UTF-8"
@@ -122,7 +97,10 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     /// Uses `bytemuck::bytes_of` on the inner `repr(C)` storage, so no raw
     /// pointer arithmetic is needed.
     pub fn as_bytes(&self) -> &[u8] {
-        bytemuck::bytes_of(&self.inner)
+        const {assert!(core::mem::size_of::<RawHexStr<N, P>>() == Self::LEN)};
+        let res = bytemuck::bytes_of(&self.inner);
+        debug_assert_eq!(res.len(), Self::LEN);
+        res
     }
 
     /// View the full string as a `&str`.
@@ -143,7 +121,8 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
         let mut out: [MaybeUninit<u8>; N] = maybe_uninit::uninit_array();
         let result = backend::decode(hex_bytes, &mut out);
         debug_assert!(result.is_ok(), "HexStr invariant violated: contained non-hex bytes");
-        // SAFETY: backend initialized all N bytes on Ok.
+        // SAFETY: all constructors guarantee `inner.bytes` contains valid hex
+        // ASCII, so `backend::decode` always succeeds and initializes all N bytes.
         unsafe { maybe_uninit::transpose(out).assume_init() }
     }
 }
@@ -166,12 +145,12 @@ const fn const_encode_bytes<const N: usize>(input: &[u8; N], table: &[u8; 16]) -
     bytes
 }
 
-impl<const N: usize> HexStr<N, NoPrefix> {
+impl<const N: usize, P: Prefix> HexStr<N, P> {
     /// Encode bytes to lowercase hex at compile time.
     pub const fn const_encode_lower(input: &[u8; N]) -> Self {
         Self {
             inner: RawHexStr {
-                prefix: NoPrefix,
+                prefix: P::VALUE,
                 bytes: const_encode_bytes(input, HEX_CHARS_LOWER),
             },
         }
@@ -181,29 +160,7 @@ impl<const N: usize> HexStr<N, NoPrefix> {
     pub const fn const_encode_upper(input: &[u8; N]) -> Self {
         Self {
             inner: RawHexStr {
-                prefix: NoPrefix,
-                bytes: const_encode_bytes(input, HEX_CHARS_UPPER),
-            },
-        }
-    }
-}
-
-impl<const N: usize> HexStr<N, WithPrefix> {
-    /// Encode bytes to lowercase hex at compile time (with `"0x"` prefix).
-    pub const fn const_encode_lower(input: &[u8; N]) -> Self {
-        Self {
-            inner: RawHexStr {
-                prefix: WithPrefix([b'0', b'x']),
-                bytes: const_encode_bytes(input, HEX_CHARS_LOWER),
-            },
-        }
-    }
-
-    /// Encode bytes to uppercase hex at compile time (with `"0x"` prefix).
-    pub const fn const_encode_upper(input: &[u8; N]) -> Self {
-        Self {
-            inner: RawHexStr {
-                prefix: WithPrefix([b'0', b'x']),
+                prefix: P::VALUE,
                 bytes: const_encode_bytes(input, HEX_CHARS_UPPER),
             },
         }
@@ -239,27 +196,6 @@ impl<const N: usize, P: Prefix> fmt::Display for HexStr<N, P> {
 impl<const N: usize, P: Prefix> fmt::Debug for HexStr<N, P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "HexStr(\"{}\")", self.as_str())
-    }
-}
-
-/// Formats the hex content as lowercase, normalizing any uppercase characters.
-///
-/// Re-encodes the decoded bytes to ensure correctness across all backends.
-/// The prefix is **not** included — use `Display` for the full string.
-impl<const N: usize, P: Prefix> fmt::LowerHex for HexStr<N, P> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let lower = HexStr::<N, NoPrefix>::encode_lower(&self.decode());
-        f.write_str(lower.as_str())
-    }
-}
-
-/// Formats the hex content as uppercase, normalizing any lowercase characters.
-///
-/// See [`LowerHex`](fmt::LowerHex) impl for design rationale.
-impl<const N: usize, P: Prefix> fmt::UpperHex for HexStr<N, P> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let upper = HexStr::<N, NoPrefix>::encode_upper(&self.decode());
-        f.write_str(upper.as_str())
     }
 }
 
