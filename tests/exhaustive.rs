@@ -172,48 +172,78 @@ mod serde_exhaustive {
 
     const MAX: usize = super::MAX;
 
-    macro_rules! serde_vec_roundtrip {
-        ($name:ident, $mod:literal) => {
-            #[derive(Serialize, Deserialize, Debug, PartialEq)]
-            struct $name {
-                #[serde(with = $mod)]
-                data: Vec<u8>,
-            }
-        };
-    }
+    /// Generate a per-module test suite with Vec and const-generic array wrappers.
+    macro_rules! serde_suite {
+        ($mod_name:ident, $path:literal) => {
+            mod $mod_name {
+                use super::*;
 
-    serde_vec_roundtrip!(Fast, "better_hex::serde");
-    serde_vec_roundtrip!(Upper, "better_hex::serde::upper");
-    serde_vec_roundtrip!(Prefixed, "better_hex::serde::prefixed");
-    serde_vec_roundtrip!(UpperPrefixed, "better_hex::serde::upper_prefixed");
-    serde_vec_roundtrip!(Ct, "better_hex::serde::ct");
-    serde_vec_roundtrip!(CtUpper, "better_hex::serde::ct::upper");
-    serde_vec_roundtrip!(CtPrefixed, "better_hex::serde::ct::prefixed");
-    serde_vec_roundtrip!(CtUpperPrefixed, "better_hex::serde::ct::upper_prefixed");
+                #[derive(Serialize, Deserialize, Debug, PartialEq)]
+                pub(super) struct V { #[serde(with = $path)] pub data: Vec<u8> }
 
-    macro_rules! test_serde_module {
-        ($test_name:ident, $ty:ident) => {
-            #[test]
-            fn $test_name() {
-                for size in 0..=MAX {
-                    let data = make_input(size);
-                    let original = $ty { data };
-                    let json = serde_json::to_string(&original)
-                        .unwrap_or_else(|e| panic!("serialize failed at size {size}: {e}"));
-                    let decoded: $ty = serde_json::from_str(&json)
-                        .unwrap_or_else(|e| panic!("deserialize failed at size {size}: {e}"));
-                    assert_eq!(decoded, original, "{} roundtrip failed at size {size}", stringify!($ty));
+                #[derive(Serialize, Deserialize, Debug, PartialEq)]
+                pub(super) struct A<const N: usize> { #[serde(with = $path)] pub data: [u8; N] }
+
+                #[test]
+                fn vec_roundtrip() {
+                    for size in 0..=MAX {
+                        let data = make_input(size);
+                        let original = V { data };
+                        let json = serde_json::to_string(&original)
+                            .unwrap_or_else(|e| panic!("serialize failed at size {size}: {e}"));
+                        let decoded: V = serde_json::from_str(&json)
+                            .unwrap_or_else(|e| panic!("deserialize failed at size {size}: {e}"));
+                        assert_eq!(decoded, original, "vec roundtrip failed at size {size}");
+                    }
+                }
+
+                fn check_arr<const N: usize>() {
+                    let data: [u8; N] = make_input(N).try_into().unwrap();
+                    let original = A { data };
+                    let json = serde_json::to_string(&original).unwrap();
+                    let decoded: A<N> = serde_json::from_str(&json).unwrap();
+                    assert_eq!(decoded, original);
+                }
+
+                #[test]
+                fn array_roundtrip() {
+                    check_arr::<0>(); check_arr::<1>(); check_arr::<4>();
+                    check_arr::<16>(); check_arr::<32>(); check_arr::<64>();
+                    check_arr::<128>(); check_arr::<255>(); check_arr::<256>();
                 }
             }
         };
     }
 
-    test_serde_module!(fast_roundtrip, Fast);
-    test_serde_module!(upper_roundtrip, Upper);
-    test_serde_module!(prefixed_roundtrip, Prefixed);
-    test_serde_module!(upper_prefixed_roundtrip, UpperPrefixed);
-    test_serde_module!(ct_roundtrip, Ct);
-    test_serde_module!(ct_upper_roundtrip, CtUpper);
-    test_serde_module!(ct_prefixed_roundtrip, CtPrefixed);
-    test_serde_module!(ct_upper_prefixed_roundtrip, CtUpperPrefixed);
+    serde_suite!(fast, "better_hex::serde");
+    serde_suite!(upper, "better_hex::serde::upper");
+    serde_suite!(prefixed, "better_hex::serde::prefixed");
+    serde_suite!(upper_prefixed, "better_hex::serde::upper_prefixed");
+    serde_suite!(ct, "better_hex::serde::ct");
+    serde_suite!(ct_upper, "better_hex::serde::ct::upper");
+    serde_suite!(ct_prefixed, "better_hex::serde::ct::prefixed");
+    serde_suite!(ct_upper_prefixed, "better_hex::serde::ct::upper_prefixed");
+
+    /// Verify the exact serialized token format of each module using serde_test.
+    #[test]
+    fn token_format() {
+        use serde_test::{Token, assert_tokens};
+
+        fn tokens(hex: &'static str) -> [Token; 4] {
+            [Token::Struct { name: "A", len: 1 }, Token::Str("data"), Token::Str(hex), Token::StructEnd]
+        }
+
+        assert_tokens(&fast::A { data: [0xde, 0xad, 0xbe, 0xef] }, &tokens("deadbeef"));
+        assert_tokens(&upper::A { data: [0xde, 0xad, 0xbe, 0xef] }, &tokens("DEADBEEF"));
+        assert_tokens(&prefixed::A { data: [0xde, 0xad, 0xbe, 0xef] }, &tokens("0xdeadbeef"));
+        assert_tokens(&upper_prefixed::A { data: [0xde, 0xad, 0xbe, 0xef] }, &tokens("0xDEADBEEF"));
+        assert_tokens(&ct::A { data: [0xde, 0xad, 0xbe, 0xef] }, &tokens("deadbeef"));
+        assert_tokens(&ct_upper::A { data: [0xde, 0xad, 0xbe, 0xef] }, &tokens("DEADBEEF"));
+        assert_tokens(&ct_prefixed::A { data: [0xde, 0xad, 0xbe, 0xef] }, &tokens("0xdeadbeef"));
+        assert_tokens(&ct_upper_prefixed::A { data: [0xde, 0xad, 0xbe, 0xef] }, &tokens("0xDEADBEEF"));
+
+        // Also verify empty arrays
+        assert_tokens(&fast::A { data: [0u8; 0] }, &tokens(""));
+        assert_tokens(&prefixed::A { data: [0u8; 0] }, &tokens("0x"));
+    }
 }
