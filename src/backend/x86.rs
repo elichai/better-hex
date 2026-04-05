@@ -1064,9 +1064,11 @@ mod tests {
 
     #[test]
     fn ssse3_matches_scalar_oracle() {
-        if !has_ssse3::init().get() {
+        let available = cfg!(target_feature = "ssse3") || has_ssse3::init().get();
+        if !available {
             return;
         }
+        assert!(cfg!(miri) || has_ssse3::init().get());
 
         exercise_backend(
             |input, output| unsafe { encode_ssse3::<false>(input, output) },
@@ -1080,9 +1082,11 @@ mod tests {
 
     #[test]
     fn avx2_matches_scalar_oracle() {
-        if !has_avx2::init().get() {
+        let available = cfg!(target_feature = "avx2") || has_avx2::init().get();
+        if !available {
             return;
         }
+        assert!(cfg!(miri) || has_avx2::init().get());
 
         exercise_backend(
             |input, output| unsafe { encode_avx2::<false>(input, output) },
@@ -1096,9 +1100,11 @@ mod tests {
 
     #[test]
     fn avx512_matches_scalar_oracle() {
-        if !has_avx512bw::init().get() {
+        let available = cfg!(target_feature = "avx512bw") || has_avx512bw::init().get();
+        if !available {
             return;
         }
+        assert!(cfg!(miri) || has_avx512bw::init().get());
 
         exercise_backend(
             |input, output| unsafe { encode_avx512::<false>(input, output) },

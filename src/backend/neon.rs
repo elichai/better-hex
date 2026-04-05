@@ -376,3 +376,14 @@ pub fn check(input: &[u8]) -> bool {
 pub fn ct_check(input: &[u8]) -> bool {
     check_inner::<false>(input)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::test_support::exercise_backend;
+
+    #[test]
+    fn neon_matches_scalar_oracle() {
+        exercise_backend(encode::<false>, encode::<true>, decode, ct_decode, check, ct_check);
+    }
+}
