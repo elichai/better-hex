@@ -1,12 +1,18 @@
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 
-const SIZES: &[usize] = &[4, 32, 64, 256, 1024, 4096, 16384];
+#[cfg(feature = "alloc")]
+use criterion::{BenchmarkId, Throughput};
+#[cfg(feature = "alloc")]
+use std::hint::black_box;
+#[cfg(feature = "alloc")]
+mod common;
 
+#[cfg(feature = "alloc")]
 fn bench_display(c: &mut Criterion) {
     let mut group = c.benchmark_group("display");
 
-    for &size in SIZES {
-        let input: Vec<u8> = (0..size).map(|i| (i & 0xFF) as u8).collect();
+    for &size in common::BENCH_SIZES {
+        let input = common::make_bytes(size);
         group.throughput(Throughput::Bytes(size as u64));
 
         // format! — allocates String via fmt::Formatter
@@ -27,11 +33,16 @@ fn bench_display(c: &mut Criterion) {
 
         // Compare: direct encode (no fmt overhead)
         group.bench_with_input(BenchmarkId::new("encode_direct", size), &input, |b, input| {
-            b.iter(|| better_hex::encode(black_box(input)));
+            b.iter(|| better_hex::encode(black_box(input.as_slice())));
         });
     }
 
     group.finish();
+}
+
+#[cfg(not(feature = "alloc"))]
+fn bench_display(_c: &mut Criterion) {
+    panic!("Re-run with --features alloc");
 }
 
 criterion_group!(benches, bench_display);

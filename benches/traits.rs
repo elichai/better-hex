@@ -1,19 +1,25 @@
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 
-const SIZES: &[usize] = &[4, 32, 64, 256, 1024, 4096, 16384];
+#[cfg(feature = "alloc")]
+use criterion::{BenchmarkId, Throughput};
+#[cfg(feature = "alloc")]
+use std::hint::black_box;
+#[cfg(feature = "alloc")]
+mod common;
 
+#[cfg(feature = "alloc")]
 fn bench_encode_to(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_to");
 
-    for &size in SIZES {
-        let input: Vec<u8> = (0..size).map(|i| (i & 0xFF) as u8).collect();
+    for &size in common::BENCH_SIZES {
+        let input = common::make_bytes(size);
         group.throughput(Throughput::Bytes(size as u64));
 
         // encode_to::<String> — zero-copy via HexTarget
         group.bench_with_input(BenchmarkId::new("hex_target_string", size), &input, |b, input| {
             b.iter(|| {
                 let s: Result<String, _> = better_hex::encode_to(black_box(input));
-                black_box(s);
+                let _ = black_box(s);
             });
         });
 
@@ -26,8 +32,13 @@ fn bench_encode_to(c: &mut Criterion) {
     group.finish();
 }
 
+#[cfg(not(feature = "alloc"))]
+fn bench_encode_to(_c: &mut Criterion) {
+    panic!("Re-run with --features alloc");
+}
+
 // Serde benchmarks — only with serde feature
-#[cfg(feature = "serde")]
+#[cfg(all(feature = "alloc", feature = "serde"))]
 fn bench_serde(c: &mut Criterion) {
     use serde::{Deserialize, Serialize};
 
@@ -45,8 +56,8 @@ fn bench_serde(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("serde");
 
-    for &size in &[16, 64, 256, 1024] {
-        let data: Vec<u8> = (0..size).map(|i| (i & 0xFF) as u8).collect();
+    for &size in common::BENCH_SIZES {
+        let data = common::make_bytes(size);
         group.throughput(Throughput::Bytes(size as u64));
 
         // Serialize fast
@@ -77,8 +88,10 @@ fn bench_serde(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(feature = "serde")]
+#[cfg(all(feature = "alloc", feature = "serde"))]
 criterion_group!(benches, bench_encode_to, bench_serde);
-#[cfg(not(feature = "serde"))]
+#[cfg(all(feature = "alloc", not(feature = "serde")))]
+criterion_group!(benches, bench_encode_to);
+#[cfg(not(feature = "alloc"))]
 criterion_group!(benches, bench_encode_to);
 criterion_main!(benches);

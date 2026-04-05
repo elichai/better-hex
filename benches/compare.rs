@@ -5,26 +5,22 @@
 //
 // serde groups also require --features serde (and serde_json is a dev-dep).
 
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 
-// ---------------------------------------------------------------------------
-// Input sizes
-// ---------------------------------------------------------------------------
-
-const SIZES: &[usize] = &[4, 32, 64, 256, 1024, 4096, 16384];
-
-const TAIL_SIZES: &[usize] = &[4, 15, 17, 31, 33, 63, 65, 127, 129, 255, 257, 1023, 4096, 16384];
+#[cfg(feature = "alloc")]
+use criterion::{BenchmarkId, Throughput};
+#[cfg(feature = "alloc")]
+use std::hint::black_box;
+#[cfg(feature = "alloc")]
+mod common;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn make_bytes(size: usize) -> Vec<u8> {
-    (0u8..=255).cycle().take(size).collect()
-}
-
+#[cfg(feature = "alloc")]
 fn make_hex_bytes(size: usize) -> Vec<u8> {
-    let input = make_bytes(size);
+    let input = common::make_bytes(size);
     let mut hex = vec![0u8; size * 2];
     better_hex::encode_to_slice(&input, &mut hex).unwrap();
     hex
@@ -34,11 +30,12 @@ fn make_hex_bytes(size: usize) -> Vec<u8> {
 // Group: encode_alloc
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "alloc")]
 fn bench_encode_alloc(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_alloc");
 
-    for &size in SIZES {
-        let input = make_bytes(size);
+    for &size in common::BENCH_SIZES {
+        let input = common::make_bytes(size);
         group.throughput(Throughput::Bytes(size as u64));
 
         group.bench_with_input(BenchmarkId::new("better_hex", size), &input, |b, inp| {
@@ -68,11 +65,12 @@ fn bench_encode_alloc(c: &mut Criterion) {
 // Group: encode_to_slice
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "alloc")]
 fn bench_encode_to_slice(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_to_slice");
 
-    for &size in TAIL_SIZES {
-        let input = make_bytes(size);
+    for &size in common::BENCH_SIZES {
+        let input = common::make_bytes(size);
         let mut dst = vec![0u8; size * 2];
         group.throughput(Throughput::Bytes(size as u64));
 
@@ -103,10 +101,11 @@ fn bench_encode_to_slice(c: &mut Criterion) {
 // Group: decode_alloc
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "alloc")]
 fn bench_decode_alloc(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode_alloc");
 
-    for &size in SIZES {
+    for &size in common::BENCH_SIZES {
         let hex = make_hex_bytes(size);
         group.throughput(Throughput::Bytes(size as u64));
 
@@ -144,10 +143,11 @@ fn bench_decode_alloc(c: &mut Criterion) {
 // Group: decode_to_slice
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "alloc")]
 fn bench_decode_to_slice(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode_to_slice");
 
-    for &size in TAIL_SIZES {
+    for &size in common::BENCH_SIZES {
         let hex = make_hex_bytes(size);
         let mut dst = vec![0u8; size];
         group.throughput(Throughput::Bytes(size as u64));
@@ -178,10 +178,11 @@ fn bench_decode_to_slice(c: &mut Criterion) {
 // Group: check
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "alloc")]
 fn bench_check(c: &mut Criterion) {
     let mut group = c.benchmark_group("check");
 
-    for &size in SIZES {
+    for &size in common::BENCH_SIZES {
         // Throughput over the hex input (2× the original bytes).
         let hex = make_hex_bytes(size);
         let hex_len = hex.len() as u64;
@@ -205,13 +206,12 @@ fn bench_check(c: &mut Criterion) {
 // Group: display_format
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "alloc")]
 fn bench_display_format(c: &mut Criterion) {
     let mut group = c.benchmark_group("display_format");
 
-    const DISPLAY_SIZES: &[usize] = &[16, 64, 256, 1024, 4096];
-
-    for &size in DISPLAY_SIZES {
-        let input = make_bytes(size);
+    for &size in common::BENCH_SIZES {
+        let input = common::make_bytes(size);
         group.throughput(Throughput::Bytes(size as u64));
 
         group.bench_with_input(BenchmarkId::new("better_hex", size), &input, |b, inp| {
@@ -233,7 +233,7 @@ fn bench_display_format(c: &mut Criterion) {
 // Group: serde_serialize / serde_deserialize
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "serde")]
+#[cfg(all(feature = "alloc", feature = "serde"))]
 mod serde_bench {
     use serde::{Deserialize, Serialize};
 
@@ -251,15 +251,13 @@ mod serde_bench {
     }
 }
 
-#[cfg(feature = "serde")]
+#[cfg(all(feature = "alloc", feature = "serde"))]
 fn bench_serde_serialize(c: &mut Criterion) {
     use serde_bench::BetterHexWrap;
 
     let mut group = c.benchmark_group("serde_serialize");
-    const SERDE_SIZES: &[usize] = &[16, 64, 256, 1024];
-
-    for &size in SERDE_SIZES {
-        let data: Vec<u8> = (0..size).map(|i| (i & 0xff) as u8).collect();
+    for &size in common::BENCH_SIZES {
+        let data = common::make_bytes(size);
         group.throughput(Throughput::Bytes(size as u64));
 
         let bh_val = BetterHexWrap { data: data.clone() };
@@ -280,15 +278,13 @@ fn bench_serde_serialize(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(feature = "serde")]
+#[cfg(all(feature = "alloc", feature = "serde"))]
 fn bench_serde_deserialize(c: &mut Criterion) {
     use serde_bench::BetterHexWrap;
 
     let mut group = c.benchmark_group("serde_deserialize");
-    const SERDE_SIZES: &[usize] = &[16, 64, 256, 1024];
-
-    for &size in SERDE_SIZES {
-        let data: Vec<u8> = (0..size).map(|i| (i & 0xff) as u8).collect();
+    for &size in common::BENCH_SIZES {
+        let data = common::make_bytes(size);
         group.throughput(Throughput::Bytes(size as u64));
 
         // Pre-build JSON strings outside the measurement loop.
@@ -314,7 +310,7 @@ fn bench_serde_deserialize(c: &mut Criterion) {
 // criterion_group / criterion_main
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "serde")]
+#[cfg(all(feature = "alloc", feature = "serde"))]
 criterion_group!(
     benches,
     bench_encode_alloc,
@@ -327,7 +323,7 @@ criterion_group!(
     bench_serde_deserialize,
 );
 
-#[cfg(not(feature = "serde"))]
+#[cfg(all(feature = "alloc", not(feature = "serde")))]
 criterion_group!(
     benches,
     bench_encode_alloc,
@@ -337,5 +333,13 @@ criterion_group!(
     bench_check,
     bench_display_format,
 );
+
+#[cfg(not(feature = "alloc"))]
+fn bench_compare_requires_alloc(_c: &mut Criterion) {
+    panic!("Re-run with --features alloc");
+}
+
+#[cfg(not(feature = "alloc"))]
+criterion_group!(benches, bench_compare_requires_alloc);
 
 criterion_main!(benches);
