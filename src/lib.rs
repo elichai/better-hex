@@ -54,6 +54,7 @@ mod hex_str;
 mod maybe_uninit;
 mod prefix;
 mod traits;
+mod platform;
 
 #[cfg(feature = "serde")]
 #[doc(hidden)]

@@ -1,7 +1,7 @@
 //! Backend dispatch layer.
 //!
 //! Selects the best available backend at compile time (and, for x86, at
-//! runtime) and exposes a uniform internal API.
+//! runtime via [`platform::detect()`]) and exposes a uniform internal API.
 //!
 //! ## Feature flag
 //!
@@ -12,7 +12,7 @@
 //! | Target          | Detection        | Priority                        |
 //! |-----------------|------------------|---------------------------------|
 //! | aarch64 (NEON)  | compile-time     | baseline on aarch64             |
-//! | x86/x86_64      | runtime (std) or `cpufeatures` (no_std)            | AVX-512BW > AVX2 > SSSE3 > scalar |
+//! | x86/x86_64      | runtime, cached in `AtomicU8` | AVX-512BW > AVX2 > SSSE3 > scalar |
 //! | wasm32 (SIMD128)| compile-time     | when `target_feature="simd128"` |
 //! | everything else | —                | scalar fallback                 |
 //!
@@ -33,7 +33,39 @@ pub mod x86;
 pub mod wasm;
 
 use crate::error::Error;
+use crate::platform::{self, Platform};
 use core::mem::MaybeUninit;
+
+/// Dispatch to the detected platform.
+///
+/// x86 SIMD arms are `unsafe` because the backend functions carry
+/// `#[target_feature]`. Safety: [`platform::detect()`] only returns an x86
+/// variant after confirming the CPU supports the required feature set.
+macro_rules! dispatch {
+    (
+        scalar: $scalar:expr,
+        neon: $neon:expr,
+        ssse3: $ssse3:expr,
+        avx2: $avx2:expr,
+        avx512: $avx512:expr,
+        wasm: $wasm:expr $(,)?
+    ) => {
+        match platform::detect() {
+            Platform::Uninit => unreachable!(),
+            Platform::Scalar => $scalar,
+            #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
+            Platform::Neon => $neon,
+            #[cfg(all(not(feature = "disable-simd"), any(target_arch = "x86", target_arch = "x86_64")))]
+            Platform::Ssse3 => $ssse3,
+            #[cfg(all(not(feature = "disable-simd"), any(target_arch = "x86", target_arch = "x86_64")))]
+            Platform::Avx2 => $avx2,
+            #[cfg(all(not(feature = "disable-simd"), any(target_arch = "x86", target_arch = "x86_64")))]
+            Platform::Avx512bw => $avx512,
+            #[cfg(all(not(feature = "disable-simd"), target_arch = "wasm32", target_feature = "simd128"))]
+            Platform::Wasm => $wasm,
+        }
+    };
+}
 
 /// Encode `input` bytes as hex into an uninitialized `output` buffer.
 ///
@@ -45,59 +77,14 @@ use core::mem::MaybeUninit;
 /// Panics if `output.len() != input.len() * 2`.
 #[inline]
 pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "disable-simd")] {
-            scalar::encode::<UPPER>(input, output);
-        } else if #[cfg(all(target_arch = "aarch64", target_feature = "neon"))] {
-            neon::encode::<UPPER>(input, output);
-        } else if #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {
-            // Runtime detection: prefer AVX-512BW, then AVX2, then SSSE3, then scalar.
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "std")] {
-                    if std::is_x86_feature_detected!("avx512bw") {
-                        // SAFETY: we just confirmed AVX-512BW is available.
-                        unsafe { x86::encode_avx512::<UPPER>(input, output) }
-                    } else if std::is_x86_feature_detected!("avx2") {
-                        // SAFETY: we just confirmed AVX2 is available.
-                        unsafe { x86::encode_avx2::<UPPER>(input, output) }
-                    } else if std::is_x86_feature_detected!("ssse3") {
-                        // SAFETY: we just confirmed SSSE3 is available.
-                        unsafe { x86::encode_ssse3::<UPPER>(input, output) }
-                    } else {
-                        scalar::encode::<UPPER>(input, output);
-                    }
-                } else {
-                    // no_std: use cpufeatures crate for runtime detection.
-                    cpufeatures::new!(cpuid_avx512bw, "avx512bw");
-                    cpufeatures::new!(cpuid_avx2, "avx2");
-                    cpufeatures::new!(cpuid_ssse3, "ssse3");
-                    let token_avx512bw = cpuid_avx512bw::init();
-                    if token_avx512bw.get() {
-                        // SAFETY: we just confirmed AVX-512BW is available.
-                        unsafe { x86::encode_avx512::<UPPER>(input, output) }
-                    } else {
-                        let token_avx2 = cpuid_avx2::init();
-                        if token_avx2.get() {
-                            // SAFETY: we just confirmed AVX2 is available.
-                            unsafe { x86::encode_avx2::<UPPER>(input, output) }
-                        } else {
-                            let token_ssse3 = cpuid_ssse3::init();
-                            if token_ssse3.get() {
-                                // SAFETY: we just confirmed SSSE3 is available.
-                                unsafe { x86::encode_ssse3::<UPPER>(input, output) }
-                            } else {
-                                scalar::encode::<UPPER>(input, output);
-                            }
-                        }
-                    }
-                }
-            }
-        } else if #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))] {
-            wasm::encode::<UPPER>(input, output);
-        } else {
-            scalar::encode::<UPPER>(input, output);
-        }
-    }
+    dispatch!(
+        scalar: scalar::encode::<UPPER>(input, output),
+        neon: neon::encode::<UPPER>(input, output),
+        ssse3: unsafe { x86::encode_ssse3::<UPPER>(input, output) },
+        avx2: unsafe { x86::encode_avx2::<UPPER>(input, output) },
+        avx512: unsafe { x86::encode_avx512::<UPPER>(input, output) },
+        wasm: wasm::encode::<UPPER>(input, output),
+    )
 }
 
 /// Decode hex `input` into `output`.
@@ -110,57 +97,14 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
 /// Panics if `output.len() != input.len() / 2` or input length is odd.
 #[inline]
 pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "disable-simd")] {
-            scalar::decode(input, output)
-        } else if #[cfg(all(target_arch = "aarch64", target_feature = "neon"))] {
-            neon::decode(input, output)
-        } else if #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "std")] {
-                    if std::is_x86_feature_detected!("avx512bw") {
-                        // SAFETY: we just confirmed AVX-512BW is available.
-                        unsafe { x86::decode_avx512(input, output) }
-                    } else if std::is_x86_feature_detected!("avx2") {
-                        // SAFETY: we just confirmed AVX2 is available.
-                        unsafe { x86::decode_avx2(input, output) }
-                    } else if std::is_x86_feature_detected!("ssse3") {
-                        // SAFETY: we just confirmed SSSE3 is available.
-                        unsafe { x86::decode_ssse3(input, output) }
-                    } else {
-                        scalar::decode(input, output)
-                    }
-                } else {
-                    cpufeatures::new!(cpuid_avx512bw, "avx512bw");
-                    cpufeatures::new!(cpuid_avx2, "avx2");
-                    cpufeatures::new!(cpuid_ssse3, "ssse3");
-                    let token_avx512bw = cpuid_avx512bw::init();
-                    if token_avx512bw.get() {
-                        // SAFETY: we just confirmed AVX-512BW is available.
-                        unsafe { x86::decode_avx512(input, output) }
-                    } else {
-                        let token_avx2 = cpuid_avx2::init();
-                        if token_avx2.get() {
-                            // SAFETY: we just confirmed AVX2 is available.
-                            unsafe { x86::decode_avx2(input, output) }
-                        } else {
-                            let token_ssse3 = cpuid_ssse3::init();
-                            if token_ssse3.get() {
-                                // SAFETY: we just confirmed SSSE3 is available.
-                                unsafe { x86::decode_ssse3(input, output) }
-                            } else {
-                                scalar::decode(input, output)
-                            }
-                        }
-                    }
-                }
-            }
-        } else if #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))] {
-            wasm::decode(input, output)
-        } else {
-            scalar::decode(input, output)
-        }
-    }
+    dispatch!(
+        scalar: scalar::decode(input, output),
+        neon: neon::decode(input, output),
+        ssse3: unsafe { x86::decode_ssse3(input, output) },
+        avx2: unsafe { x86::decode_avx2(input, output) },
+        avx512: unsafe { x86::decode_avx512(input, output) },
+        wasm: wasm::decode(input, output),
+    )
 }
 
 /// Constant-time encode. SIMD encode is already CT (register LUT, no
@@ -168,57 +112,14 @@ pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error>
 /// uses branchless arithmetic instead of a lookup table.
 #[inline]
 pub fn ct_encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "disable-simd")] {
-            ct_scalar::encode::<UPPER>(input, output);
-        } else if #[cfg(all(target_arch = "aarch64", target_feature = "neon"))] {
-            neon::encode::<UPPER>(input, output);
-        } else if #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "std")] {
-                    if std::is_x86_feature_detected!("avx512bw") {
-                        // SAFETY: we just confirmed AVX-512BW is available.
-                        unsafe { x86::encode_avx512::<UPPER>(input, output) }
-                    } else if std::is_x86_feature_detected!("avx2") {
-                        // SAFETY: we just confirmed AVX2 is available.
-                        unsafe { x86::encode_avx2::<UPPER>(input, output) }
-                    } else if std::is_x86_feature_detected!("ssse3") {
-                        // SAFETY: we just confirmed SSSE3 is available.
-                        unsafe { x86::encode_ssse3::<UPPER>(input, output) }
-                    } else {
-                        ct_scalar::encode::<UPPER>(input, output);
-                    }
-                } else {
-                    cpufeatures::new!(cpuid_avx512bw, "avx512bw");
-                    cpufeatures::new!(cpuid_avx2, "avx2");
-                    cpufeatures::new!(cpuid_ssse3, "ssse3");
-                    let token_avx512bw = cpuid_avx512bw::init();
-                    if token_avx512bw.get() {
-                        // SAFETY: we just confirmed AVX-512BW is available.
-                        unsafe { x86::encode_avx512::<UPPER>(input, output) }
-                    } else {
-                        let token_avx2 = cpuid_avx2::init();
-                        if token_avx2.get() {
-                            // SAFETY: we just confirmed AVX2 is available.
-                            unsafe { x86::encode_avx2::<UPPER>(input, output) }
-                        } else {
-                            let token_ssse3 = cpuid_ssse3::init();
-                            if token_ssse3.get() {
-                                // SAFETY: we just confirmed SSSE3 is available.
-                                unsafe { x86::encode_ssse3::<UPPER>(input, output) }
-                            } else {
-                                ct_scalar::encode::<UPPER>(input, output);
-                            }
-                        }
-                    }
-                }
-            }
-        } else if #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))] {
-            wasm::encode::<UPPER>(input, output);
-        } else {
-            ct_scalar::encode::<UPPER>(input, output);
-        }
-    }
+    dispatch!(
+        scalar: ct_scalar::encode::<UPPER>(input, output),
+        neon: neon::encode::<UPPER>(input, output),
+        ssse3: unsafe { x86::encode_ssse3::<UPPER>(input, output) },
+        avx2: unsafe { x86::encode_avx2::<UPPER>(input, output) },
+        avx512: unsafe { x86::encode_avx512::<UPPER>(input, output) },
+        wasm: wasm::encode::<UPPER>(input, output),
+    )
 }
 
 /// Constant-time decode. Uses CT SIMD variants (no early return, error
@@ -226,176 +127,47 @@ pub fn ct_encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]
 /// Returns `Error::InvalidEncoding` (not `InvalidChar`) on failure.
 #[inline]
 pub fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "disable-simd")] {
-            ct_scalar::decode(input, output)
-        } else if #[cfg(all(target_arch = "aarch64", target_feature = "neon"))] {
-            neon::ct_decode(input, output)
-        } else if #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "std")] {
-                    if std::is_x86_feature_detected!("avx512bw") {
-                        // SAFETY: we just confirmed AVX-512BW is available.
-                        unsafe { x86::ct_decode_avx512(input, output) }
-                    } else if std::is_x86_feature_detected!("avx2") {
-                        // SAFETY: we just confirmed AVX2 is available.
-                        unsafe { x86::ct_decode_avx2(input, output) }
-                    } else if std::is_x86_feature_detected!("ssse3") {
-                        // SAFETY: we just confirmed SSSE3 is available.
-                        unsafe { x86::ct_decode_ssse3(input, output) }
-                    } else {
-                        ct_scalar::decode(input, output)
-                    }
-                } else {
-                    cpufeatures::new!(cpuid_avx512bw, "avx512bw");
-                    cpufeatures::new!(cpuid_avx2, "avx2");
-                    cpufeatures::new!(cpuid_ssse3, "ssse3");
-                    let token_avx512bw = cpuid_avx512bw::init();
-                    if token_avx512bw.get() {
-                        // SAFETY: we just confirmed AVX-512BW is available.
-                        unsafe { x86::ct_decode_avx512(input, output) }
-                    } else {
-                        let token_avx2 = cpuid_avx2::init();
-                        if token_avx2.get() {
-                            // SAFETY: we just confirmed AVX2 is available.
-                            unsafe { x86::ct_decode_avx2(input, output) }
-                        } else {
-                            let token_ssse3 = cpuid_ssse3::init();
-                            if token_ssse3.get() {
-                                // SAFETY: we just confirmed SSSE3 is available.
-                                unsafe { x86::ct_decode_ssse3(input, output) }
-                            } else {
-                                ct_scalar::decode(input, output)
-                            }
-                        }
-                    }
-                }
-            }
-        } else if #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))] {
-            wasm::ct_decode(input, output)
-        } else {
-            ct_scalar::decode(input, output)
-        }
-    }
+    dispatch!(
+        scalar: ct_scalar::decode(input, output),
+        neon: neon::ct_decode(input, output),
+        ssse3: unsafe { x86::ct_decode_ssse3(input, output) },
+        avx2: unsafe { x86::ct_decode_avx2(input, output) },
+        avx512: unsafe { x86::ct_decode_avx512(input, output) },
+        wasm: wasm::ct_decode(input, output),
+    )
 }
 
 /// Constant-time check. Uses CT SIMD variants (no early return) with
 /// `ct_scalar` as the scalar fallback.
 #[inline]
 pub fn ct_check(input: &[u8]) -> bool {
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "disable-simd")] {
-            ct_scalar::check(input)
-        } else if #[cfg(all(target_arch = "aarch64", target_feature = "neon"))] {
-            neon::ct_check(input)
-        } else if #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "std")] {
-                    if std::is_x86_feature_detected!("avx512bw") {
-                        // SAFETY: we just confirmed AVX-512BW is available.
-                        unsafe { x86::ct_check_avx512(input) }
-                    } else if std::is_x86_feature_detected!("avx2") {
-                        // SAFETY: we just confirmed AVX2 is available.
-                        unsafe { x86::ct_check_avx2(input) }
-                    } else if std::is_x86_feature_detected!("ssse3") {
-                        // SAFETY: we just confirmed SSSE3 is available.
-                        unsafe { x86::ct_check_ssse3(input) }
-                    } else {
-                        ct_scalar::check(input)
-                    }
-                } else {
-                    cpufeatures::new!(cpuid_avx512bw, "avx512bw");
-                    cpufeatures::new!(cpuid_avx2, "avx2");
-                    cpufeatures::new!(cpuid_ssse3, "ssse3");
-                    let token_avx512bw = cpuid_avx512bw::init();
-                    if token_avx512bw.get() {
-                        // SAFETY: we just confirmed AVX-512BW is available.
-                        unsafe { x86::ct_check_avx512(input) }
-                    } else {
-                        let token_avx2 = cpuid_avx2::init();
-                        if token_avx2.get() {
-                            // SAFETY: we just confirmed AVX2 is available.
-                            unsafe { x86::ct_check_avx2(input) }
-                        } else {
-                            let token_ssse3 = cpuid_ssse3::init();
-                            if token_ssse3.get() {
-                                // SAFETY: we just confirmed SSSE3 is available.
-                                unsafe { x86::ct_check_ssse3(input) }
-                            } else {
-                                ct_scalar::check(input)
-                            }
-                        }
-                    }
-                }
-            }
-        } else if #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))] {
-            wasm::ct_check(input)
-        } else {
-            ct_scalar::check(input)
-        }
-    }
+    dispatch!(
+        scalar: ct_scalar::check(input),
+        neon: neon::ct_check(input),
+        ssse3: unsafe { x86::ct_check_ssse3(input) },
+        avx2: unsafe { x86::ct_check_avx2(input) },
+        avx512: unsafe { x86::ct_check_avx512(input) },
+        wasm: wasm::ct_check(input),
+    )
 }
 
 /// Check if every byte in `input` is a valid hex ASCII character.
 #[inline]
 pub fn check(input: &[u8]) -> bool {
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "disable-simd")] {
-            scalar::check(input)
-        } else if #[cfg(all(target_arch = "aarch64", target_feature = "neon"))] {
-            neon::check(input)
-        } else if #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {
-            cfg_if::cfg_if! {
-                if #[cfg(feature = "std")] {
-                    if std::is_x86_feature_detected!("avx512bw") {
-                        // SAFETY: we just confirmed AVX-512BW is available.
-                        unsafe { x86::check_avx512(input) }
-                    } else if std::is_x86_feature_detected!("avx2") {
-                        // SAFETY: we just confirmed AVX2 is available.
-                        unsafe { x86::check_avx2(input) }
-                    } else if std::is_x86_feature_detected!("ssse3") {
-                        // SAFETY: we just confirmed SSSE3 is available.
-                        unsafe { x86::check_ssse3(input) }
-                    } else {
-                        scalar::check(input)
-                    }
-                } else {
-                    cpufeatures::new!(cpuid_avx512bw, "avx512bw");
-                    cpufeatures::new!(cpuid_avx2, "avx2");
-                    cpufeatures::new!(cpuid_ssse3, "ssse3");
-                    let token_avx512bw = cpuid_avx512bw::init();
-                    if token_avx512bw.get() {
-                        // SAFETY: we just confirmed AVX-512BW is available.
-                        unsafe { x86::check_avx512(input) }
-                    } else {
-                        let token_avx2 = cpuid_avx2::init();
-                        if token_avx2.get() {
-                            // SAFETY: we just confirmed AVX2 is available.
-                            unsafe { x86::check_avx2(input) }
-                        } else {
-                            let token_ssse3 = cpuid_ssse3::init();
-                            if token_ssse3.get() {
-                                // SAFETY: we just confirmed SSSE3 is available.
-                                unsafe { x86::check_ssse3(input) }
-                            } else {
-                                scalar::check(input)
-                            }
-                        }
-                    }
-                }
-            }
-        } else if #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))] {
-            wasm::check(input)
-        } else {
-            scalar::check(input)
-        }
-    }
+    dispatch!(
+        scalar: scalar::check(input),
+        neon: neon::check(input),
+        ssse3: unsafe { x86::check_ssse3(input) },
+        avx2: unsafe { x86::check_avx2(input) },
+        avx512: unsafe { x86::check_avx512(input) },
+        wasm: wasm::check(input),
+    )
 }
 
 #[cfg(test)]
 #[allow(dead_code)]
 pub(crate) mod test_support {
-    use super::{ct_scalar, scalar};
+    use super::scalar;
     use crate::error::Error;
     use core::mem::MaybeUninit;
 
