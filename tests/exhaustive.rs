@@ -1,8 +1,4 @@
 //! Exhaustive size-loop tests: exercise every public API at sizes 0..=512.
-//!
-//! This single file replaces the per-feature test files (encode.rs, decode.rs,
-//! boundaries.rs, hex_target.rs, traits.rs, ct.rs) by testing all APIs in a
-//! uniform loop over every input size from 0 to 512 bytes.
 
 #![cfg(feature = "alloc")]
 
@@ -16,256 +12,127 @@ fn make_input(size: usize) -> Vec<u8> {
     (0..size).map(|i| ((i as u8).wrapping_mul(37)).wrapping_add(11)).collect()
 }
 
-// ── encode_to_slice / decode_to_slice roundtrip ─────────────────────────────
+// ── Core roundtrips (encode/decode, CT, check, traits, display) ─────────────
 
 #[test]
-fn roundtrip_encode_decode_to_slice() {
+fn roundtrip_all_apis() {
     for size in 0..=MAX {
         let input = make_input(size);
         let hex_len = size * 2;
-        let mut hex = vec![0u8; hex_len];
-        better_hex::encode_to_slice(&input, &mut hex).unwrap();
-        let mut decoded = vec![0u8; size];
-        better_hex::decode_to_slice(&hex, &mut decoded).unwrap();
-        assert_eq!(decoded, input, "roundtrip failed at size {size}");
-    }
-}
 
-#[test]
-fn roundtrip_encode_upper_decode_to_slice() {
-    for size in 0..=MAX {
-        let input = make_input(size);
-        let mut hex = vec![0u8; size * 2];
-        better_hex::encode_to_slice_upper(&input, &mut hex).unwrap();
-        let mut decoded = vec![0u8; size];
-        better_hex::decode_to_slice(&hex, &mut decoded).unwrap();
-        assert_eq!(decoded, input, "upper roundtrip failed at size {size}");
-    }
-}
+        // encode_to_slice / decode_to_slice — lower
+        let mut hex_buf = vec![0u8; hex_len];
+        better_hex::encode_to_slice(&input, &mut hex_buf).unwrap();
+        let mut dec_buf = vec![0u8; size];
+        better_hex::decode_to_slice(&hex_buf, &mut dec_buf).unwrap();
+        assert_eq!(dec_buf, input, "slice roundtrip (lower) failed at size {size}");
 
-// ── encode::<String> / decode::<Vec<u8>> roundtrip ──────────────────────────
+        // encode_to_slice / decode_to_slice — upper
+        better_hex::encode_to_slice_upper(&input, &mut hex_buf).unwrap();
+        better_hex::decode_to_slice(&hex_buf, &mut dec_buf).unwrap();
+        assert_eq!(dec_buf, input, "slice roundtrip (upper) failed at size {size}");
 
-#[test]
-fn roundtrip_encode_string_decode_vec() {
-    for size in 0..=MAX {
-        let input = make_input(size);
+        // encode::<String> / decode::<Vec<u8>>
         let hex: String = better_hex::encode(&input).unwrap();
-        assert_eq!(hex.len(), size * 2, "encode length wrong at size {size}");
+        assert_eq!(hex.len(), hex_len);
         let decoded: Vec<u8> = better_hex::decode(&hex).unwrap();
         assert_eq!(decoded, input, "String/Vec roundtrip failed at size {size}");
-    }
-}
 
-// ── CT encode/decode roundtrip ──────────────────────────────────────────────
+        // CT encode/decode — lower and upper
+        let mut ct_hex = vec![0u8; hex_len];
+        better_hex::ct::encode_lower(&input, &mut ct_hex).unwrap();
+        let mut ct_dec = vec![0u8; size];
+        better_hex::ct::decode(&ct_hex, &mut ct_dec).unwrap();
+        assert_eq!(ct_dec, input, "CT lower roundtrip failed at size {size}");
 
-#[test]
-fn roundtrip_ct_lower() {
-    for size in 0..=MAX {
-        let input = make_input(size);
-        let mut hex = vec![0u8; size * 2];
-        better_hex::ct::encode_lower(&input, &mut hex).unwrap();
-        let mut decoded = vec![0u8; size];
-        better_hex::ct::decode(&hex, &mut decoded).unwrap();
-        assert_eq!(decoded, input, "CT lower roundtrip failed at size {size}");
-    }
-}
+        better_hex::ct::encode_upper(&input, &mut ct_hex).unwrap();
+        better_hex::ct::decode(&ct_hex, &mut ct_dec).unwrap();
+        assert_eq!(ct_dec, input, "CT upper roundtrip failed at size {size}");
 
-#[test]
-fn roundtrip_ct_upper() {
-    for size in 0..=MAX {
-        let input = make_input(size);
-        let mut hex = vec![0u8; size * 2];
-        better_hex::ct::encode_upper(&input, &mut hex).unwrap();
-        let mut decoded = vec![0u8; size];
-        better_hex::ct::decode(&hex, &mut decoded).unwrap();
-        assert_eq!(decoded, input, "CT upper roundtrip failed at size {size}");
-    }
-}
+        // check / ct::check
+        assert!(better_hex::check(hex.as_bytes()), "check failed at size {size}");
+        assert!(better_hex::ct::check(hex.as_bytes()), "ct::check failed at size {size}");
 
-// ── check / ct::check ───────────────────────────────────────────────────────
+        // FromHex for Vec<u8> and ct::FromHex for Vec<u8>
+        let from_hex_vec = Vec::<u8>::from_hex(&hex).unwrap();
+        assert_eq!(from_hex_vec, input, "FromHex<Vec> at size {size}");
+        let ct_from_hex_vec = <Vec<u8> as better_hex::ct::FromHex>::from_hex(&hex).unwrap();
+        assert_eq!(ct_from_hex_vec, input, "ct::FromHex<Vec> at size {size}");
 
-#[test]
-fn check_valid_at_all_sizes() {
-    for size in 0..=MAX {
-        let input = make_input(size);
-        let hex: String = better_hex::encode(&input).unwrap();
-        assert!(better_hex::check(hex.as_bytes()), "check rejected valid hex at size {size}");
-        assert!(better_hex::ct::check(hex.as_bytes()), "ct::check rejected valid hex at size {size}");
-    }
-}
-
-// ── ToHex trait ─────────────────────────────────────────────────────────────
-
-#[test]
-fn to_hex_write_hex_all_sizes() {
-    for size in 0..=MAX {
-        let input = make_input(size);
-        let expected: String = better_hex::encode(&input).unwrap();
+        // ToHex — write_hex + encode_hex (lower and upper)
+        let expected_upper: String = better_hex::encode_upper(&input).unwrap();
 
         let mut buf = String::new();
         input.as_slice().write_hex(&mut buf, false).unwrap();
-        assert_eq!(buf, expected, "write_hex lower mismatch at size {size}");
-
+        assert_eq!(buf, hex, "write_hex lower at size {size}");
         buf.clear();
         input.as_slice().write_hex(&mut buf, true).unwrap();
-        let expected_upper: String = better_hex::encode_upper(&input).unwrap();
-        assert_eq!(buf, expected_upper, "write_hex upper mismatch at size {size}");
+        assert_eq!(buf, expected_upper, "write_hex upper at size {size}");
+
+        let trait_lower: String = input.as_slice().encode_hex().unwrap();
+        assert_eq!(trait_lower, hex, "encode_hex at size {size}");
+        let trait_upper: String = input.as_slice().encode_hex_upper().unwrap();
+        assert_eq!(trait_upper, expected_upper, "encode_hex_upper at size {size}");
+
+        // HexTarget for String (lower + upper)
+        let ht: String = <String as HexTarget>::encode_hex(&input).unwrap();
+        assert_eq!(ht.len(), hex_len);
+        let ht_upper: String = <String as HexTarget>::encode_hex_upper(&input).unwrap();
+        assert_eq!(ht_upper.len(), hex_len);
+
+        // Display (all 5 format modes)
+        assert_eq!(format!("{}", better_hex::display(&input)), hex);
+        assert_eq!(format!("{:x}", better_hex::display(&input)), hex);
+        assert_eq!(format!("{:X}", better_hex::display(&input)), expected_upper);
+        assert_eq!(format!("{:#x}", better_hex::display(&input)), format!("0x{hex}"));
+        assert_eq!(format!("{:#X}", better_hex::display(&input)), format!("0x{expected_upper}"));
     }
 }
 
-#[test]
-fn to_hex_encode_hex_all_sizes() {
-    for size in 0..=MAX {
-        let input = make_input(size);
-        let expected: String = better_hex::encode(&input).unwrap();
-        let via_trait: String = input.as_slice().encode_hex().unwrap();
-        assert_eq!(via_trait, expected, "encode_hex mismatch at size {size}");
-    }
-}
+// ── FromHex for [u8; N] — representative sizes (requires const generics) ────
 
-// ── FromHex for Vec<u8> ─────────────────────────────────────────────────────
-
-#[test]
-fn from_hex_vec_all_sizes() {
-    for size in 0..=MAX {
-        let input = make_input(size);
-        let hex: String = better_hex::encode(&input).unwrap();
-        let decoded = Vec::<u8>::from_hex(&hex).unwrap();
-        assert_eq!(decoded, input, "FromHex<Vec> failed at size {size}");
-    }
-}
-
-// ── ct::FromHex for Vec<u8> ─────────────────────────────────────────────────
-
-#[test]
-fn ct_from_hex_vec_all_sizes() {
-    for size in 0..=MAX {
-        let input = make_input(size);
-        let hex: String = better_hex::encode(&input).unwrap();
-        let decoded = <Vec<u8> as better_hex::ct::FromHex>::from_hex(&hex).unwrap();
-        assert_eq!(decoded, input, "ct::FromHex<Vec> failed at size {size}");
-    }
-}
-
-// ── FromHex for [u8; N] — representative sizes ──────────────────────────────
-
-macro_rules! test_from_hex_array {
-    ($($n:expr),+ $(,)?) => { $(
-        paste::item! {
-            #[test]
-            fn [< from_hex_array_ $n >]() {
-                let input = make_input($n);
-                let arr: [u8; $n] = input.as_slice().try_into().unwrap();
-                let hex: String = better_hex::encode(&arr).unwrap();
-                let decoded: [u8; $n] = better_hex::decode(&hex).unwrap();
-                assert_eq!(decoded, arr);
-                let ct_decoded: [u8; $n] = better_hex::ct::decode_to(&hex).unwrap();
-                assert_eq!(ct_decoded, arr);
-            }
-        }
-    )+ };
-}
-
-// Can't use paste — let's just write them out. We need a few representative sizes.
 #[test]
 fn from_hex_array_sizes() {
-    macro_rules! check_array {
+    macro_rules! check {
         ($n:expr) => {{
             let input = make_input($n);
             let hex: String = better_hex::encode(&input).unwrap();
             let decoded: [u8; $n] = better_hex::decode(&hex).unwrap();
-            assert_eq!(&decoded[..], &input[..], "FromHex<[u8; {}]> failed", $n);
+            assert_eq!(&decoded[..], &input[..]);
             let ct: [u8; $n] = better_hex::ct::decode_to(&hex).unwrap();
-            assert_eq!(&ct[..], &input[..], "ct::FromHex<[u8; {}]> failed", $n);
+            assert_eq!(&ct[..], &input[..]);
         }};
     }
-    check_array!(0);
-    check_array!(1);
-    check_array!(2);
-    check_array!(4);
-    check_array!(8);
-    check_array!(15);
-    check_array!(16);
-    check_array!(17);
-    check_array!(31);
-    check_array!(32);
-    check_array!(33);
-    check_array!(64);
-    check_array!(128);
-    check_array!(255);
-    check_array!(256);
-    check_array!(512);
+    check!(0); check!(1); check!(2); check!(4); check!(8);
+    check!(15); check!(16); check!(17); check!(31); check!(32); check!(33);
+    check!(64); check!(128); check!(255); check!(256); check!(512);
 }
 
-// ── HexTarget for String ────────────────────────────────────────────────────
-
-#[test]
-fn hex_target_string_all_sizes() {
-    for size in 0..=MAX {
-        let input = make_input(size);
-        let s: String = <String as HexTarget>::encode_hex(&input).unwrap();
-        assert_eq!(s.len(), size * 2, "HexTarget<String> length wrong at size {size}");
-        let upper: String = <String as HexTarget>::encode_hex_upper(&input).unwrap();
-        assert_eq!(upper.len(), size * 2);
-    }
-}
-
-// ── HexTarget for HexStr<N> — representative sizes ──────────────────────────
+// ── HexStr<N> roundtrip — representative sizes ─────────────────────────────
 
 #[test]
 fn hex_str_roundtrip_sizes() {
-    use better_hex::HexStr;
-    macro_rules! check_hex_str {
+    use better_hex::{HexStr, PrefixedHexStr};
+    macro_rules! check {
         ($n:expr) => {{
             let input = make_input($n);
             let arr: [u8; $n] = input.as_slice().try_into().unwrap();
-            let hex: HexStr<$n> = HexStr::encode_lower(&arr);
-            assert_eq!(hex.decode(), arr, "HexStr<{}> roundtrip failed", $n);
+            let lower: HexStr<$n> = HexStr::encode_lower(&arr);
+            assert_eq!(lower.decode(), arr);
             let upper: HexStr<$n> = HexStr::encode_upper(&arr);
-            assert_eq!(upper.decode(), arr, "HexStr<{}> upper roundtrip failed", $n);
+            assert_eq!(upper.decode(), arr);
+            // Prefixed variants
+            let p_lower: PrefixedHexStr<$n> = HexStr::encode_lower(&arr);
+            assert_eq!(p_lower.decode(), arr);
+            assert!(p_lower.as_str().starts_with("0x"));
+            let p_upper: PrefixedHexStr<$n> = HexStr::encode_upper(&arr);
+            assert_eq!(p_upper.decode(), arr);
+            assert!(p_upper.as_str().starts_with("0x"));
         }};
     }
-    check_hex_str!(0);
-    check_hex_str!(1);
-    check_hex_str!(2);
-    check_hex_str!(4);
-    check_hex_str!(8);
-    check_hex_str!(15);
-    check_hex_str!(16);
-    check_hex_str!(17);
-    check_hex_str!(31);
-    check_hex_str!(32);
-    check_hex_str!(33);
-    check_hex_str!(64);
-    check_hex_str!(128);
-    check_hex_str!(255);
-    check_hex_str!(256);
-}
-
-// ── Display formatting ──────────────────────────────────────────────────────
-
-#[test]
-fn display_all_sizes() {
-    for size in 0..=MAX {
-        let input = make_input(size);
-        let expected: String = better_hex::encode(&input).unwrap();
-        let expected_upper: String = better_hex::encode_upper(&input).unwrap();
-
-        let d = format!("{}", better_hex::display(&input));
-        assert_eq!(d, expected, "Display mismatch at size {size}");
-
-        let x = format!("{:x}", better_hex::display(&input));
-        assert_eq!(x, expected, "LowerHex mismatch at size {size}");
-
-        let upper = format!("{:X}", better_hex::display(&input));
-        assert_eq!(upper, expected_upper, "UpperHex mismatch at size {size}");
-
-        let alt_lower = format!("{:#x}", better_hex::display(&input));
-        assert_eq!(alt_lower, format!("0x{expected}"), "alt LowerHex mismatch at size {size}");
-
-        let alt_upper = format!("{:#X}", better_hex::display(&input));
-        assert_eq!(alt_upper, format!("0x{expected_upper}"), "alt UpperHex mismatch at size {size}");
-    }
+    check!(0); check!(1); check!(2); check!(4); check!(8);
+    check!(15); check!(16); check!(17); check!(31); check!(32); check!(33);
+    check!(64); check!(128); check!(255); check!(256);
 }
 
 // ── heapless ────────────────────────────────────────────────────────────────
@@ -276,13 +143,11 @@ fn heapless_all_sizes() {
     const CAP: usize = 1024;
     for size in 0..=MAX.min(CAP / 2) {
         let input = make_input(size);
-        // HexTarget for heapless::String
         let hex: heapless::String<CAP> = better_hex::encode(&input).unwrap();
-        assert_eq!(hex.len(), size * 2, "heapless::String encode length at size {size}");
-
-        // FromHex for heapless::Vec
+        assert_eq!(hex.len(), size * 2);
+        let _upper: heapless::String<CAP> = better_hex::encode_upper(&input).unwrap();
         let decoded: heapless::Vec<u8, CAP> = better_hex::decode(hex.as_str()).unwrap();
-        assert_eq!(&decoded[..], &input[..], "heapless::Vec roundtrip at size {size}");
+        assert_eq!(&decoded[..], &input[..]);
     }
 }
 
@@ -294,13 +159,11 @@ fn arrayvec_all_sizes() {
     const CAP: usize = 1024;
     for size in 0..=MAX.min(CAP / 2) {
         let input = make_input(size);
-        // HexTarget for arrayvec::ArrayString
         let hex: arrayvec::ArrayString<CAP> = better_hex::encode(&input).unwrap();
-        assert_eq!(hex.len(), size * 2, "ArrayString encode length at size {size}");
-
-        // FromHex for arrayvec::ArrayVec
+        assert_eq!(hex.len(), size * 2);
+        let _upper: arrayvec::ArrayString<CAP> = better_hex::encode_upper(&input).unwrap();
         let decoded: arrayvec::ArrayVec<u8, CAP> = better_hex::decode(hex.as_str()).unwrap();
-        assert_eq!(&decoded[..], &input[..], "ArrayVec roundtrip at size {size}");
+        assert_eq!(&decoded[..], &input[..]);
     }
 }
 
