@@ -38,10 +38,16 @@ fn encode_inner<'a, const UPPER: bool>(input: &[u8], output: &'a mut [u8]) -> Re
             got: output.len(),
         });
     }
+    // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`; pointer and length
+    // come from a valid `&mut [u8]`. Treating initialized bytes as `MaybeUninit`
+    // is always valid (widening the validity invariant). The backend will
+    // overwrite every element.
     let uninit =
         unsafe { core::slice::from_raw_parts_mut(output.as_mut_ptr().cast::<MaybeUninit<u8>>(), output.len()) };
     backend::ct_encode::<UPPER>(input, uninit);
     debug_assert!(output.iter().all(|b| b.is_ascii()), "ct encode produced non-ASCII");
+    // SAFETY: ct_encode wrote valid hex ASCII into every byte of `output`.
+    // Hex ASCII is a subset of valid UTF-8.
     Ok(unsafe { core::str::from_utf8_unchecked_mut(output) })
 }
 
@@ -60,6 +66,10 @@ pub fn decode<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a [u8], Error>
             got: input.len(),
         });
     }
+    // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`; pointer and length
+    // come from a valid `&mut [u8]`. Treating initialized bytes as `MaybeUninit`
+    // is always valid (widening the validity invariant). The backend will
+    // overwrite every element on success.
     let uninit =
         unsafe { core::slice::from_raw_parts_mut(output.as_mut_ptr().cast::<MaybeUninit<u8>>(), output.len()) };
     backend::ct_decode(input, uninit)?;
@@ -101,6 +111,7 @@ impl<const N: usize> FromHex for [u8; N] {
         }
         let mut out: [MaybeUninit<u8>; N] = maybe_uninit::uninit_array();
         backend::ct_decode(hex, &mut out)?;
+        // SAFETY: ct_decode returned Ok, guaranteeing all N bytes are initialized.
         Ok(unsafe { maybe_uninit::transpose(out).assume_init() })
     }
 }

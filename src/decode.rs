@@ -34,7 +34,10 @@ pub fn decode_to_slice<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a [u8
             got: input.len(),
         });
     }
-    // SAFETY: MaybeUninit<u8> has the same layout as u8; backend overwrites every element.
+    // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`; the pointer cast
+    // preserves the slice length. Treating initialized `u8` as `MaybeUninit<u8>`
+    // is always valid (widening the validity invariant). The backend will
+    // overwrite every element on success.
     let mu_output = unsafe { &mut *(output as *mut [u8] as *mut [core::mem::MaybeUninit<u8>]) };
     backend::decode(input, mu_output)?;
     Ok(output)

@@ -177,10 +177,13 @@ pub fn ct_encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]
             cfg_if::cfg_if! {
                 if #[cfg(feature = "std")] {
                     if std::is_x86_feature_detected!("avx512bw") {
+                        // SAFETY: we just confirmed AVX-512BW is available.
                         unsafe { x86::encode_avx512::<UPPER>(input, output) }
                     } else if std::is_x86_feature_detected!("avx2") {
+                        // SAFETY: we just confirmed AVX2 is available.
                         unsafe { x86::encode_avx2::<UPPER>(input, output) }
                     } else if std::is_x86_feature_detected!("ssse3") {
+                        // SAFETY: we just confirmed SSSE3 is available.
                         unsafe { x86::encode_ssse3::<UPPER>(input, output) }
                     } else {
                         ct_scalar::encode::<UPPER>(input, output);
@@ -191,14 +194,17 @@ pub fn ct_encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]
                     cpufeatures::new!(cpuid_ssse3, "ssse3");
                     let token_avx512bw = cpuid_avx512bw::init();
                     if token_avx512bw.get() {
+                        // SAFETY: we just confirmed AVX-512BW is available.
                         unsafe { x86::encode_avx512::<UPPER>(input, output) }
                     } else {
                         let token_avx2 = cpuid_avx2::init();
                         if token_avx2.get() {
+                            // SAFETY: we just confirmed AVX2 is available.
                             unsafe { x86::encode_avx2::<UPPER>(input, output) }
                         } else {
                             let token_ssse3 = cpuid_ssse3::init();
                             if token_ssse3.get() {
+                                // SAFETY: we just confirmed SSSE3 is available.
                                 unsafe { x86::encode_ssse3::<UPPER>(input, output) }
                             } else {
                                 ct_scalar::encode::<UPPER>(input, output);
@@ -229,10 +235,13 @@ pub fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Err
             cfg_if::cfg_if! {
                 if #[cfg(feature = "std")] {
                     if std::is_x86_feature_detected!("avx512bw") {
+                        // SAFETY: we just confirmed AVX-512BW is available.
                         unsafe { x86::ct_decode_avx512(input, output) }
                     } else if std::is_x86_feature_detected!("avx2") {
+                        // SAFETY: we just confirmed AVX2 is available.
                         unsafe { x86::ct_decode_avx2(input, output) }
                     } else if std::is_x86_feature_detected!("ssse3") {
+                        // SAFETY: we just confirmed SSSE3 is available.
                         unsafe { x86::ct_decode_ssse3(input, output) }
                     } else {
                         ct_scalar::decode(input, output)
@@ -243,14 +252,17 @@ pub fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Err
                     cpufeatures::new!(cpuid_ssse3, "ssse3");
                     let token_avx512bw = cpuid_avx512bw::init();
                     if token_avx512bw.get() {
+                        // SAFETY: we just confirmed AVX-512BW is available.
                         unsafe { x86::ct_decode_avx512(input, output) }
                     } else {
                         let token_avx2 = cpuid_avx2::init();
                         if token_avx2.get() {
+                            // SAFETY: we just confirmed AVX2 is available.
                             unsafe { x86::ct_decode_avx2(input, output) }
                         } else {
                             let token_ssse3 = cpuid_ssse3::init();
                             if token_ssse3.get() {
+                                // SAFETY: we just confirmed SSSE3 is available.
                                 unsafe { x86::ct_decode_ssse3(input, output) }
                             } else {
                                 ct_scalar::decode(input, output)
@@ -280,11 +292,13 @@ pub fn ct_check(input: &[u8]) -> bool {
             cfg_if::cfg_if! {
                 if #[cfg(feature = "std")] {
                     if std::is_x86_feature_detected!("avx512bw") {
+                        // SAFETY: we just confirmed AVX-512BW is available.
                         unsafe { x86::ct_check_avx512(input) }
                     } else if std::is_x86_feature_detected!("avx2") {
                         // SAFETY: we just confirmed AVX2 is available.
                         unsafe { x86::ct_check_avx2(input) }
                     } else if std::is_x86_feature_detected!("ssse3") {
+                        // SAFETY: we just confirmed SSSE3 is available.
                         unsafe { x86::ct_check_ssse3(input) }
                     } else {
                         ct_scalar::check(input)
@@ -295,6 +309,7 @@ pub fn ct_check(input: &[u8]) -> bool {
                     cpufeatures::new!(cpuid_ssse3, "ssse3");
                     let token_avx512bw = cpuid_avx512bw::init();
                     if token_avx512bw.get() {
+                        // SAFETY: we just confirmed AVX-512BW is available.
                         unsafe { x86::ct_check_avx512(input) }
                     } else {
                         let token_avx2 = cpuid_avx2::init();
@@ -304,6 +319,7 @@ pub fn ct_check(input: &[u8]) -> bool {
                         } else {
                             let token_ssse3 = cpuid_ssse3::init();
                             if token_ssse3.get() {
+                                // SAFETY: we just confirmed SSSE3 is available.
                                 unsafe { x86::ct_check_ssse3(input) }
                             } else {
                                 ct_scalar::check(input)

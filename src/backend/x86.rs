@@ -391,16 +391,14 @@ pub(crate) unsafe fn ct_decode_ssse3(input: &[u8], output: &mut [MaybeUninit<u8>
 /// Decode a single 256-bit register (32 hex chars → 16 output bytes) using
 /// the Lemire algorithm, AVX2 variant.
 ///
-/// Returns `(packed_bytes, valid)`. The `packed_bytes` has the 16 decoded
-/// bytes after a lane-crossing permute fixup.
+/// Same as [`decode_chunk_128`] but for 256-bit AVX2 registers.
+/// Returns `(packed_bytes, check_vector)`. The `packed_bytes` has the 16
+/// decoded bytes after a lane-crossing permute fixup. Caller ORs check
+/// vectors then does a single `_mm256_movemask_epi8`.
 ///
 /// # Safety
 ///
 /// Caller must ensure AVX2 is available.
-#[target_feature(enable = "avx2")]
-/// Same as [`decode_chunk_128`] but for 256-bit AVX2 registers.
-/// Returns `(packed_bytes, check_vector)` — caller ORs check vectors
-/// then does a single `_mm256_movemask_epi8`.
 #[inline]
 #[target_feature(enable = "avx2")]
 unsafe fn decode_chunk_256(
