@@ -56,7 +56,7 @@ const NIL: u8 = u8::MAX;
 ///
 /// Both uppercase and lowercase letters map to the same nibble values,
 /// so decoding is case-insensitive.
-static DECODE_LUT: [u8; 256] = {
+const DECODE_LUT: [u8; 256] = {
     let mut lut = [NIL; 256];
     // b'0' (0x30) ..= b'9' (0x39) → 0..=9
     let mut i = 0u8;

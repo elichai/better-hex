@@ -29,10 +29,6 @@
 use crate::error::Error;
 use core::mem::MaybeUninit;
 
-// ---------------------------------------------------------------------------
-// Primitive helpers
-// ---------------------------------------------------------------------------
-
 /// Branchless nibble-to-ASCII encoder (no LUT).
 ///
 /// Maps `nibble ∈ 0..=15` to the corresponding hex ASCII byte.
@@ -79,10 +75,6 @@ const fn ct_decode_nibble(byte: u8) -> u16 {
     ret as u16
 }
 
-// ---------------------------------------------------------------------------
-// Public functions
-// ---------------------------------------------------------------------------
-
 /// Constant-time hex encoder.
 ///
 /// Encodes every byte of `input` into exactly two hex ASCII characters written
@@ -119,6 +111,7 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
 /// # Panics (debug only)
 ///
 /// Panics if `output.len() != input.len() / 2` or `input.len()` is odd.
+#[inline]
 pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     debug_assert_eq!(output.len(), input.len() / 2, "output buffer wrong size for decode");
     debug_assert!(input.len().is_multiple_of(2), "input length must be even");
@@ -150,10 +143,6 @@ pub fn check(input: &[u8]) -> bool {
     }
     err == 0
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {

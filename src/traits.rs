@@ -248,14 +248,15 @@ trait Container: Sized {
 
 #[cfg(feature = "alloc")]
 impl Container for alloc::vec::Vec<u8> {
+    #[inline]
     fn new(min_capacity: usize) -> Result<Self, Error> {
         Ok(Self::with_capacity(min_capacity))
     }
-
+    #[inline]
     fn as_mut_slice(&mut self) -> &mut [MaybeUninit<u8>] {
         self.spare_capacity_mut()
     }
-
+    #[inline]
     unsafe fn set_len(&mut self, new_len: usize) {
         // SAFETY: caller guarantees the first `new_len` bytes of `self` are initialized and valid.
         unsafe { self.set_len(new_len) };
@@ -264,14 +265,16 @@ impl Container for alloc::vec::Vec<u8> {
 
 #[cfg(feature = "alloc")]
 impl Container for alloc::string::String {
+    #[inline]
     fn new(min_capacity: usize) -> Result<Self, Error> {
         Ok(Self::with_capacity(min_capacity))
     }
+    #[inline]
     fn as_mut_slice(&mut self) -> &mut [MaybeUninit<u8>] {
         // SAFETY: `String`'s spare capacity is valid for `MaybeUninit<u8>` since `String` is guaranteed to have a contiguous buffer of bytes.
         unsafe { self.as_mut_vec().spare_capacity_mut() }
     }
-
+    #[inline]
     unsafe fn set_len(&mut self, new_len: usize) {
         // SAFETY: caller guarantees the first `new_len` bytes of `self` are initialized and valid UTF-8.
         unsafe { self.as_mut_vec().set_len(new_len) };
@@ -280,6 +283,7 @@ impl Container for alloc::string::String {
 
 #[cfg(feature = "arrayvec")]
 impl<const N: usize> Container for arrayvec::ArrayVec<u8, N> {
+    #[inline]
     fn new(min_capacity: usize) -> Result<Self, Error> {
         if min_capacity > N {
             return Err(Error::InvalidLength {
@@ -289,14 +293,14 @@ impl<const N: usize> Container for arrayvec::ArrayVec<u8, N> {
         }
         Ok(Self::new())
     }
-
+    #[inline]
     fn as_mut_slice(&mut self) -> &mut [MaybeUninit<u8>] {
         // SAFETY: `ArrayVec` guarantees that its uninitialized capacity is valid for `MaybeUninit<u8>`.
         let capacity = self.capacity();
         let ptr = self.as_mut_ptr().cast::<MaybeUninit<u8>>();
         unsafe { core::slice::from_raw_parts_mut(ptr, capacity) }
     }
-
+    #[inline]
     unsafe fn set_len(&mut self, new_len: usize) {
         // SAFETY: caller guarantees the first `new_len` bytes of `self` are initialized and valid.
         unsafe { self.set_len(new_len) };
@@ -305,6 +309,7 @@ impl<const N: usize> Container for arrayvec::ArrayVec<u8, N> {
 
 #[cfg(feature = "arrayvec")]
 impl<const N: usize> Container for arrayvec::ArrayString<N> {
+    #[inline]
     fn new(min_capacity: usize) -> Result<Self, Error> {
         if min_capacity > N {
             return Err(Error::InvalidLength {
@@ -314,14 +319,14 @@ impl<const N: usize> Container for arrayvec::ArrayString<N> {
         }
         Ok(Self::new())
     }
-
+    #[inline]
     fn as_mut_slice(&mut self) -> &mut [MaybeUninit<u8>] {
         // SAFETY: `ArrayString` guarantees that its uninitialized capacity is valid for `MaybeUninit<u8>`.
         let capacity = self.capacity();
         let ptr = self.as_mut_ptr().cast::<MaybeUninit<u8>>();
         unsafe { core::slice::from_raw_parts_mut(ptr, capacity) }
     }
-
+    #[inline]
     unsafe fn set_len(&mut self, new_len: usize) {
         // SAFETY: caller guarantees the first `new_len` bytes of `self` are initialized and valid.
         unsafe { self.set_len(new_len) };
@@ -330,6 +335,7 @@ impl<const N: usize> Container for arrayvec::ArrayString<N> {
 
 #[cfg(feature = "heapless")]
 impl<const N: usize> Container for heapless::Vec<u8, N> {
+    #[inline]
     fn new(min_capacity: usize) -> Result<Self, Error> {
         if min_capacity > N {
             return Err(Error::InvalidLength {
@@ -339,7 +345,7 @@ impl<const N: usize> Container for heapless::Vec<u8, N> {
         }
         Ok(Self::new())
     }
-
+    #[inline]
     fn as_mut_slice(&mut self) -> &mut [MaybeUninit<u8>] {
         // SAFETY: heapless 0.9 — as_mut_ptr() points to the backing [u8; N].
         // We expose the full buffer as MaybeUninit.
@@ -354,6 +360,7 @@ impl<const N: usize> Container for heapless::Vec<u8, N> {
 
 #[cfg(feature = "heapless")]
 impl<const N: usize> Container for heapless::String<N> {
+    #[inline]
     fn new(min_capacity: usize) -> Result<Self, Error> {
         if min_capacity > N {
             return Err(Error::InvalidLength {
@@ -363,7 +370,7 @@ impl<const N: usize> Container for heapless::String<N> {
         }
         Ok(Self::new())
     }
-
+    #[inline]
     fn as_mut_slice(&mut self) -> &mut [MaybeUninit<u8>] {
         // SAFETY: heapless 0.9 — as_mut_vec() gives mutable access to the
         // inner Vec. We expose the full backing buffer as MaybeUninit.
@@ -372,7 +379,7 @@ impl<const N: usize> Container for heapless::String<N> {
         let ptr = vec.as_mut_ptr().cast::<MaybeUninit<u8>>();
         unsafe { core::slice::from_raw_parts_mut(ptr, capacity) }
     }
-
+    #[inline]
     unsafe fn set_len(&mut self, new_len: usize) {
         // SAFETY: caller guarantees first new_len bytes are valid UTF-8.
         unsafe { self.as_mut_vec().set_len(new_len) };

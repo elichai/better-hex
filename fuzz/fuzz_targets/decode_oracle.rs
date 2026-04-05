@@ -37,7 +37,7 @@ fuzz_target!(|data: &[u8]| {
     let naive_result = naive_decode(data);
     let out_len = data.len() / 2;
 
-    // --- scalar::decode ---
+    //  scalar::decode
     {
         let mut buf = vec![core::mem::MaybeUninit::uninit(); out_len];
         let scalar_result = scalar::decode(data, &mut buf);
@@ -52,7 +52,7 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    // --- ct_scalar::decode ---
+    //  ct_scalar::decode
     {
         let mut buf = vec![core::mem::MaybeUninit::uninit(); out_len];
         let ct_result = ct_scalar::decode(data, &mut buf);
@@ -67,7 +67,7 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    // --- dispatched_decode ---
+    //  dispatched_decode
     {
         let mut buf = vec![core::mem::MaybeUninit::uninit(); out_len];
         let disp_result = dispatched_decode(data, &mut buf);
@@ -82,7 +82,7 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    // --- dispatched_ct_decode ---
+    //  dispatched_ct_decode
     {
         let mut buf = vec![core::mem::MaybeUninit::uninit(); out_len];
         let ct_disp_result = dispatched_ct_decode(data, &mut buf);
@@ -99,7 +99,7 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    // --- check functions: all must agree with naive validity ---
+    //  check functions: all must agree with naive validity
     let naive_valid = naive_result.is_ok();
 
     let scalar_valid = scalar::check(data);

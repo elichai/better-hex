@@ -16,7 +16,7 @@ fuzz_target!(|input: Input| {
     let out_len = input.output_len as usize;
     let correct_encode_len = data.len() * 2;
 
-    // --- encode_to_slice with potentially wrong output size ---
+    //  encode_to_slice with potentially wrong output size
     {
         let mut buf = vec![0u8; out_len];
         let result = encode_to_slice(data, &mut buf);
@@ -34,7 +34,7 @@ fuzz_target!(|input: Input| {
         }
     }
 
-    // --- decode_to_slice with potentially wrong output size ---
+    //  decode_to_slice with potentially wrong output size
     // Build a valid hex string from data to use as decode input.
     {
         let mut hex = vec![0u8; correct_encode_len];
@@ -57,7 +57,7 @@ fuzz_target!(|input: Input| {
         }
     }
 
-    // --- decode_to_array::<4> with various input lengths ---
+    //  decode_to_array::<4> with various input lengths
     // correct input length for 4-byte output is 8 hex chars.
     {
         // Build an input of `out_len` bytes (we reuse output_len as input length here).
@@ -82,7 +82,7 @@ fuzz_target!(|input: Input| {
         }
     }
 
-    // --- ct::decode with potentially wrong output size ---
+    //  ct::decode with potentially wrong output size
     {
         let mut hex = vec![0u8; correct_encode_len];
         encode_to_slice(data, &mut hex).unwrap();

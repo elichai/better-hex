@@ -51,10 +51,6 @@ use crate::backend::scalar;
 use crate::error::Error;
 use core::mem::MaybeUninit;
 
-// ---------------------------------------------------------------------------
-// Encode — SSSE3
-// ---------------------------------------------------------------------------
-
 /// Hex-encode `input` into `output` using SSSE3 `pshufb` for the hot loop.
 ///
 /// Processes 16 input bytes (→ 32 hex chars) per iteration, then delegates
@@ -106,14 +102,12 @@ pub(crate) unsafe fn encode_ssse3<const UPPER: bool>(input: &[u8], output: &mut 
 
         // Scalar tail.
         if i < input.len() {
-            scalar::encode::<UPPER>(&input[i..], &mut output[i * 2..]);
+            let input_tail = unsafe { input.get_unchecked(i..) };
+            let output_tail = unsafe { output.get_unchecked_mut(i * 2..) };
+            scalar::encode::<UPPER>(input_tail, output_tail);
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Encode — AVX2
-// ---------------------------------------------------------------------------
 
 /// Hex-encode `input` into `output` using AVX2 for the hot loop.
 ///
@@ -179,14 +173,12 @@ pub(crate) unsafe fn encode_avx2<const UPPER: bool>(input: &[u8], output: &mut [
 
         // Tail: fall through to SSSE3 for any remaining 16+ bytes, then scalar.
         if i < input.len() {
-            encode_ssse3::<UPPER>(&input[i..], &mut output[i * 2..]);
+            let input_tail = unsafe { input.get_unchecked(i..) };
+            let output_tail = unsafe { output.get_unchecked_mut(i * 2..) };
+            encode_ssse3::<UPPER>(input_tail, output_tail);
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Decode — SSSE3 (Lemire 2023)
-// ---------------------------------------------------------------------------
 
 /// Build the `delta_check` table for the Lemire SSSE3 hex-decode algorithm.
 ///
@@ -345,13 +337,15 @@ unsafe fn decode_ssse3_inner<const SHORT_CIRCUIT: bool>(
         }
 
         if i < input.len() {
+            let input_tail = unsafe { input.get_unchecked(i..) };
+            let output_tail = unsafe { output.get_unchecked_mut(o..) };
             if SHORT_CIRCUIT {
-                scalar::decode(&input[i..], &mut output[o..]).map_err(|e| match e {
+                scalar::decode(input_tail, output_tail).map_err(|e| match e {
                     Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
                     other => other,
                 })?;
             } else {
-                if ct_scalar::decode(&input[i..], &mut output[o..]).is_err() {
+                if ct_scalar::decode(input_tail, output_tail).is_err() {
                     err_accum |= 1;
                 }
             }
@@ -372,6 +366,7 @@ unsafe fn decode_ssse3_inner<const SHORT_CIRCUIT: bool>(
 /// # Safety
 ///
 /// Caller must ensure the CPU supports SSSE3.
+#[inline]
 #[target_feature(enable = "ssse3")]
 pub(crate) unsafe fn decode_ssse3(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     // SAFETY: caller guarantees SSSE3.
@@ -386,15 +381,12 @@ pub(crate) unsafe fn decode_ssse3(input: &[u8], output: &mut [MaybeUninit<u8>]) 
 /// # Safety
 ///
 /// Caller must ensure the CPU supports SSSE3.
+#[inline]
 #[target_feature(enable = "ssse3")]
 pub(crate) unsafe fn ct_decode_ssse3(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     // SAFETY: caller guarantees SSSE3.
     unsafe { decode_ssse3_inner::<false>(input, output) }
 }
-
-// ---------------------------------------------------------------------------
-// Decode — AVX2
-// ---------------------------------------------------------------------------
 
 /// Decode a single 256-bit register (32 hex chars → 16 output bytes) using
 /// the Lemire algorithm, AVX2 variant.
@@ -495,13 +487,15 @@ unsafe fn decode_avx2_inner<const SHORT_CIRCUIT: bool>(
 
         // Tail: fall through to SSSE3, then scalar.
         if i < input.len() {
+            let input_tail = unsafe { input.get_unchecked(i..) };
+            let output_tail = unsafe { output.get_unchecked_mut(o..) };
             if SHORT_CIRCUIT {
-                decode_ssse3(&input[i..], &mut output[o..]).map_err(|e| match e {
+                decode_ssse3(input_tail, output_tail).map_err(|e| match e {
                     Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
                     other => other,
                 })?;
             } else {
-                if ct_decode_ssse3(&input[i..], &mut output[o..]).is_err() {
+                if ct_decode_ssse3(input_tail, output_tail).is_err() {
                     err_accum |= 1;
                 }
             }
@@ -523,6 +517,7 @@ unsafe fn decode_avx2_inner<const SHORT_CIRCUIT: bool>(
 /// # Safety
 ///
 /// Caller must ensure the CPU supports AVX2.
+#[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn decode_avx2(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     // SAFETY: caller guarantees AVX2.
@@ -538,15 +533,12 @@ pub(crate) unsafe fn decode_avx2(input: &[u8], output: &mut [MaybeUninit<u8>]) -
 /// # Safety
 ///
 /// Caller must ensure the CPU supports AVX2.
+#[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn ct_decode_avx2(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     // SAFETY: caller guarantees AVX2.
     unsafe { decode_avx2_inner::<false>(input, output) }
 }
-
-// ---------------------------------------------------------------------------
-// Check — SSSE3
-// ---------------------------------------------------------------------------
 
 /// Check whether every byte in `input` is a valid hex ASCII character,
 /// using SSSE3 SIMD.
@@ -595,10 +587,11 @@ unsafe fn check_ssse3_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
         }
 
         // Tail.
+        let input_tail = unsafe { input.get_unchecked(i..) };
         let tail_valid = if SHORT_CIRCUIT {
-            scalar::check(&input[i..])
+            scalar::check(input_tail)
         } else {
-            ct_scalar::check(&input[i..])
+            ct_scalar::check(input_tail)
         };
 
         all_valid & tail_valid
@@ -613,6 +606,7 @@ unsafe fn check_ssse3_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
 /// # Safety
 ///
 /// Caller must ensure the CPU supports SSSE3.
+#[inline]
 #[target_feature(enable = "ssse3")]
 pub(crate) unsafe fn check_ssse3(input: &[u8]) -> bool {
     // SAFETY: caller guarantees SSSE3.
@@ -627,15 +621,12 @@ pub(crate) unsafe fn check_ssse3(input: &[u8]) -> bool {
 /// # Safety
 ///
 /// Caller must ensure the CPU supports SSSE3.
+#[inline]
 #[target_feature(enable = "ssse3")]
 pub(crate) unsafe fn ct_check_ssse3(input: &[u8]) -> bool {
     // SAFETY: caller guarantees SSSE3.
     unsafe { check_ssse3_inner::<false>(input) }
 }
-
-// ---------------------------------------------------------------------------
-// Check — AVX2
-// ---------------------------------------------------------------------------
 
 /// Check whether every byte in `input` is a valid hex ASCII character,
 /// using AVX2 SIMD.
@@ -686,10 +677,11 @@ unsafe fn check_avx2_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
         }
 
         // Tail: fall through to SSSE3/scalar.
+        let input_tail = unsafe { input.get_unchecked(i..) };
         let tail_valid = if SHORT_CIRCUIT {
-            check_ssse3(&input[i..])
+            check_ssse3(input_tail)
         } else {
-            ct_check_ssse3(&input[i..])
+            ct_check_ssse3(input_tail)
         };
 
         if SHORT_CIRCUIT {
@@ -708,6 +700,7 @@ unsafe fn check_avx2_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
 /// # Safety
 ///
 /// Caller must ensure the CPU supports AVX2.
+#[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn check_avx2(input: &[u8]) -> bool {
     // SAFETY: caller guarantees AVX2.
@@ -722,15 +715,12 @@ pub(crate) unsafe fn check_avx2(input: &[u8]) -> bool {
 /// # Safety
 ///
 /// Caller must ensure the CPU supports AVX2.
+#[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn ct_check_avx2(input: &[u8]) -> bool {
     // SAFETY: caller guarantees AVX2.
     unsafe { check_avx2_inner::<false>(input) }
 }
-
-// ---------------------------------------------------------------------------
-// Encode — AVX-512BW
-// ---------------------------------------------------------------------------
 
 /// Hex-encode `input` into `output` using AVX-512BW for the hot loop.
 ///
@@ -801,14 +791,12 @@ pub(crate) unsafe fn encode_avx512<const UPPER: bool>(input: &[u8], output: &mut
 
         // Tail: fall through to AVX2 for any remaining 32+ bytes, then SSSE3, then scalar.
         if i < input.len() {
-            encode_avx2::<UPPER>(&input[i..], &mut output[i * 2..]);
+            let input_tail = unsafe { input.get_unchecked(i..) };
+            let output_tail = unsafe { output.get_unchecked_mut(i * 2..) };
+            encode_avx2::<UPPER>(input_tail, output_tail);
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Decode — AVX-512BW (Lemire 2023)
-// ---------------------------------------------------------------------------
 
 /// Decode a single 512-bit register (64 hex chars → 32 output bytes) using
 /// the Lemire algorithm, AVX-512BW variant.
@@ -915,13 +903,15 @@ unsafe fn decode_avx512_inner<const SHORT_CIRCUIT: bool>(
 
         // Tail: fall through to AVX2, then SSSE3, then scalar.
         if i < input.len() {
+            let input_tail = unsafe { input.get_unchecked(i..) };
+            let output_tail = unsafe { output.get_unchecked_mut(o..) };
             if SHORT_CIRCUIT {
-                decode_avx2(&input[i..], &mut output[o..]).map_err(|e| match e {
+                decode_avx2(input_tail, output_tail).map_err(|e| match e {
                     Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
                     other => other,
                 })?;
             } else {
-                if ct_decode_avx2(&input[i..], &mut output[o..]).is_err() {
+                if ct_decode_avx2(input_tail, output_tail).is_err() {
                     err_accum |= 1;
                 }
             }
@@ -943,6 +933,7 @@ unsafe fn decode_avx512_inner<const SHORT_CIRCUIT: bool>(
 /// # Safety
 ///
 /// Caller must ensure the CPU supports AVX-512BW.
+#[inline]
 #[target_feature(enable = "avx512bw")]
 pub(crate) unsafe fn decode_avx512(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     // SAFETY: caller guarantees AVX-512BW.
@@ -958,15 +949,12 @@ pub(crate) unsafe fn decode_avx512(input: &[u8], output: &mut [MaybeUninit<u8>])
 /// # Safety
 ///
 /// Caller must ensure the CPU supports AVX-512BW.
+#[inline]
 #[target_feature(enable = "avx512bw")]
 pub(crate) unsafe fn ct_decode_avx512(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     // SAFETY: caller guarantees AVX-512BW.
     unsafe { decode_avx512_inner::<false>(input, output) }
 }
-
-// ---------------------------------------------------------------------------
-// Check — AVX-512BW
-// ---------------------------------------------------------------------------
 
 /// Check whether every byte in `input` is a valid hex ASCII character,
 /// using AVX-512BW SIMD.
@@ -1015,10 +1003,11 @@ unsafe fn check_avx512_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
         }
 
         // Tail: fall through to AVX2/SSSE3/scalar.
+        let input_tail = unsafe { input.get_unchecked(i..) };
         let tail_valid = if SHORT_CIRCUIT {
-            check_avx2(&input[i..])
+            check_avx2(input_tail)
         } else {
-            ct_check_avx2(&input[i..])
+            ct_check_avx2(input_tail)
         };
 
         all_valid & tail_valid
@@ -1033,6 +1022,7 @@ unsafe fn check_avx512_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
 /// # Safety
 ///
 /// Caller must ensure the CPU supports AVX-512BW.
+#[inline]
 #[target_feature(enable = "avx512bw")]
 pub(crate) unsafe fn check_avx512(input: &[u8]) -> bool {
     // SAFETY: caller guarantees AVX-512BW.
@@ -1047,6 +1037,7 @@ pub(crate) unsafe fn check_avx512(input: &[u8]) -> bool {
 /// # Safety
 ///
 /// Caller must ensure the CPU supports AVX-512BW.
+#[inline]
 #[target_feature(enable = "avx512bw")]
 pub(crate) unsafe fn ct_check_avx512(input: &[u8]) -> bool {
     // SAFETY: caller guarantees AVX-512BW.

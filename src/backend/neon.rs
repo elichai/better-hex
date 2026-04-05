@@ -171,7 +171,9 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
                 vst1q_u8(out.add(16), zipped.1);
             }
         } else {
-            scalar::encode::<UPPER>(&input[i..], &mut output[i * 2..]);
+            let input_tail = unsafe { input.get_unchecked(i..) };
+            let output_tail = unsafe { output.get_unchecked_mut(i * 2..) };
+            scalar::encode::<UPPER>(input_tail, output_tail);
         }
     }
 }
@@ -223,7 +225,9 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(input: &[u8], output: &mut [MaybeUnin
 
         if SHORT_CIRCUIT {
             if chunk_err != 0 {
-                return scalar::decode(&input[i..], &mut output[i / 2..]).map_err(|e| match e {
+                let input_tail = unsafe { input.get_unchecked(i..) };
+                let output_tail = unsafe { output.get_unchecked_mut(i / 2..) };
+                return scalar::decode(input_tail, output_tail).map_err(|e| match e {
                     Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
                     other => other,
                 });
@@ -243,13 +247,15 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(input: &[u8], output: &mut [MaybeUnin
     }
 
     if i < input.len() {
+        let input_tail = unsafe { input.get_unchecked(i..) };
+        let output_tail = unsafe { output.get_unchecked_mut(i / 2..) };
         if SHORT_CIRCUIT {
-            scalar::decode(&input[i..], &mut output[i / 2..]).map_err(|e| match e {
+            scalar::decode(input_tail, output_tail).map_err(|e| match e {
                 Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
                 other => other,
             })?;
         } else {
-            if ct_scalar::decode(&input[i..], &mut output[i / 2..]).is_err() {
+            if ct_scalar::decode(input_tail, output_tail).is_err() {
                 err |= 0x80;
             }
         }
@@ -267,6 +273,7 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(input: &[u8], output: &mut [MaybeUnin
 /// On validation failure within a SIMD chunk, falls back to scalar decoding
 /// from the start of that chunk to produce the exact `InvalidChar` error with
 /// the correct byte and index.
+#[inline]
 pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     decode_inner::<true>(input, output)
 }
@@ -276,6 +283,7 @@ pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error>
 /// Accumulates error bits across all chunks and returns `Error::InvalidEncoding`
 /// at the end if any invalid character was encountered. Does not reveal the
 /// position of the invalid character.
+#[inline]
 pub fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     decode_inner::<false>(input, output)
 }
@@ -356,10 +364,11 @@ fn check_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
 
     // Tail
     if i < input.len() {
+        let input_tail = unsafe { input.get_unchecked(i..) };
         let tail_ok = if SHORT_CIRCUIT {
-            scalar::check(&input[i..])
+            scalar::check(input_tail)
         } else {
-            ct_scalar::check(&input[i..])
+            ct_scalar::check(input_tail)
         };
         all_valid &= tail_ok;
     }
@@ -368,11 +377,13 @@ fn check_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
 }
 
 /// Fast-path hex check (short-circuits on first invalid byte).
+#[inline]
 pub fn check(input: &[u8]) -> bool {
     check_inner::<true>(input)
 }
 
 /// Constant-time hex check (processes all bytes, no early return).
+#[inline]
 pub fn ct_check(input: &[u8]) -> bool {
     check_inner::<false>(input)
 }

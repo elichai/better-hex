@@ -9,12 +9,12 @@
 //!
 //! ## Dispatch order
 //!
-//! | Target          | Detection        | Priority                  |
-//! |-----------------|------------------|---------------------------|
-//! | aarch64 (NEON)  | compile-time     | baseline on aarch64       |
-//! | x86/x86_64      | runtime (std) or `cpufeatures` (no_std) | AVX-512BW > AVX2 > SSSE3 > scalar |
+//! | Target          | Detection        | Priority                        |
+//! |-----------------|------------------|---------------------------------|
+//! | aarch64 (NEON)  | compile-time     | baseline on aarch64             |
+//! | x86/x86_64      | runtime (std) or `cpufeatures` (no_std)            | AVX-512BW > AVX2 > SSSE3 > scalar |
 //! | wasm32 (SIMD128)| compile-time     | when `target_feature="simd128"` |
-//! | everything else | —                | scalar fallback           |
+//! | everything else | —                | scalar fallback                 |
 //!
 //! The inner backend functions work with `MaybeUninit<u8>` output buffers
 //! to avoid unnecessary zeroing.

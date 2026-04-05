@@ -36,10 +36,6 @@ const HEX_LOWER: [u8; 16] = *b"0123456789abcdef";
 /// Upper-case hex lookup table: nibble value 0..15 → ASCII `'0'..'F'`.
 const HEX_UPPER: [u8; 16] = *b"0123456789ABCDEF";
 
-// ---------------------------------------------------------------------------
-// Encode
-// ---------------------------------------------------------------------------
-
 /// Encode `input` bytes as hex into `output`, using SIMD128 for 16-byte chunks.
 ///
 /// After return every element of `output[..input.len() * 2]` is initialised
@@ -94,10 +90,6 @@ pub(crate) fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<
     scalar::encode::<UPPER>(&input[done..], &mut output[done * 2..]);
 }
 
-// ---------------------------------------------------------------------------
-// Decode
-// ---------------------------------------------------------------------------
-
 /// Inner decode implementation generic over short-circuit mode.
 ///
 /// When `SHORT_CIRCUIT = true` (fast path): bails out to `scalar::decode` on
@@ -123,7 +115,7 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(input: &[u8], output: &mut [MaybeUnin
         let nib0 = unsafe { v128_load(src.as_ptr().cast()) };
         let nib1 = unsafe { v128_load(src.as_ptr().add(16).cast()) };
 
-        // --- Mula–Langdale nibble decode (Algorithm #3) ---
+        //  Mula–Langdale nibble decode (Algorithm #3)
         //
         // Digit path:  for '0'..'9' → 0..9
         //   add 0xC6 (== -0x3A as u8, wrapping), saturating-sub 6, sub 0xF0
@@ -207,6 +199,7 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(input: &[u8], output: &mut [MaybeUnin
 /// # Panics (debug only)
 ///
 /// Panics if `output.len() != input.len() / 2` or `input.len()` is odd.
+#[inline]
 pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     decode_inner::<true>(input, output)
 }
@@ -214,6 +207,7 @@ pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(),
 /// Constant-time variant of [`decode`]: processes all chunks without
 /// short-circuiting on invalid input, accumulating errors across the entire
 /// input before returning.
+#[inline]
 pub(crate) fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     decode_inner::<false>(input, output)
 }
@@ -246,10 +240,6 @@ fn decode_nibbles(v: v128) -> (v128, u16) {
 
     (nibbles, err_bits)
 }
-
-// ---------------------------------------------------------------------------
-// Check
-// ---------------------------------------------------------------------------
 
 /// Inner check implementation generic over short-circuit mode.
 ///
@@ -302,6 +292,7 @@ fn check_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
 /// for 16-byte chunks.
 ///
 /// Returns `true` iff all bytes are in `[0-9a-fA-F]`.
+#[inline]
 pub(crate) fn check(input: &[u8]) -> bool {
     check_inner::<true>(input)
 }
@@ -309,6 +300,7 @@ pub(crate) fn check(input: &[u8]) -> bool {
 /// Constant-time variant of [`check`]: examines all chunks without
 /// short-circuiting, so execution time does not depend on where (or whether)
 /// invalid bytes appear.
+#[inline]
 pub(crate) fn ct_check(input: &[u8]) -> bool {
     check_inner::<false>(input)
 }
