@@ -38,7 +38,7 @@
 //!   branchless arithmetic for the `ct_scalar` backend:
 //!   <https://tobtu.com/dectobase16ct.php>
 
-#[cfg(feature = "alloc")]
+#[cfg(any(feature = "alloc", test))]
 extern crate alloc;
 
 #[cfg(feature = "std")]

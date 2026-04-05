@@ -10,7 +10,6 @@
 
 use crate::{HexStr, display::write_hex_to, error::Error, maybe_uninit, Prefix};
 use core::fmt;
-#[cfg(any(feature = "alloc", feature = "heapless", feature = "arrayvec"))]
 use core::mem::MaybeUninit;
 
 /// Trait for types that can be hex-encoded.
@@ -199,7 +198,6 @@ impl<const N: usize, P: Prefix> HexTarget for HexStr<N, P> {
     }
 }
 
-#[cfg(any(feature = "alloc", feature = "heapless", feature = "arrayvec"))]
 #[inline]
 fn to_hex_container<const UPPER: bool, C: Container>(input: &[u8]) -> Result<C, Error> {
     let hex_len = input.len() * 2;
@@ -249,7 +247,6 @@ fn from_hex_container<C: Container>(hex: &[u8]) -> Result<C, Error> {
 ///   and `false` for types that accept arbitrary bytes (e.g. `Vec<u8>`).
 ///   This is used by `from_hex_container` to reject string-typed containers
 ///   at compile time, since decoded hex output is raw bytes, not UTF-8.
-#[cfg(any(feature = "alloc", feature = "heapless", feature = "arrayvec"))]
 unsafe trait Container: Sized {
     /// `true` if `set_len` requires the written bytes to be valid UTF-8.
     const REQUIRES_UTF8: bool;
