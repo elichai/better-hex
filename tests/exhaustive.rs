@@ -93,19 +93,17 @@ fn roundtrip_all_apis() {
 
 #[test]
 fn from_hex_array_sizes() {
-    macro_rules! check {
-        ($n:expr) => {{
-            let input = make_input($n);
-            let hex: String = better_hex::encode(&input).unwrap();
-            let decoded: [u8; $n] = better_hex::decode(&hex).unwrap();
-            assert_eq!(&decoded[..], &input[..]);
-            let ct: [u8; $n] = better_hex::ct::decode_to(&hex).unwrap();
-            assert_eq!(&ct[..], &input[..]);
-        }};
+    fn check<const N: usize>() {
+        let input = make_input(N);
+        let hex: String = better_hex::encode(&input).unwrap();
+        let decoded: [u8; N] = better_hex::decode(&hex).unwrap();
+        assert_eq!(&decoded[..], &input[..]);
+        let ct: [u8; N] = better_hex::ct::decode_to(&hex).unwrap();
+        assert_eq!(&ct[..], &input[..]);
     }
-    check!(0); check!(1); check!(2); check!(4); check!(8);
-    check!(15); check!(16); check!(17); check!(31); check!(32); check!(33);
-    check!(64); check!(128); check!(255); check!(256); check!(512);
+    check::<0>(); check::<1>(); check::<2>(); check::<4>(); check::<8>();
+    check::<15>(); check::<16>(); check::<17>(); check::<31>(); check::<32>(); check::<33>();
+    check::<64>(); check::<128>(); check::<255>(); check::<256>(); check::<512>();
 }
 
 // ── HexStr<N> roundtrip — representative sizes ─────────────────────────────
@@ -113,26 +111,24 @@ fn from_hex_array_sizes() {
 #[test]
 fn hex_str_roundtrip_sizes() {
     use better_hex::{HexStr, PrefixedHexStr};
-    macro_rules! check {
-        ($n:expr) => {{
-            let input = make_input($n);
-            let arr: [u8; $n] = input.as_slice().try_into().unwrap();
-            let lower: HexStr<$n> = HexStr::encode_lower(&arr);
-            assert_eq!(lower.decode(), arr);
-            let upper: HexStr<$n> = HexStr::encode_upper(&arr);
-            assert_eq!(upper.decode(), arr);
-            // Prefixed variants
-            let p_lower: PrefixedHexStr<$n> = HexStr::encode_lower(&arr);
-            assert_eq!(p_lower.decode(), arr);
-            assert!(p_lower.as_str().starts_with("0x"));
-            let p_upper: PrefixedHexStr<$n> = HexStr::encode_upper(&arr);
-            assert_eq!(p_upper.decode(), arr);
-            assert!(p_upper.as_str().starts_with("0x"));
-        }};
+    fn check<const N: usize>() {
+        let input = make_input(N);
+        let arr: [u8; N] = input.as_slice().try_into().unwrap();
+        let lower: HexStr<N> = HexStr::encode_lower(&arr);
+        assert_eq!(lower.decode(), arr);
+        let upper: HexStr<N> = HexStr::encode_upper(&arr);
+        assert_eq!(upper.decode(), arr);
+        // Prefixed variants
+        let p_lower: PrefixedHexStr<N> = HexStr::encode_lower(&arr);
+        assert_eq!(p_lower.decode(), arr);
+        assert!(p_lower.as_str().starts_with("0x"));
+        let p_upper: PrefixedHexStr<N> = HexStr::encode_upper(&arr);
+        assert_eq!(p_upper.decode(), arr);
+        assert!(p_upper.as_str().starts_with("0x"));
     }
-    check!(0); check!(1); check!(2); check!(4); check!(8);
-    check!(15); check!(16); check!(17); check!(31); check!(32); check!(33);
-    check!(64); check!(128); check!(255); check!(256);
+    check::<0>(); check::<1>(); check::<2>(); check::<4>(); check::<8>();
+    check::<15>(); check::<16>(); check::<17>(); check::<31>(); check::<32>(); check::<33>();
+    check::<64>(); check::<128>(); check::<255>(); check::<256>();
 }
 
 // ── heapless ────────────────────────────────────────────────────────────────
