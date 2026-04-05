@@ -4,6 +4,8 @@
 //! These tests exercise exact boundaries, one below, and one above to catch
 //! off-by-one errors in the chunk/tail transition.
 
+#![cfg(feature = "alloc")]
+
 const BOUNDARY_SIZES: &[usize] = &[
     0, 1, 2, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256, 257,
 ];

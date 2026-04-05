@@ -10,6 +10,7 @@
 
 use crate::{display::write_hex_to, error::Error};
 use core::fmt;
+#[cfg(any(feature = "alloc", feature = "heapless", feature = "arrayvec"))]
 use core::mem::MaybeUninit;
 
 /// Trait for types that can be hex-encoded.
@@ -186,6 +187,7 @@ impl<const CAP: usize> HexTarget for arrayvec::ArrayString<CAP> {
     }
 }
 
+#[cfg(any(feature = "alloc", feature = "heapless", feature = "arrayvec"))]
 fn to_hex_container<const UPPER: bool, C: Container>(input: &[u8]) -> Result<C, Error> {
     let hex_len = input.len() * 2;
     let mut out = C::new(hex_len)?;
@@ -195,6 +197,7 @@ fn to_hex_container<const UPPER: bool, C: Container>(input: &[u8]) -> Result<C, 
     Ok(out)
 }
 
+#[cfg(any(feature = "alloc", feature = "heapless", feature = "arrayvec"))]
 fn from_hex_container<C: Container>(hex: &[u8]) -> Result<C, Error> {
     if !hex.len().is_multiple_of(2) {
         return Err(Error::InvalidLength {
@@ -224,6 +227,7 @@ fn from_hex_container<C: Container>(hex: &[u8]) -> Result<C, Error> {
 /// - `as_mut_slice()` returns a slice covering the full spare capacity.
 /// - After `set_len(n)`, the first `n` bytes are treated as initialized.
 ///   For string types, those bytes must be valid UTF-8.
+#[cfg(any(feature = "alloc", feature = "heapless", feature = "arrayvec"))]
 trait Container: Sized {
     /// Allocate or create a container with at least `min_capacity` bytes.
     /// Returns `Err(Error::InvalidLength)` if the capacity is insufficient
@@ -260,7 +264,6 @@ impl Container for alloc::vec::Vec<u8> {
 
 #[cfg(feature = "alloc")]
 impl Container for alloc::string::String {
-    
     fn new(min_capacity: usize) -> Result<Self, Error> {
         Ok(Self::with_capacity(min_capacity))
     }
@@ -277,7 +280,6 @@ impl Container for alloc::string::String {
 
 #[cfg(feature = "arrayvec")]
 impl<const N: usize> Container for arrayvec::ArrayVec<u8, N> {
-    
     fn new(min_capacity: usize) -> Result<Self, Error> {
         if min_capacity > N {
             return Err(Error::InvalidLength {
@@ -303,7 +305,6 @@ impl<const N: usize> Container for arrayvec::ArrayVec<u8, N> {
 
 #[cfg(feature = "arrayvec")]
 impl<const N: usize> Container for arrayvec::ArrayString<N> {
-    
     fn new(min_capacity: usize) -> Result<Self, Error> {
         if min_capacity > N {
             return Err(Error::InvalidLength {

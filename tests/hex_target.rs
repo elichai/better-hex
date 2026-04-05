@@ -1,5 +1,7 @@
 //! Tests for [`HexTarget`] trait and [`encode_to`]/[`encode_upper_to`].
 
+#![cfg(feature = "alloc")]
+
 #[test]
 fn encode_to_string_lowercase() {
     let input = [0xde, 0xad, 0xbe, 0xef];

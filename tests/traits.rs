@@ -1,5 +1,7 @@
 //! Tests for [`ToHex`] and [`FromHex`] traits.
 
+#![cfg(feature = "alloc")]
+
 use better_hex::{FromHex, ToHex};
 
 #[test]

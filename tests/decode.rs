@@ -94,23 +94,27 @@ fn decode_boundary_chars() {
 }
 
 #[test]
+#[cfg(feature = "alloc")]
 fn decode_vec() {
     let v = better_hex::decode("deadbeef").unwrap();
     assert_eq!(v, vec![0xde, 0xad, 0xbe, 0xef]);
 }
 
 #[test]
+#[cfg(feature = "alloc")]
 fn decode_vec_empty() {
     let v = better_hex::decode("").unwrap();
     assert!(v.is_empty());
 }
 
 #[test]
+#[cfg(feature = "alloc")]
 fn decode_vec_odd() {
     assert!(better_hex::decode("abc").is_err());
 }
 
 #[test]
+#[cfg(feature = "alloc")]
 fn decode_to_vec() {
     let v: Vec<u8> = better_hex::decode_to("deadbeef").unwrap();
     assert_eq!(v, vec![0xde, 0xad, 0xbe, 0xef]);
@@ -123,6 +127,7 @@ fn decode_to_array() {
 }
 
 #[test]
+#[cfg(feature = "alloc")]
 fn invalid_char_index_after_simd_chunk() {
     // 64 hex chars = 32 bytes output. Put invalid byte at position 33.
     let mut hex = better_hex::encode(&[0u8; 32]).into_bytes();
@@ -135,6 +140,7 @@ fn invalid_char_index_after_simd_chunk() {
 }
 
 #[test]
+#[cfg(feature = "alloc")]
 fn invalid_char_index_in_tail() {
     // 34 hex chars = 17 bytes output. Put invalid byte at position 33 (in the tail).
     let mut hex = better_hex::encode(&[0u8; 17]).into_bytes();
@@ -147,6 +153,7 @@ fn invalid_char_index_in_tail() {
 }
 
 #[test]
+#[cfg(feature = "alloc")]
 fn ct_decode_processes_all_bytes() {
     // Put invalid bytes at start and end — CT should process all
     let mut hex = better_hex::encode(&[0u8; 32]).into_bytes();

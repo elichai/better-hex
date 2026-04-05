@@ -3,7 +3,7 @@
 //! This test file requires `--features serde` to compile; it is skipped
 //! (via `cfg`) when the feature is not active.
 
-#![cfg(feature = "serde")]
+#![cfg(all(feature = "serde", feature = "alloc"))]
 
 use serde::{Deserialize, Serialize};
 

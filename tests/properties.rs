@@ -1,3 +1,5 @@
+#![cfg(feature = "alloc")]
+
 use proptest::prelude::*;
 
 /// Naive reference encoder — the simplest possible implementation.
