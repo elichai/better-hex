@@ -8,7 +8,7 @@
 //! - **`const fn`** — compile-time encode, decode, and validation
 //! - **Stack strings** — [`HexStr<N>`][HexStr] with zero heap allocation
 //! - **Constant-time** — branchless scalar and SIMD paths in [`ct`]
-//! - **Extensible** — [`HexTarget`][traits::HexTarget] trait for custom output types
+//! - **Extensible** — [`HexTarget`] trait for custom output types
 //!
 //! # Acknowledgments
 //!
@@ -63,18 +63,15 @@ pub mod serde_impl;
 #[doc(inline)]
 pub use serde_impl as serde;
 
-pub use decode::{check, check_raw, decode_to, decode_to_array, decode_to_slice};
+pub use decode::{check, decode, decode_to_slice};
 pub use display::{HexDisplay, display};
-pub use encode::{encode_to, encode_to_slice, encode_to_slice_upper, encode_upper_to};
+pub use encode::{encode, encode_to_slice, encode_to_slice_upper, encode_upper};
+#[cfg(feature = "alloc")]
+pub use encode::encode_string;
 pub use error::Error;
 pub use hex_str::{HexStr, const_check, const_decode_to_array};
 pub use prefix::{NoPrefix, Prefix, WithPrefix};
 pub use traits::{FromHex, HexTarget, ToHex};
-
-#[cfg(feature = "alloc")]
-pub use decode::decode;
-#[cfg(feature = "alloc")]
-pub use encode::{encode, encode_upper};
 
 /// A [`HexStr`] with a `"0x"` prefix.
 pub type PrefixedHexStr<const N: usize> = HexStr<N, WithPrefix>;

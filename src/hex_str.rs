@@ -1,3 +1,4 @@
+use bytemuck::{Pod, Zeroable};
 use crate::{
     backend,
     error::Error,
@@ -10,8 +11,8 @@ use core::{fmt, mem::MaybeUninit, ops::Deref, slice, str::FromStr};
 /// `bytemuck::bytes_of()` to obtain a byte-slice view without raw pointer casts.
 ///
 /// Not exposed publicly — `HexStr` wraps this and enforces the hex ASCII invariant.
+#[derive(Copy, Clone, Zeroable)]
 #[repr(C)]
-#[derive(Copy, Clone)]
 pub(crate) struct RawHexStr<const N: usize, P: Prefix> {
     pub(crate) prefix: P,
     pub(crate) bytes: [[u8; 2]; N],
@@ -19,8 +20,7 @@ pub(crate) struct RawHexStr<const N: usize, P: Prefix> {
 
 // SAFETY: `RawHexStr` is `repr(C)`, `P` is `Pod`, and `[[u8; 2]; N]` is all-`u8`.
 // Alignment is 1 so there is no padding.
-unsafe impl<const N: usize, P: Prefix> bytemuck::Zeroable for RawHexStr<N, P> {}
-unsafe impl<const N: usize, P: Prefix> bytemuck::Pod for RawHexStr<N, P> {}
+unsafe impl<const N: usize, P: Prefix> Pod for RawHexStr<N, P> {}
 
 /// Stack-allocated hex string for `N` input bytes.
 ///
@@ -32,7 +32,6 @@ unsafe impl<const N: usize, P: Prefix> bytemuck::Pod for RawHexStr<N, P> {}
 ///
 /// All constructors guarantee that the stored bytes are valid hex ASCII,
 /// so conversions to `&str` are always safe.
-#[repr(transparent)]
 #[derive(Copy, Clone)]
 pub struct HexStr<const N: usize, P: Prefix = NoPrefix> {
     inner: RawHexStr<N, P>,

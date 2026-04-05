@@ -14,9 +14,9 @@ const BOUNDARY_SIZES: &[usize] = &[
 fn encode_decode_roundtrip_at_boundaries() {
     for &size in BOUNDARY_SIZES {
         let input: Vec<u8> = (0..size).map(|i| (i & 0xFF) as u8).collect();
-        let hex = better_hex::encode(&input);
+        let hex: String = better_hex::encode(&input).unwrap();
         assert_eq!(hex.len(), size * 2, "encode length wrong for size {size}");
-        let decoded = better_hex::decode(&hex).unwrap();
+        let decoded: Vec<u8> = better_hex::decode(&hex).unwrap();
         assert_eq!(decoded, input, "roundtrip failed for size {size}");
     }
 }
@@ -25,7 +25,7 @@ fn encode_decode_roundtrip_at_boundaries() {
 fn encode_upper_at_boundaries() {
     for &size in BOUNDARY_SIZES {
         let input: Vec<u8> = (0..size).map(|i| (i & 0xFF) as u8).collect();
-        let hex = better_hex::encode_upper(&input);
+        let hex: String = better_hex::encode_upper(&input).unwrap();
         assert_eq!(hex.len(), size * 2);
         for b in hex.bytes() {
             assert!(
@@ -40,7 +40,7 @@ fn encode_upper_at_boundaries() {
 fn check_at_boundaries() {
     for &size in BOUNDARY_SIZES {
         let input: Vec<u8> = (0..size).map(|i| (i & 0xFF) as u8).collect();
-        let hex = better_hex::encode(&input);
+        let hex: String = better_hex::encode(&input).unwrap();
         assert!(better_hex::check(hex.as_bytes()), "check failed for size {size}");
     }
 }
@@ -52,9 +52,10 @@ fn decode_invalid_at_boundaries() {
             continue;
         }
         let input: Vec<u8> = (0..size).map(|i| (i & 0xFF) as u8).collect();
-        let mut hex = better_hex::encode(&input).into_bytes();
+        let enc: String = better_hex::encode(&input).unwrap();
+        let mut hex = enc.into_bytes();
         *hex.last_mut().unwrap() = b'G';
-        let result = better_hex::decode(&hex);
+        let result = better_hex::decode::<Vec<u8>>(&hex);
         assert!(result.is_err(), "should fail for corrupted size {size}");
     }
 }

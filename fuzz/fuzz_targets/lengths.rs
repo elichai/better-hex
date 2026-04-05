@@ -1,6 +1,6 @@
 #![no_main]
 
-use better_hex::{ct, decode_to_array, decode_to_slice, encode_to_slice, Error};
+use better_hex::{ct, decode_to_slice, encode_to_slice, Error};
 use libfuzzer_sys::arbitrary;
 use libfuzzer_sys::arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
@@ -57,7 +57,7 @@ fuzz_target!(|input: Input| {
         }
     }
 
-    //  decode_to_array::<4> with various input lengths
+    //  decode::<[u8; 4]> with various input lengths
     // correct input length for 4-byte output is 8 hex chars.
     {
         // Build an input of `out_len` bytes (we reuse output_len as input length here).
@@ -65,18 +65,18 @@ fuzz_target!(|input: Input| {
         let hex_input: Vec<u8> = (0..out_len)
             .map(|i| b"0123456789abcdef"[i % 16])
             .collect();
-        let result = decode_to_array::<4>(&hex_input);
+        let result = better_hex::decode::<[u8; 4]>(&hex_input);
         if out_len == 8 {
-            assert!(result.is_ok(), "decode_to_array::<4> failed with correct length 8");
+            assert!(result.is_ok(), "decode::<[u8; 4]> failed with correct length 8");
         } else {
             match result {
                 Err(Error::InvalidLength { expected, got }) => {
-                    assert_eq!(expected, 8, "decode_to_array expected should be 8");
-                    assert_eq!(got, out_len, "decode_to_array got mismatch");
+                    assert_eq!(expected, 8, "decode expected should be 8");
+                    assert_eq!(got, out_len, "decode got mismatch");
                 }
-                Err(e) => panic!("decode_to_array::<4> returned unexpected error: {e:?}"),
+                Err(e) => panic!("decode::<[u8; 4]> returned unexpected error: {e:?}"),
                 Ok(_) => panic!(
-                    "decode_to_array::<4> succeeded with wrong input length {out_len} (expected 8)"
+                    "decode::<[u8; 4]> succeeded with wrong input length {out_len} (expected 8)"
                 ),
             }
         }

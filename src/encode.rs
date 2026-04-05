@@ -1,8 +1,7 @@
 //! Hex encoding — public free functions.
 //!
 //! - [`encode_to_slice`] / [`encode_to_slice_upper`] — encode into a caller-provided `&mut [u8]`.
-//! - [`encode_to`] / [`encode_upper_to`] — encode into any [`HexTarget`](crate::HexTarget).
-//! - [`encode`] / [`encode_upper`] — convenience wrappers returning `String`.
+//! - [`encode`] / [`encode_upper`] — encode into any [`HexTarget`](crate::HexTarget).
 
 use crate::{backend, error::Error, maybe_uninit, traits::HexTarget};
 
@@ -39,15 +38,13 @@ pub fn encode_to_slice_upper<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&
 
 /// Encode bytes to lowercase hex into any [`HexTarget`].
 ///
-/// Enables turbofish syntax: `encode_to::<String>(&bytes)`.
-///
 /// # Examples
 ///
 /// ```rust
-/// let s: String = better_hex::encode_to(&[0xde, 0xad]).unwrap();
+/// let s: String = better_hex::encode(&[0xde, 0xad]).unwrap();
 /// assert_eq!(s, "dead");
 /// ```
-pub fn encode_to<T: HexTarget>(input: &[u8]) -> Result<T, T::Error> {
+pub fn encode<T: HexTarget>(input: &[u8]) -> Result<T, T::Error> {
     T::encode_hex(input)
 }
 
@@ -56,27 +53,25 @@ pub fn encode_to<T: HexTarget>(input: &[u8]) -> Result<T, T::Error> {
 /// # Examples
 ///
 /// ```rust
-/// let s: String = better_hex::encode_upper_to(&[0xde, 0xad]).unwrap();
+/// let s: String = better_hex::encode_upper(&[0xde, 0xad]).unwrap();
 /// assert_eq!(s, "DEAD");
 /// ```
-pub fn encode_upper_to<T: HexTarget>(input: &[u8]) -> Result<T, T::Error> {
+pub fn encode_upper<T: HexTarget>(input: &[u8]) -> Result<T, T::Error> {
     T::encode_hex_upper(input)
 }
 
 /// Encode bytes to a lowercase hex `String`.
 ///
-/// Delegates to [`HexTarget::encode_hex`] on `String`.
-#[cfg(feature = "alloc")]
-pub fn encode(input: &[u8]) -> alloc::string::String {
-    let Ok(s) = encode_to(input);
-    s
-}
-
-/// Encode bytes to an uppercase hex `String`.
+/// Convenience wrapper around [`encode`] for the common `String` case.
 ///
-/// Delegates to [`HexTarget::encode_hex_upper`] on `String`.
+/// # Examples
+///
+/// ```rust
+/// let s = better_hex::encode_string(&[0xde, 0xad]);
+/// assert_eq!(s, "dead");
+/// ```
 #[cfg(feature = "alloc")]
-pub fn encode_upper(input: &[u8]) -> alloc::string::String {
-    let Ok(s) = encode_upper_to(input);
+pub fn encode_string(input: &[u8]) -> alloc::string::String {
+    let Ok(s) = encode(input);
     s
 }

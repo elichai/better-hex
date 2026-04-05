@@ -21,7 +21,7 @@ impl sealed::Sealed for WithPrefix {}
 /// Sealed trait for hex string prefix types.
 ///
 /// Only `NoPrefix` and `WithPrefix` implement this.
-pub trait Prefix: sealed::Sealed + Pod + Copy + 'static {
+pub trait Prefix: sealed::Sealed + Pod + Zeroable + Copy + 'static {
     /// The canonical prefix value. `NoPrefix` is a ZST; `WithPrefix` is `"0x"`.
     const VALUE: Self;
 

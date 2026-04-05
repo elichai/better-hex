@@ -57,19 +57,20 @@ fn encode_every_nibble_value() {
 #[test]
 #[cfg(feature = "alloc")]
 fn encode_string() {
-    let s = better_hex::encode(&[0xde, 0xad, 0xbe, 0xef]);
+    let Ok(s) = better_hex::encode::<String>(&[0xde, 0xad, 0xbe, 0xef]);
     assert_eq!(s, "deadbeef");
 }
 
 #[test]
 #[cfg(feature = "alloc")]
 fn encode_upper_string() {
-    let s = better_hex::encode_upper(&[0xde, 0xad, 0xbe, 0xef]);
+    let Ok(s) = better_hex::encode_upper::<String>(&[0xde, 0xad, 0xbe, 0xef]);
     assert_eq!(s, "DEADBEEF");
 }
 
 #[test]
 #[cfg(feature = "alloc")]
 fn encode_empty_string() {
-    assert_eq!(better_hex::encode(&[]), "");
+    let Ok(s) = better_hex::encode::<String>(&[]);
+    assert_eq!(s, "");
 }

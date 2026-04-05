@@ -17,19 +17,20 @@ Fast hex encoding/decoding with SIMD, `const fn`, and constant-time support.
 
 ```rust
 // Encode
-let hex = better_hex::encode(b"hello");           // "68656c6c6f"
-let hex = better_hex::encode_upper(b"hello");     // "68656C6C6F"
+let hex: String = better_hex::encode(b"hello")?;       // "68656c6c6f"
+let hex: String = better_hex::encode_upper(b"hello")?;  // "68656C6C6F"
 
 // Stack-allocated, zero-copy
 use better_hex::HexStr;
 let s: HexStr<5> = HexStr::encode_lower(b"hello");
-println!("{s}");                                  // "68656c6c6f"
+println!("{s}");                                       // "68656c6c6f"
 
 // Const (compile time)
 const HEX: HexStr<5> = HexStr::const_encode_lower(b"hello");
 
 // Decode
-let bytes = better_hex::decode(b"68656c6c6f")?;
+let bytes: Vec<u8> = better_hex::decode(b"68656c6c6f")?;
+let arr: [u8; 5] = better_hex::decode(b"68656c6c6f")?;
 
 // Constant-time (for secret data)
 better_hex::ct::encode_lower(secret, &mut buf)?;

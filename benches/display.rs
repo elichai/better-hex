@@ -33,7 +33,7 @@ fn bench_display(c: &mut Criterion) {
 
         // Compare: direct encode (no fmt overhead)
         group.bench_function(BenchmarkId::new("encode_direct", size), |b| {
-            b.iter(|| better_hex::encode(black_box(bufs.next())));
+            b.iter(|| better_hex::encode::<String>(black_box(bufs.next())));
         });
     }
 

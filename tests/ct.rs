@@ -32,7 +32,22 @@ fn ct_decode_matches_fast() {
 
 #[test]
 fn ct_decode_to_array() {
-    let result: [u8; 4] = ct::decode_to_array(b"DeAdBeEf").unwrap();
+    let result: [u8; 4] = ct::decode_to(b"DeAdBeEf").unwrap();
+    assert_eq!(result, [0xde, 0xad, 0xbe, 0xef]);
+}
+
+#[test]
+fn ct_from_hex_array() {
+    use better_hex::ct::FromHex;
+    let result = <[u8; 4]>::from_hex(b"DeAdBeEf").unwrap();
+    assert_eq!(result, [0xde, 0xad, 0xbe, 0xef]);
+}
+
+#[test]
+#[cfg(feature = "alloc")]
+fn ct_from_hex_vec() {
+    use better_hex::ct::FromHex;
+    let result = Vec::<u8>::from_hex(b"deadbeef").unwrap();
     assert_eq!(result, [0xde, 0xad, 0xbe, 0xef]);
 }
 

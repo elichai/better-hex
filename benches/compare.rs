@@ -27,7 +27,7 @@ fn bench_encode_alloc(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(size as u64));
 
         group.bench_function(BenchmarkId::new("better_hex", size), |b| {
-            b.iter(|| better_hex::encode(black_box(bufs.next())));
+            b.iter(|| better_hex::encode::<String>(black_box(bufs.next())));
         });
 
         #[cfg(feature = "_bench_const_hex")]
@@ -98,7 +98,7 @@ fn bench_decode_alloc(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(size as u64));
 
         group.bench_function(BenchmarkId::new("better_hex", size), |b| {
-            b.iter(|| better_hex::decode(black_box(bufs.next())));
+            b.iter(|| better_hex::decode::<Vec<u8>>(black_box(bufs.next())));
         });
 
         // const_hex::decode accepts AsRef<[u8]>, so pass the hex bytes directly.

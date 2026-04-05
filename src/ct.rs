@@ -66,20 +66,76 @@ pub fn decode<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a [u8], Error>
     Ok(output)
 }
 
-/// Decode hex to a fixed-size byte array (constant-time).
+/// Trait for types that can be constructed from hex-encoded data
+/// using constant-time decoding.
 ///
-/// Returns [`Error::InvalidLength`] if `input.len() != 2 * N`.
-pub fn decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; N], Error> {
-    let expected = N * 2;
-    if input.len() != expected {
-        return Err(Error::InvalidLength {
-            expected,
-            got: input.len(),
-        });
+/// This is the constant-time counterpart of [`crate::FromHex`].
+///
+/// # Examples
+///
+/// ```rust
+/// use better_hex::ct::FromHex;
+///
+/// let arr = <[u8; 4]>::from_hex(b"deadbeef").unwrap();
+/// assert_eq!(arr, [0xde, 0xad, 0xbe, 0xef]);
+/// ```
+pub trait FromHex: Sized {
+    /// The error type returned on decode failure.
+    type Error;
+
+    /// Decode a hex string into `Self` using constant-time operations.
+    fn from_hex(hex: impl AsRef<[u8]>) -> Result<Self, Self::Error>;
+}
+
+impl<const N: usize> FromHex for [u8; N] {
+    type Error = Error;
+
+    fn from_hex(hex: impl AsRef<[u8]>) -> Result<Self, Self::Error> {
+        let hex = hex.as_ref();
+        let expected = N * 2;
+        if hex.len() != expected {
+            return Err(Error::InvalidLength {
+                expected,
+                got: hex.len(),
+            });
+        }
+        let mut out: [MaybeUninit<u8>; N] = maybe_uninit::uninit_array();
+        backend::ct_decode(hex, &mut out)?;
+        Ok(unsafe { maybe_uninit::transpose(out).assume_init() })
     }
-    let mut out: [MaybeUninit<u8>; N] = maybe_uninit::uninit_array();
-    backend::ct_decode(input, &mut out)?;
-    Ok(unsafe { maybe_uninit::transpose(out).assume_init() })
+}
+
+#[cfg(feature = "alloc")]
+impl FromHex for alloc::vec::Vec<u8> {
+    type Error = Error;
+
+    fn from_hex(hex: impl AsRef<[u8]>) -> Result<Self, Self::Error> {
+        let hex = hex.as_ref();
+        if !hex.len().is_multiple_of(2) {
+            return Err(Error::InvalidLength {
+                expected: hex.len() + 1,
+                got: hex.len(),
+            });
+        }
+        let out_len = hex.len() / 2;
+        let mut out = alloc::vec::Vec::with_capacity(out_len);
+        backend::ct_decode(hex, &mut out.spare_capacity_mut()[..out_len])?;
+        // SAFETY: ct_decode initialized all out_len bytes on Ok.
+        unsafe { out.set_len(out_len) };
+        Ok(out)
+    }
+}
+
+/// Decode hex into any type that implements [`FromHex`] (constant-time).
+///
+/// # Examples
+///
+/// ```rust
+/// let arr: [u8; 4] = better_hex::ct::decode_to(b"deadbeef").unwrap();
+/// assert_eq!(arr, [0xde, 0xad, 0xbe, 0xef]);
+/// ```
+pub fn decode_to<T: FromHex>(input: impl AsRef<[u8]>) -> Result<T, T::Error> {
+    T::from_hex(input)
 }
 
 /// Check if all bytes are valid hex characters (constant-time).

@@ -129,24 +129,17 @@ impl FromHexHelper for alloc::vec::Vec<u8> {
     }
 
     fn from_hex_ct<E: de::Error>(hex: &str) -> Result<Self, E> {
-        let bytes = hex.as_bytes();
-        if !bytes.len().is_multiple_of(2) {
-            return Err(de::Error::custom("hex string has odd length"));
-        }
-        let len = bytes.len() / 2;
-        let mut out = alloc::vec![0u8; len];
-        crate::ct::decode(bytes, &mut out).map_err(|e| de::Error::custom(FmtError(e)))?;
-        Ok(out)
+        crate::ct::decode_to(hex.as_bytes()).map_err(|e| de::Error::custom(FmtError(e)))
     }
 }
 
 impl<const N: usize> FromHexHelper for [u8; N] {
     fn from_hex_fast<E: de::Error>(hex: &str) -> Result<Self, E> {
-        crate::decode_to_array(hex).map_err(|e| de::Error::custom(FmtError(e)))
+        crate::decode(hex).map_err(|e| de::Error::custom(FmtError(e)))
     }
 
     fn from_hex_ct<E: de::Error>(hex: &str) -> Result<Self, E> {
-        crate::ct::decode_to_array(hex.as_bytes()).map_err(|e| de::Error::custom(FmtError(e)))
+        crate::ct::decode_to(hex.as_bytes()).map_err(|e| de::Error::custom(FmtError(e)))
     }
 }
 

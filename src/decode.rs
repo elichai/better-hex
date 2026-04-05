@@ -13,28 +13,13 @@ use crate::{backend, maybe_uninit};
 ///
 /// ```rust
 /// // Decode to Vec<u8>
-/// let bytes: Vec<u8> = better_hex::decode_to("deadbeef").unwrap();
+/// let bytes: Vec<u8> = better_hex::decode("deadbeef").unwrap();
 ///
 /// // Decode to fixed-size array
-/// let arr: [u8; 4] = better_hex::decode_to("deadbeef").unwrap();
+/// let arr: [u8; 4] = better_hex::decode("deadbeef").unwrap();
 /// ```
-pub fn decode_to<T: FromHex>(input: impl AsRef<[u8]>) -> Result<T, T::Error> {
+pub fn decode<T: FromHex>(input: impl AsRef<[u8]>) -> Result<T, T::Error> {
     T::from_hex(input)
-}
-
-/// Decode hex to a `Vec<u8>`.
-///
-/// Convenience wrapper for `decode_to::<Vec<u8>>()`.
-#[cfg(feature = "alloc")]
-pub fn decode(input: impl AsRef<[u8]>) -> Result<alloc::vec::Vec<u8>, Error> {
-    decode_to(input)
-}
-
-/// Decode hex to a fixed-size byte array.
-///
-/// Convenience wrapper for `decode_to::<[u8; N]>()`.
-pub fn decode_to_array<const N: usize>(input: impl AsRef<[u8]>) -> Result<[u8; N], Error> {
-    decode_to(input)
 }
 
 /// Decode hex `input` into a caller-provided `output` buffer.
@@ -58,14 +43,6 @@ pub fn decode_to_slice<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a [u8
 /// Check if `input` is a valid hex string (even length and all hex chars).
 pub fn check(input: &[u8]) -> bool {
     input.len().is_multiple_of(2) && backend::check(input)
-}
-
-/// Check if all bytes in `input` are valid hex ASCII characters (no length check).
-///
-/// Unlike [`check`], this does not require even length — it only validates
-/// that every byte is in `[0-9a-fA-F]`.
-pub fn check_raw(input: &[u8]) -> bool {
-    backend::check(input)
 }
 
 /// Internal: decode hex into a fixed-size array using the backend directly.

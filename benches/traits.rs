@@ -8,24 +8,19 @@ use std::hint::black_box;
 mod common;
 
 #[cfg(feature = "alloc")]
-fn bench_encode_to(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode_to");
+fn bench_encode(c: &mut Criterion) {
+    let mut group = c.benchmark_group("encode");
 
     for &size in common::BENCH_SIZES {
         let mut bufs = common::Buffers::new(size);
         group.throughput(Throughput::Bytes(size as u64));
 
-        // encode_to::<String> — zero-copy via HexTarget
+        // encode::<String> — zero-copy via HexTarget
         group.bench_function(BenchmarkId::new("hex_target_string", size), |b| {
             b.iter(|| {
-                let s: Result<String, _> = better_hex::encode_to(black_box(bufs.next()));
+                let s: Result<String, _> = better_hex::encode(black_box(bufs.next()));
                 let _ = black_box(s);
             });
-        });
-
-        // encode() — the existing alloc path
-        group.bench_function(BenchmarkId::new("encode_alloc", size), |b| {
-            b.iter(|| black_box(better_hex::encode(black_box(bufs.next()))));
         });
     }
 
@@ -33,7 +28,7 @@ fn bench_encode_to(c: &mut Criterion) {
 }
 
 #[cfg(not(feature = "alloc"))]
-fn bench_encode_to(_c: &mut Criterion) {
+fn bench_encode(_c: &mut Criterion) {
     panic!("Re-run with --features alloc");
 }
 
@@ -93,9 +88,9 @@ fn bench_serde(c: &mut Criterion) {
 }
 
 #[cfg(all(feature = "alloc", feature = "serde"))]
-criterion_group!(benches, bench_encode_to, bench_serde);
+criterion_group!(benches, bench_encode, bench_serde);
 #[cfg(all(feature = "alloc", not(feature = "serde")))]
-criterion_group!(benches, bench_encode_to);
+criterion_group!(benches, bench_encode);
 #[cfg(not(feature = "alloc"))]
-criterion_group!(benches, bench_encode_to);
+criterion_group!(benches, bench_encode);
 criterion_main!(benches);
