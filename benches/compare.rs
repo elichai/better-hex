@@ -15,18 +15,6 @@ use std::hint::black_box;
 mod common;
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-#[cfg(feature = "alloc")]
-fn make_hex_bytes(size: usize) -> Vec<u8> {
-    let input = common::make_bytes(size);
-    let mut hex = vec![0u8; size * 2];
-    better_hex::encode_to_slice(&input, &mut hex).unwrap();
-    hex
-}
-
-// ---------------------------------------------------------------------------
 // Group: encode_alloc
 // ---------------------------------------------------------------------------
 
@@ -35,26 +23,26 @@ fn bench_encode_alloc(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_alloc");
 
     for &size in common::BENCH_SIZES {
-        let input = common::make_bytes(size);
+        let mut bufs = common::Buffers::new(size);
         group.throughput(Throughput::Bytes(size as u64));
 
-        group.bench_with_input(BenchmarkId::new("better_hex", size), &input, |b, inp| {
-            b.iter(|| better_hex::encode(black_box(inp)));
+        group.bench_function(BenchmarkId::new("better_hex", size), |b| {
+            b.iter(|| better_hex::encode(black_box(bufs.next())));
         });
 
         #[cfg(feature = "_bench_const_hex")]
-        group.bench_with_input(BenchmarkId::new("const_hex", size), &input, |b, inp| {
-            b.iter(|| const_hex::encode(black_box(inp)));
+        group.bench_function(BenchmarkId::new("const_hex", size), |b| {
+            b.iter(|| const_hex::encode(black_box(bufs.next())));
         });
 
         #[cfg(feature = "_bench_faster_hex")]
-        group.bench_with_input(BenchmarkId::new("faster_hex", size), &input, |b, inp| {
-            b.iter(|| faster_hex::hex_string(black_box(inp)));
+        group.bench_function(BenchmarkId::new("faster_hex", size), |b| {
+            b.iter(|| faster_hex::hex_string(black_box(bufs.next())));
         });
 
         #[cfg(feature = "_bench_hex")]
-        group.bench_with_input(BenchmarkId::new("hex", size), &input, |b, inp| {
-            b.iter(|| hex::encode(black_box(inp)));
+        group.bench_function(BenchmarkId::new("hex", size), |b| {
+            b.iter(|| hex::encode(black_box(bufs.next())));
         });
     }
 
@@ -70,26 +58,26 @@ fn bench_encode_to_slice(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_to_slice");
 
     for &size in common::BENCH_SIZES {
-        let input = common::make_bytes(size);
+        let mut bufs = common::Buffers::new(size);
         let mut dst = vec![0u8; size * 2];
         group.throughput(Throughput::Bytes(size as u64));
 
-        group.bench_with_input(BenchmarkId::new("better_hex", size), &input, |b, inp| {
+        group.bench_function(BenchmarkId::new("better_hex", size), |b| {
             b.iter(|| {
                 // Discard the &mut str return to avoid a lifetime escape in FnMut.
-                let _ = better_hex::encode_to_slice(black_box(inp), black_box(dst.as_mut_slice()));
+                let _ = better_hex::encode_to_slice(black_box(bufs.next()), black_box(dst.as_mut_slice()));
             });
         });
 
         #[cfg(feature = "_bench_const_hex")]
-        group.bench_with_input(BenchmarkId::new("const_hex", size), &input, |b, inp| {
-            b.iter(|| const_hex::encode_to_slice(black_box(inp), black_box(dst.as_mut_slice())));
+        group.bench_function(BenchmarkId::new("const_hex", size), |b| {
+            b.iter(|| const_hex::encode_to_slice(black_box(bufs.next()), black_box(dst.as_mut_slice())));
         });
 
         #[cfg(feature = "_bench_faster_hex")]
-        group.bench_with_input(BenchmarkId::new("faster_hex", size), &input, |b, inp| {
+        group.bench_function(BenchmarkId::new("faster_hex", size), |b| {
             b.iter(|| {
-                let _ = faster_hex::hex_encode(black_box(inp), black_box(dst.as_mut_slice()));
+                let _ = faster_hex::hex_encode(black_box(bufs.next()), black_box(dst.as_mut_slice()));
             });
         });
     }
@@ -106,17 +94,17 @@ fn bench_decode_alloc(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode_alloc");
 
     for &size in common::BENCH_SIZES {
-        let hex = make_hex_bytes(size);
+        let mut bufs = common::Buffers::new_hex(size);
         group.throughput(Throughput::Bytes(size as u64));
 
-        group.bench_with_input(BenchmarkId::new("better_hex", size), &hex, |b, h| {
-            b.iter(|| better_hex::decode(black_box(h)));
+        group.bench_function(BenchmarkId::new("better_hex", size), |b| {
+            b.iter(|| better_hex::decode(black_box(bufs.next())));
         });
 
         // const_hex::decode accepts AsRef<[u8]>, so pass the hex bytes directly.
         #[cfg(feature = "_bench_const_hex")]
-        group.bench_with_input(BenchmarkId::new("const_hex", size), &hex, |b, h| {
-            b.iter(|| const_hex::decode(black_box(h.as_slice())));
+        group.bench_function(BenchmarkId::new("const_hex", size), |b| {
+            b.iter(|| const_hex::decode(black_box(bufs.next())));
         });
 
         // faster_hex::hex_decode takes (src: &[u8], dst: &mut [u8]) — no alloc variant.
@@ -124,15 +112,15 @@ fn bench_decode_alloc(c: &mut Criterion) {
         #[cfg(feature = "_bench_faster_hex")]
         {
             let mut dst = vec![0u8; size];
-            group.bench_with_input(BenchmarkId::new("faster_hex", size), &hex, |b, h| {
-                b.iter(|| faster_hex::hex_decode(black_box(h.as_slice()), black_box(dst.as_mut_slice())));
+            group.bench_function(BenchmarkId::new("faster_hex", size), |b| {
+                b.iter(|| faster_hex::hex_decode(black_box(bufs.next()), black_box(dst.as_mut_slice())));
             });
         }
 
         // hex::decode accepts AsRef<[u8]>.
         #[cfg(feature = "_bench_hex")]
-        group.bench_with_input(BenchmarkId::new("hex", size), &hex, |b, h| {
-            b.iter(|| hex::decode(black_box(h.as_slice())));
+        group.bench_function(BenchmarkId::new("hex", size), |b| {
+            b.iter(|| hex::decode(black_box(bufs.next())));
         });
     }
 
@@ -148,26 +136,26 @@ fn bench_decode_to_slice(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode_to_slice");
 
     for &size in common::BENCH_SIZES {
-        let hex = make_hex_bytes(size);
+        let mut bufs = common::Buffers::new_hex(size);
         let mut dst = vec![0u8; size];
         group.throughput(Throughput::Bytes(size as u64));
 
-        group.bench_with_input(BenchmarkId::new("better_hex", size), &hex, |b, h| {
+        group.bench_function(BenchmarkId::new("better_hex", size), |b| {
             b.iter(|| {
                 // Discard the &[u8] return to avoid a lifetime escape in FnMut.
-                let _ = better_hex::decode_to_slice(black_box(h.as_slice()), black_box(dst.as_mut_slice()));
+                let _ = better_hex::decode_to_slice(black_box(bufs.next()), black_box(dst.as_mut_slice()));
             });
         });
 
         // const_hex::decode_to_slice accepts AsRef<[u8]>.
         #[cfg(feature = "_bench_const_hex")]
-        group.bench_with_input(BenchmarkId::new("const_hex", size), &hex, |b, h| {
-            b.iter(|| const_hex::decode_to_slice(black_box(h.as_slice()), black_box(dst.as_mut_slice())));
+        group.bench_function(BenchmarkId::new("const_hex", size), |b| {
+            b.iter(|| const_hex::decode_to_slice(black_box(bufs.next()), black_box(dst.as_mut_slice())));
         });
 
         #[cfg(feature = "_bench_faster_hex")]
-        group.bench_with_input(BenchmarkId::new("faster_hex", size), &hex, |b, h| {
-            b.iter(|| faster_hex::hex_decode(black_box(h.as_slice()), black_box(dst.as_mut_slice())));
+        group.bench_function(BenchmarkId::new("faster_hex", size), |b| {
+            b.iter(|| faster_hex::hex_decode(black_box(bufs.next()), black_box(dst.as_mut_slice())));
         });
     }
 
@@ -183,19 +171,19 @@ fn bench_check(c: &mut Criterion) {
     let mut group = c.benchmark_group("check");
 
     for &size in common::BENCH_SIZES {
+        let mut bufs = common::Buffers::new_hex(size);
         // Throughput over the hex input (2× the original bytes).
-        let hex = make_hex_bytes(size);
-        let hex_len = hex.len() as u64;
+        let hex_len = (size * 2) as u64;
         group.throughput(Throughput::Bytes(hex_len));
 
-        group.bench_with_input(BenchmarkId::new("better_hex", size), &hex, |b, h| {
-            b.iter(|| better_hex::check(black_box(h.as_slice())));
+        group.bench_function(BenchmarkId::new("better_hex", size), |b| {
+            b.iter(|| better_hex::check(black_box(bufs.next())));
         });
 
         // const_hex::check accepts AsRef<[u8]>.
         #[cfg(feature = "_bench_const_hex")]
-        group.bench_with_input(BenchmarkId::new("const_hex", size), &hex, |b, h| {
-            b.iter(|| const_hex::check(black_box(h.as_slice())));
+        group.bench_function(BenchmarkId::new("const_hex", size), |b| {
+            b.iter(|| const_hex::check(black_box(bufs.next())));
         });
     }
 
@@ -211,18 +199,18 @@ fn bench_display_format(c: &mut Criterion) {
     let mut group = c.benchmark_group("display_format");
 
     for &size in common::BENCH_SIZES {
-        let input = common::make_bytes(size);
+        let mut bufs = common::Buffers::new(size);
         group.throughput(Throughput::Bytes(size as u64));
 
-        group.bench_with_input(BenchmarkId::new("better_hex", size), &input, |b, inp| {
-            b.iter(|| format!("{}", better_hex::display(black_box(inp.as_slice()))));
+        group.bench_function(BenchmarkId::new("better_hex", size), |b| {
+            b.iter(|| format!("{}", better_hex::display(black_box(bufs.next()))));
         });
 
         // Use const_hex::display so both sides go through format! + Display,
         // making this an apples-to-apples comparison of display overhead.
         #[cfg(feature = "_bench_const_hex")]
-        group.bench_with_input(BenchmarkId::new("const_hex", size), &input, |b, inp| {
-            b.iter(|| format!("{}", const_hex::display(black_box(inp.as_slice()))));
+        group.bench_function(BenchmarkId::new("const_hex", size), |b| {
+            b.iter(|| format!("{}", const_hex::display(black_box(bufs.next()))));
         });
     }
 
@@ -257,20 +245,24 @@ fn bench_serde_serialize(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("serde_serialize");
     for &size in common::BENCH_SIZES {
-        let data = common::make_bytes(size);
+        let mut bufs = common::Buffers::new(size);
         group.throughput(Throughput::Bytes(size as u64));
 
-        let bh_val = BetterHexWrap { data: data.clone() };
-        group.bench_with_input(BenchmarkId::new("better_hex", size), &bh_val, |b, val| {
-            b.iter(|| serde_json::to_string(black_box(val)).unwrap());
+        group.bench_function(BenchmarkId::new("better_hex", size), |b| {
+            b.iter(|| {
+                let val = BetterHexWrap { data: bufs.next().to_vec() };
+                serde_json::to_string(black_box(&val)).unwrap()
+            });
         });
 
         #[cfg(feature = "_bench_const_hex")]
         {
             use serde_bench::ConstHexWrap;
-            let ch_val = ConstHexWrap { data: data.clone() };
-            group.bench_with_input(BenchmarkId::new("const_hex", size), &ch_val, |b, val| {
-                b.iter(|| serde_json::to_string(black_box(val)).unwrap());
+            group.bench_function(BenchmarkId::new("const_hex", size), |b| {
+                b.iter(|| {
+                    let val = ConstHexWrap { data: bufs.next().to_vec() };
+                    serde_json::to_string(black_box(&val)).unwrap()
+                });
             });
         }
     }
@@ -284,21 +276,21 @@ fn bench_serde_deserialize(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("serde_deserialize");
     for &size in common::BENCH_SIZES {
-        let data = common::make_bytes(size);
+        let mut bufs = common::Buffers::new(size);
         group.throughput(Throughput::Bytes(size as u64));
 
         // Pre-build JSON strings outside the measurement loop.
-        let bh_json = serde_json::to_string(&BetterHexWrap { data: data.clone() }).unwrap();
-        group.bench_with_input(BenchmarkId::new("better_hex", size), &bh_json, |b, json| {
-            b.iter(|| serde_json::from_str::<BetterHexWrap>(black_box(json)).unwrap());
+        let bh_json = serde_json::to_string(&BetterHexWrap { data: bufs.next().to_vec() }).unwrap();
+        group.bench_function(BenchmarkId::new("better_hex", size), |b| {
+            b.iter(|| serde_json::from_str::<BetterHexWrap>(black_box(&bh_json)).unwrap());
         });
 
         #[cfg(feature = "_bench_const_hex")]
         {
             use serde_bench::ConstHexWrap;
-            let ch_json = serde_json::to_string(&ConstHexWrap { data: data.clone() }).unwrap();
-            group.bench_with_input(BenchmarkId::new("const_hex", size), &ch_json, |b, json| {
-                b.iter(|| serde_json::from_str::<ConstHexWrap>(black_box(json)).unwrap());
+            let ch_json = serde_json::to_string(&ConstHexWrap { data: bufs.next().to_vec() }).unwrap();
+            group.bench_function(BenchmarkId::new("const_hex", size), |b| {
+                b.iter(|| serde_json::from_str::<ConstHexWrap>(black_box(&ch_json)).unwrap());
             });
         }
     }

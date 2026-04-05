@@ -33,7 +33,7 @@ cpufeatures = "0.3"
 
 [dev-dependencies]
 bytemuck = "1"
-criterion = { version = "0.8", default-features = false }
+criterion = { version = "0.8", features = ["html_reports"] }
 proptest = { version = "1", default-features = false, features = ["std"] }
 rand_core = "0.10"
 rand_xoshiro = "0.8"

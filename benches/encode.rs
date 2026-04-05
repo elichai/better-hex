@@ -16,32 +16,32 @@ fn bench_encode(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode");
 
     for &size in common::BENCH_SIZES {
-        let input = common::make_bytes(size);
+        let mut bufs = common::Buffers::new(size);
         let mut output: Vec<MaybeUninit<u8>> = vec![MaybeUninit::uninit(); size * 2];
 
         group.throughput(Throughput::Bytes(size as u64));
 
-        group.bench_with_input(BenchmarkId::new("scalar", size), &size, |b, _| {
-            b.iter(|| scalar::encode::<false>(black_box(&input), black_box(output.as_mut_slice())))
+        group.bench_function(BenchmarkId::new("scalar", size), |b| {
+            b.iter(|| scalar::encode::<false>(black_box(bufs.next()), black_box(output.as_mut_slice())))
         });
 
-        group.bench_with_input(BenchmarkId::new("ct_scalar", size), &size, |b, _| {
-            b.iter(|| ct_scalar::encode::<false>(black_box(&input), black_box(output.as_mut_slice())))
+        group.bench_function(BenchmarkId::new("ct_scalar", size), |b| {
+            b.iter(|| ct_scalar::encode::<false>(black_box(bufs.next()), black_box(output.as_mut_slice())))
         });
 
         #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
-        group.bench_with_input(BenchmarkId::new("neon", size), &size, |b, _| {
+        group.bench_function(BenchmarkId::new("neon", size), |b| {
             b.iter(|| {
-                better_hex::bench_internals::neon::encode::<false>(black_box(&input), black_box(output.as_mut_slice()))
+                better_hex::bench_internals::neon::encode::<false>(black_box(bufs.next()), black_box(output.as_mut_slice()))
             })
         });
 
-        group.bench_with_input(BenchmarkId::new("dispatched", size), &size, |b, _| {
-            b.iter(|| dispatched_encode::<false>(black_box(&input), black_box(output.as_mut_slice())))
+        group.bench_function(BenchmarkId::new("dispatched", size), |b| {
+            b.iter(|| dispatched_encode::<false>(black_box(bufs.next()), black_box(output.as_mut_slice())))
         });
 
-        group.bench_with_input(BenchmarkId::new("dispatched_ct", size), &size, |b, _| {
-            b.iter(|| dispatched_ct_encode::<false>(black_box(&input), black_box(output.as_mut_slice())))
+        group.bench_function(BenchmarkId::new("dispatched_ct", size), |b| {
+            b.iter(|| dispatched_ct_encode::<false>(black_box(bufs.next()), black_box(output.as_mut_slice())))
         });
     }
 
