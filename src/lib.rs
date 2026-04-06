@@ -52,9 +52,9 @@ mod encode;
 mod error;
 mod hex_str;
 mod maybe_uninit;
+mod platform;
 mod prefix;
 mod traits;
-mod platform;
 
 #[cfg(feature = "serde")]
 #[doc(hidden)]
@@ -66,9 +66,9 @@ pub use serde_impl as serde;
 
 pub use decode::{check, decode, decode_to_slice};
 pub use display::{HexDisplay, display};
-pub use encode::{encode, encode_to_slice, encode_to_slice_upper, encode_upper};
 #[cfg(feature = "alloc")]
 pub use encode::encode_string;
+pub use encode::{encode, encode_to_slice, encode_to_slice_upper, encode_upper};
 pub use error::Error;
 pub use hex_str::{HexStr, const_check, const_decode_to_array};
 pub use prefix::{NoPrefix, Prefix, WithPrefix};

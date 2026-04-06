@@ -14,25 +14,22 @@ serde = ["dep:serde"]
 heapless = ["dep:heapless"]
 arrayvec = ["dep:arrayvec"]
 _bench_internals = []
-_bench_const_hex = ["dep:const-hex"]
-_bench_faster_hex = ["dep:faster-hex"]
-_bench_hex = ["dep:hex"]
+_bench_const_hex = []
+_bench_faster_hex = []
+_bench_hex = []
 
 [dependencies]
-bytemuck = { version = "1", features = ["derive", "min_const_generics"] }
+zerocopy = { version = "0.8", features = ["derive"] }
 cfg-if = "1"
 serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 heapless = { version = "0.9", default-features = false, optional = true }
 arrayvec = { version = "0.7", default-features = false, optional = true }
-const-hex = { version = "1", optional = true, features = ["serde"] }
-faster-hex = { version = "0.10", optional = true, default-features = false, features = ["alloc"] }
-hex = { version = "0.4", optional = true }
 
 [target.'cfg(any(target_arch = "x86", target_arch = "x86_64"))'.dependencies]
 cpufeatures = "0.3"
 
 [dev-dependencies]
-bytemuck = "1"
+zerocopy = { version = "0.8", features = ["derive"] }
 criterion = { version = "0.8", features = ["html_reports"] }
 proptest = { version = "1", default-features = false, features = ["std"] }
 rand_core = "0.10"
@@ -40,6 +37,9 @@ rand_xoshiro = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_test = "1"
+const-hex = { version = "1", features = ["serde"] }
+faster-hex = { version = "0.10", default-features = false, features = ["alloc"] }
+hex = "0.4"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 proptest = "1"

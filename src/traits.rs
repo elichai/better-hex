@@ -8,7 +8,7 @@
 //! from hex strings — including `Vec<u8>`, `[u8; N]`, `heapless::Vec`, and
 //! `arrayvec::ArrayVec`.
 
-use crate::{HexStr, display::write_hex_to, error::Error, maybe_uninit, Prefix};
+use crate::{HexStr, Prefix, display::write_hex_to, error::Error, maybe_uninit};
 use core::fmt;
 use core::mem::MaybeUninit;
 
@@ -155,10 +155,10 @@ impl HexTarget for alloc::string::String {
     type Error = core::convert::Infallible;
     fn encode_hex(bytes: &[u8]) -> Result<Self, Self::Error> {
         // String::new() never fails, so unwrap is safe.
-        Ok(to_hex_container::<false, Self>(bytes).unwrap())
+        Ok(to_hex_container::<false, Self>(bytes).expect("Should never fail"))
     }
     fn encode_hex_upper(bytes: &[u8]) -> Result<Self, Self::Error> {
-        Ok(to_hex_container::<true, Self>(bytes).unwrap())
+        Ok(to_hex_container::<true, Self>(bytes).expect("Should never fail"))
     }
 }
 
@@ -213,7 +213,12 @@ fn to_hex_container<const UPPER: bool, C: Container>(input: &[u8]) -> Result<C, 
 #[cfg(any(feature = "alloc", feature = "heapless", feature = "arrayvec"))]
 #[inline]
 fn from_hex_container<C: Container>(hex: &[u8]) -> Result<C, Error> {
-    const { assert!(!C::REQUIRES_UTF8, "from_hex_container writes raw decoded bytes, not valid UTF-8; use only with byte containers") }
+    const {
+        assert!(
+            !C::REQUIRES_UTF8,
+            "from_hex_container writes raw decoded bytes, not valid UTF-8; use only with byte containers"
+        )
+    }
     if !hex.len().is_multiple_of(2) {
         return Err(Error::InvalidLength {
             expected: hex.len() + 1,
@@ -443,7 +448,7 @@ unsafe impl<const N: usize> Container for heapless::String<N> {
 
 unsafe impl<const N: usize, P: Prefix> Container for HexStr<N, P> {
     const REQUIRES_UTF8: bool = true;
-    type Handle = MaybeUninit::<crate::hex_str::RawHexStr<N, P>>;
+    type Handle = MaybeUninit<crate::hex_str::RawHexStr<N, P>>;
     #[inline]
     fn new(min_capacity: usize) -> Result<Self::Handle, Error> {
         if min_capacity != N * 2 {
@@ -461,16 +466,20 @@ unsafe impl<const N: usize, P: Prefix> Container for HexStr<N, P> {
     }
     #[inline]
     fn as_mut_slice(handle: &mut Self::Handle) -> &mut [MaybeUninit<u8>] {
-       let bytes = maybe_uninit::as_bytes_mut(handle);
-       &mut bytes[P::LEN..]
+        let bytes = maybe_uninit::as_bytes_mut(handle);
+        &mut bytes[P::LEN..]
     }
     #[inline]
     unsafe fn set_len(handle: Self::Handle, new_len: usize) -> Self {
-        debug_assert_eq!(new_len, N * 2, "set_len receives hex content length, not total length with prefix");
+        debug_assert_eq!(
+            new_len,
+            N * 2,
+            "set_len receives hex content length, not total length with prefix"
+        );
         // SAFETY: prefix was initialized in new(), hex content (new_len bytes)
         // was initialized by the caller — the full RawHexStr is now init.
         Self {
-            inner: unsafe { handle.assume_init() }
+            inner: unsafe { handle.assume_init() },
         }
     }
 }

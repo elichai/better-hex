@@ -3,27 +3,44 @@
 #![cfg(feature = "alloc")]
 
 use better_hex::{FromHex, HexTarget, ToHex};
-use core::fmt::Write;
+use rand_core::{Rng, SeedableRng};
+use rand_xoshiro::Xoshiro256PlusPlus;
 
 const MAX: usize = 512;
 
 /// Deterministic test input for a given size.
 fn make_input(size: usize) -> Vec<u8> {
-    (0..size).map(|i| ((i as u8).wrapping_mul(37)).wrapping_add(11)).collect()
+    (0..size)
+        .map(|i| ((i as u8).wrapping_mul(37)).wrapping_add(11))
+        .collect()
 }
 
 // ── Core roundtrips (encode/decode, CT, check, traits, display) ─────────────
 
 #[test]
 fn roundtrip_all_apis() {
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
+    let mut input = Vec::with_capacity(MAX);
+    let mut hex_buf = Vec::with_capacity(MAX * 2);
+    let mut dec_buf = Vec::with_capacity(MAX);
+    let mut str_buf = String::with_capacity(MAX * 2);
     for size in 0..=MAX {
-        let input = make_input(size);
         let hex_len = size * 2;
+        input.clear();
+        input.resize(size, 0);
+        rng.fill_bytes(&mut input);
+        let input = input.as_slice();
+
+        hex_buf.clear();
+        hex_buf.resize(hex_len, 0);
+
+        dec_buf.clear();
+        dec_buf.resize(size, 0);
+
+        str_buf.clear();
 
         // encode_to_slice / decode_to_slice — lower
-        let mut hex_buf = vec![0u8; hex_len];
         better_hex::encode_to_slice(&input, &mut hex_buf).unwrap();
-        let mut dec_buf = vec![0u8; size];
         better_hex::decode_to_slice(&hex_buf, &mut dec_buf).unwrap();
         assert_eq!(dec_buf, input, "slice roundtrip (lower) failed at size {size}");
 
@@ -39,15 +56,13 @@ fn roundtrip_all_apis() {
         assert_eq!(decoded, input, "String/Vec roundtrip failed at size {size}");
 
         // CT encode/decode — lower and upper
-        let mut ct_hex = vec![0u8; hex_len];
-        better_hex::ct::encode_lower(&input, &mut ct_hex).unwrap();
-        let mut ct_dec = vec![0u8; size];
-        better_hex::ct::decode(&ct_hex, &mut ct_dec).unwrap();
-        assert_eq!(ct_dec, input, "CT lower roundtrip failed at size {size}");
+        better_hex::ct::encode_lower(&input, &mut hex_buf).unwrap();
+        better_hex::ct::decode(&hex_buf, &mut dec_buf).unwrap();
+        assert_eq!(dec_buf, input, "CT lower roundtrip failed at size {size}");
 
-        better_hex::ct::encode_upper(&input, &mut ct_hex).unwrap();
-        better_hex::ct::decode(&ct_hex, &mut ct_dec).unwrap();
-        assert_eq!(ct_dec, input, "CT upper roundtrip failed at size {size}");
+        better_hex::ct::encode_upper(&input, &mut hex_buf).unwrap();
+        better_hex::ct::decode(&hex_buf, &mut dec_buf).unwrap();
+        assert_eq!(dec_buf, input, "CT upper roundtrip failed at size {size}");
 
         // check / ct::check
         assert!(better_hex::check(hex.as_bytes()), "check failed at size {size}");
@@ -62,16 +77,15 @@ fn roundtrip_all_apis() {
         // ToHex — write_hex + encode_hex (lower and upper)
         let expected_upper: String = better_hex::encode_upper(&input).unwrap();
 
-        let mut buf = String::new();
-        input.as_slice().write_hex(&mut buf, false).unwrap();
-        assert_eq!(buf, hex, "write_hex lower at size {size}");
-        buf.clear();
-        input.as_slice().write_hex(&mut buf, true).unwrap();
-        assert_eq!(buf, expected_upper, "write_hex upper at size {size}");
+        input.write_hex(&mut str_buf, false).unwrap();
+        assert_eq!(str_buf, hex, "write_hex lower at size {size}");
+        str_buf.clear();
+        input.write_hex(&mut str_buf, true).unwrap();
+        assert_eq!(str_buf, expected_upper, "write_hex upper at size {size}");
 
-        let trait_lower: String = input.as_slice().encode_hex().unwrap();
+        let trait_lower: String = input.encode_hex().unwrap();
         assert_eq!(trait_lower, hex, "encode_hex at size {size}");
-        let trait_upper: String = input.as_slice().encode_hex_upper().unwrap();
+        let trait_upper: String = input.encode_hex_upper().unwrap();
         assert_eq!(trait_upper, expected_upper, "encode_hex_upper at size {size}");
 
         // HexTarget for String (lower + upper)
@@ -85,7 +99,10 @@ fn roundtrip_all_apis() {
         assert_eq!(format!("{:x}", better_hex::display(&input)), hex);
         assert_eq!(format!("{:X}", better_hex::display(&input)), expected_upper);
         assert_eq!(format!("{:#x}", better_hex::display(&input)), format!("0x{hex}"));
-        assert_eq!(format!("{:#X}", better_hex::display(&input)), format!("0x{expected_upper}"));
+        assert_eq!(
+            format!("{:#X}", better_hex::display(&input)),
+            format!("0x{expected_upper}")
+        );
     }
 }
 
@@ -101,9 +118,22 @@ fn from_hex_array_sizes() {
         let ct: [u8; N] = better_hex::ct::decode_to(&hex).unwrap();
         assert_eq!(&ct[..], &input[..]);
     }
-    check::<0>(); check::<1>(); check::<2>(); check::<4>(); check::<8>();
-    check::<15>(); check::<16>(); check::<17>(); check::<31>(); check::<32>(); check::<33>();
-    check::<64>(); check::<128>(); check::<255>(); check::<256>(); check::<512>();
+    check::<0>();
+    check::<1>();
+    check::<2>();
+    check::<4>();
+    check::<8>();
+    check::<15>();
+    check::<16>();
+    check::<17>();
+    check::<31>();
+    check::<32>();
+    check::<33>();
+    check::<64>();
+    check::<128>();
+    check::<255>();
+    check::<256>();
+    check::<512>();
 }
 
 // ── HexStr<N> roundtrip — representative sizes ─────────────────────────────
@@ -126,9 +156,21 @@ fn hex_str_roundtrip_sizes() {
         assert_eq!(p_upper.decode(), arr);
         assert!(p_upper.as_str().starts_with("0x"));
     }
-    check::<0>(); check::<1>(); check::<2>(); check::<4>(); check::<8>();
-    check::<15>(); check::<16>(); check::<17>(); check::<31>(); check::<32>(); check::<33>();
-    check::<64>(); check::<128>(); check::<255>(); check::<256>();
+    check::<0>();
+    check::<1>();
+    check::<2>();
+    check::<4>();
+    check::<8>();
+    check::<15>();
+    check::<16>();
+    check::<17>();
+    check::<31>();
+    check::<32>();
+    check::<33>();
+    check::<64>();
+    check::<128>();
+    check::<255>();
+    check::<256>();
 }
 
 // ── heapless ────────────────────────────────────────────────────────────────
@@ -179,10 +221,16 @@ mod serde_exhaustive {
                 use super::*;
 
                 #[derive(Serialize, Deserialize, Debug, PartialEq)]
-                pub(super) struct V { #[serde(with = $path)] pub data: Vec<u8> }
+                pub(super) struct V {
+                    #[serde(with = $path)]
+                    pub data: Vec<u8>,
+                }
 
                 #[derive(Serialize, Deserialize, Debug, PartialEq)]
-                pub(super) struct A<const N: usize> { #[serde(with = $path)] pub data: [u8; N] }
+                pub(super) struct A<const N: usize> {
+                    #[serde(with = $path)]
+                    pub data: [u8; N],
+                }
 
                 #[test]
                 fn vec_roundtrip() {
@@ -207,9 +255,15 @@ mod serde_exhaustive {
 
                 #[test]
                 fn array_roundtrip() {
-                    check_arr::<0>(); check_arr::<1>(); check_arr::<4>();
-                    check_arr::<16>(); check_arr::<32>(); check_arr::<64>();
-                    check_arr::<128>(); check_arr::<255>(); check_arr::<256>();
+                    check_arr::<0>();
+                    check_arr::<1>();
+                    check_arr::<4>();
+                    check_arr::<16>();
+                    check_arr::<32>();
+                    check_arr::<64>();
+                    check_arr::<128>();
+                    check_arr::<255>();
+                    check_arr::<256>();
                 }
             }
         };
@@ -230,17 +284,62 @@ mod serde_exhaustive {
         use serde_test::{Token, assert_tokens};
 
         fn tokens(hex: &'static str) -> [Token; 4] {
-            [Token::Struct { name: "A", len: 1 }, Token::Str("data"), Token::Str(hex), Token::StructEnd]
+            [
+                Token::Struct { name: "A", len: 1 },
+                Token::Str("data"),
+                Token::Str(hex),
+                Token::StructEnd,
+            ]
         }
 
-        assert_tokens(&fast::A { data: [0xde, 0xad, 0xbe, 0xef] }, &tokens("deadbeef"));
-        assert_tokens(&upper::A { data: [0xde, 0xad, 0xbe, 0xef] }, &tokens("DEADBEEF"));
-        assert_tokens(&prefixed::A { data: [0xde, 0xad, 0xbe, 0xef] }, &tokens("0xdeadbeef"));
-        assert_tokens(&upper_prefixed::A { data: [0xde, 0xad, 0xbe, 0xef] }, &tokens("0xDEADBEEF"));
-        assert_tokens(&ct::A { data: [0xde, 0xad, 0xbe, 0xef] }, &tokens("deadbeef"));
-        assert_tokens(&ct_upper::A { data: [0xde, 0xad, 0xbe, 0xef] }, &tokens("DEADBEEF"));
-        assert_tokens(&ct_prefixed::A { data: [0xde, 0xad, 0xbe, 0xef] }, &tokens("0xdeadbeef"));
-        assert_tokens(&ct_upper_prefixed::A { data: [0xde, 0xad, 0xbe, 0xef] }, &tokens("0xDEADBEEF"));
+        assert_tokens(
+            &fast::A {
+                data: [0xde, 0xad, 0xbe, 0xef],
+            },
+            &tokens("deadbeef"),
+        );
+        assert_tokens(
+            &upper::A {
+                data: [0xde, 0xad, 0xbe, 0xef],
+            },
+            &tokens("DEADBEEF"),
+        );
+        assert_tokens(
+            &prefixed::A {
+                data: [0xde, 0xad, 0xbe, 0xef],
+            },
+            &tokens("0xdeadbeef"),
+        );
+        assert_tokens(
+            &upper_prefixed::A {
+                data: [0xde, 0xad, 0xbe, 0xef],
+            },
+            &tokens("0xDEADBEEF"),
+        );
+        assert_tokens(
+            &ct::A {
+                data: [0xde, 0xad, 0xbe, 0xef],
+            },
+            &tokens("deadbeef"),
+        );
+        assert_tokens(
+            &ct_upper::A {
+                data: [0xde, 0xad, 0xbe, 0xef],
+            },
+            &tokens("DEADBEEF"),
+        );
+        assert_tokens(
+            &ct_prefixed::A {
+                data: [0xde, 0xad, 0xbe, 0xef],
+            },
+            &tokens("0xdeadbeef"),
+        );
+        assert_tokens(
+            &ct_upper_prefixed::A {
+                data: [0xde, 0xad, 0xbe, 0xef],
+            },
+            &tokens("0xDEADBEEF"),
+        );
 
         // Also verify empty arrays
         assert_tokens(&fast::A { data: [0u8; 0] }, &tokens(""));

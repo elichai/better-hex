@@ -2,7 +2,7 @@
 //! error display/variants, invalid-input handling, HexStr type properties,
 //! const fns, display formatting, prefix types, container overflow, serde errors.
 
-use better_hex::{Error, HexStr, NoPrefix, PrefixedHexStr, Prefix, WithPrefix};
+use better_hex::{Error, HexStr, NoPrefix, Prefix, PrefixedHexStr, WithPrefix};
 
 // ── Error types ─────────────────────────────────────────────────────────────
 
@@ -29,7 +29,7 @@ fn prefix_type_properties() {
     assert_eq!(NoPrefix::LEN, 0);
     assert_eq!(core::mem::size_of::<WithPrefix>(), 2);
     assert_eq!(WithPrefix::LEN, 2);
-    assert_eq!(bytemuck::bytes_of(&WithPrefix::VALUE), b"0x");
+    assert_eq!(zerocopy::IntoBytes::as_bytes(&WithPrefix::VALUE), b"0x");
 }
 
 // ── Invalid-input handling ──────────────────────────────────────────────────
@@ -38,7 +38,10 @@ fn prefix_type_properties() {
 fn decode_error_paths() {
     // Odd length
     let mut out = [0u8; 1];
-    assert!(matches!(better_hex::decode_to_slice(b"abc", &mut out), Err(Error::InvalidLength { .. })));
+    assert!(matches!(
+        better_hex::decode_to_slice(b"abc", &mut out),
+        Err(Error::InvalidLength { .. })
+    ));
 
     // Invalid char position
     let mut out = [0u8; 2];
@@ -49,7 +52,10 @@ fn decode_error_paths() {
 
     // Wrong output size
     let mut out = [0u8; 3];
-    assert!(matches!(better_hex::decode_to_slice(b"aabb", &mut out), Err(Error::InvalidLength { .. })));
+    assert!(matches!(
+        better_hex::decode_to_slice(b"aabb", &mut out),
+        Err(Error::InvalidLength { .. })
+    ));
 
     // Boundary chars just outside valid hex ranges
     for &byte in &[b'/', b':', b'@', b'G', b'`', b'g'] {
@@ -72,7 +78,10 @@ fn decode_error_paths() {
 fn ct_error_paths() {
     // CT decode returns InvalidEncoding, never InvalidChar
     let mut out = [0u8; 2];
-    assert_eq!(better_hex::ct::decode(b"abGH", &mut out).unwrap_err(), Error::InvalidEncoding);
+    assert_eq!(
+        better_hex::ct::decode(b"abGH", &mut out).unwrap_err(),
+        Error::InvalidEncoding
+    );
 
     // CT processes all bytes (invalid at start and end → same error)
     let mut hex = better_hex::encode_string(&[0u8; 32]);
@@ -80,7 +89,10 @@ fn ct_error_paths() {
     bytes[0] = b'Z';
     bytes[63] = b'Z';
     let mut out = [0u8; 32];
-    assert_eq!(better_hex::ct::decode(bytes, &mut out).unwrap_err(), Error::InvalidEncoding);
+    assert_eq!(
+        better_hex::ct::decode(bytes, &mut out).unwrap_err(),
+        Error::InvalidEncoding
+    );
 
     // CT check
     assert!(better_hex::ct::check(b"deadbeef"));
@@ -140,8 +152,14 @@ fn hex_str_type_properties() {
     // FromStr
     let parsed: HexStr<4> = "deadbeef".parse().unwrap();
     assert_eq!(parsed.decode(), [0xde, 0xad, 0xbe, 0xef]);
-    assert!(matches!("deadbeeG".parse::<HexStr<4>>(), Err(Error::InvalidChar { .. })));
-    assert!(matches!("deadbe".parse::<HexStr<4>>(), Err(Error::InvalidLength { .. })));
+    assert!(matches!(
+        "deadbeeG".parse::<HexStr<4>>(),
+        Err(Error::InvalidChar { .. })
+    ));
+    assert!(matches!(
+        "deadbe".parse::<HexStr<4>>(),
+        Err(Error::InvalidLength { .. })
+    ));
 
     // Prefixed roundtrip
     let input = [0xca, 0xfe, 0xba, 0xbe];
@@ -183,12 +201,14 @@ fn hex_str_const_fns() {
     assert_eq!(UPPER.as_str(), "DEADBEEF");
 
     const BYTES: [u8; 4] = match better_hex::const_decode_to_array(b"deadbeef") {
-        Ok(b) => b, Err(_) => panic!(),
+        Ok(b) => b,
+        Err(_) => panic!(),
     };
     assert_eq!(BYTES, [0xde, 0xad, 0xbe, 0xef]);
 
     const UPPER_DEC: [u8; 2] = match better_hex::const_decode_to_array(b"ABCD") {
-        Ok(b) => b, Err(_) => panic!(),
+        Ok(b) => b,
+        Err(_) => panic!(),
     };
     assert_eq!(UPPER_DEC, [0xab, 0xcd]);
 
@@ -265,12 +285,36 @@ fn arrayvec_oversized_container_ok() {
 fn serde_error_paths() {
     use serde::{Deserialize, Serialize};
 
-    #[derive(Serialize, Deserialize, Debug)] struct W { #[serde(with = "better_hex::serde")] data: Vec<u8> }
-    #[derive(Serialize, Deserialize, Debug)] struct A { #[serde(with = "better_hex::serde")] data: [u8; 4] }
-    #[derive(Serialize, Deserialize, Debug)] struct P { #[serde(with = "better_hex::serde::prefixed")] data: Vec<u8> }
-    #[derive(Serialize, Deserialize, Debug)] struct C { #[serde(with = "better_hex::serde::ct")] data: [u8; 4] }
-    #[derive(Serialize, Deserialize, Debug)] struct CP { #[serde(with = "better_hex::serde::ct::prefixed")] data: [u8; 4] }
-    #[derive(Serialize, Deserialize, Debug)] struct CUP { #[serde(with = "better_hex::serde::ct::upper_prefixed")] data: [u8; 4] }
+    #[derive(Serialize, Deserialize, Debug)]
+    struct W {
+        #[serde(with = "better_hex::serde")]
+        data: Vec<u8>,
+    }
+    #[derive(Serialize, Deserialize, Debug)]
+    struct A {
+        #[serde(with = "better_hex::serde")]
+        data: [u8; 4],
+    }
+    #[derive(Serialize, Deserialize, Debug)]
+    struct P {
+        #[serde(with = "better_hex::serde::prefixed")]
+        data: Vec<u8>,
+    }
+    #[derive(Serialize, Deserialize, Debug)]
+    struct C {
+        #[serde(with = "better_hex::serde::ct")]
+        data: [u8; 4],
+    }
+    #[derive(Serialize, Deserialize, Debug)]
+    struct CP {
+        #[serde(with = "better_hex::serde::ct::prefixed")]
+        data: [u8; 4],
+    }
+    #[derive(Serialize, Deserialize, Debug)]
+    struct CUP {
+        #[serde(with = "better_hex::serde::ct::upper_prefixed")]
+        data: [u8; 4],
+    }
 
     // Invalid hex / odd length / wrong array length
     assert!(serde_json::from_str::<W>(r#"{"data":"ZZZZ"}"#).is_err());
@@ -282,10 +326,30 @@ fn serde_error_paths() {
     assert!(serde_json::from_str::<CUP>(r#"{"data":"0xdeadbeefaa"}"#).is_err());
 
     // Wrong JSON type → expecting() message
-    assert!(serde_json::from_str::<W>(r#"{"data":42}"#).unwrap_err().to_string().contains("hex string"));
-    assert!(serde_json::from_str::<P>(r#"{"data":42}"#).unwrap_err().to_string().contains("0x"));
-    assert!(serde_json::from_str::<C>(r#"{"data":42}"#).unwrap_err().to_string().contains("hex string"));
-    assert!(serde_json::from_str::<CP>(r#"{"data":42}"#).unwrap_err().to_string().contains("0x"));
+    assert!(
+        serde_json::from_str::<W>(r#"{"data":42}"#)
+            .unwrap_err()
+            .to_string()
+            .contains("hex string")
+    );
+    assert!(
+        serde_json::from_str::<P>(r#"{"data":42}"#)
+            .unwrap_err()
+            .to_string()
+            .contains("0x")
+    );
+    assert!(
+        serde_json::from_str::<C>(r#"{"data":42}"#)
+            .unwrap_err()
+            .to_string()
+            .contains("hex string")
+    );
+    assert!(
+        serde_json::from_str::<CP>(r#"{"data":42}"#)
+            .unwrap_err()
+            .to_string()
+            .contains("0x")
+    );
 
     // Uppercase input accepted by lowercase module
     let decoded: W = serde_json::from_str(r#"{"data":"DEADBEEF"}"#).unwrap();

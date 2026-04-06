@@ -1,23 +1,21 @@
-use bytemuck::{Pod, Zeroable};
 use crate::{
-    HexTarget, backend, error::Error, maybe_uninit, prefix::{NoPrefix, Prefix}
+    HexTarget, backend,
+    error::Error,
+    maybe_uninit,
+    prefix::{NoPrefix, Prefix},
 };
-use core::{fmt, mem::MaybeUninit, ops::Deref, slice, str::FromStr};
+use core::{fmt, mem::MaybeUninit, ops::Deref, str::FromStr};
+use zerocopy::{FromBytes, Immutable, IntoBytes};
 
-/// Raw storage for [`HexStr`]. Implements [`Pod`](bytemuck::Pod) so we can use
-/// `bytemuck::bytes_of()` to obtain a byte-slice view without raw pointer casts.
+/// Raw storage for [`HexStr`].
 ///
 /// Not exposed publicly — `HexStr` wraps this and enforces the hex ASCII invariant.
-#[derive(Copy, Clone, Zeroable)]
+#[derive(Copy, Clone, IntoBytes, Immutable)]
 #[repr(C)]
 pub(crate) struct RawHexStr<const N: usize, P: Prefix> {
     pub(crate) prefix: P,
     pub(crate) bytes: [[u8; 2]; N],
 }
-
-// SAFETY: `RawHexStr` is `repr(C)`, `P` is `Pod`, and `[[u8; 2]; N]` is all-`u8`.
-// Alignment is 1 so there is no padding.
-unsafe impl<const N: usize, P: Prefix> Pod for RawHexStr<N, P> {}
 
 /// Stack-allocated hex string for `N` input bytes.
 ///
@@ -80,7 +78,6 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
         }
     }
 
-
     /// Construct a `HexStr` from a hex byte array.
     ///
     /// `M` must equal `N * 2` (enforced at compile time). Returns `None` if
@@ -106,11 +103,13 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     /// characters.
     pub const unsafe fn from_hex_unchecked<const M: usize>(hex: [u8; M]) -> Self {
         const { assert!(M == N * 2, "hex input length must equal N * 2") };
+        // SAFETY: The caller must uphold the invariant that all bytes are valid
+        // hex ASCII. The transmute is sound because [u8; M] and [[u8; 2]; N]
+        // have identical layout when M == N * 2 (const-asserted above).
         Self {
             inner: RawHexStr {
                 prefix: P::VALUE,
-                // SAFETY: We've const asserted that the length is correct, and the caller must uphold the invariant that all bytes are valid hex ASCII.
-                bytes: unsafe { core::mem::transmute_copy(&hex) },
+                bytes: *zerocopy::transmute_ref!(&hex),
             },
         }
     }
@@ -120,43 +119,26 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     /// `M` must equal `N * 2` (enforced at compile time). Returns `None` if
     /// any byte is not valid hex ASCII.
     pub const fn const_from_hex<const M: usize>(hex: [u8; M]) -> Option<Self> {
-        const {
-            assert!(M == N * 2, "hex input length must equal N * 2")
-         };
+        const { assert!(M == N * 2, "hex input length must equal N * 2") };
         if !const_check(&hex) {
             return None;
         }
         // SAFETY: We've const asserted that the bytes are valid hex ASCII, so this constructor's invariant is upheld.
-        Some(unsafe {
-            Self::from_hex_unchecked(hex)
-        })
-    }
-
-    /// Internal: construct from a validated hex slice (dynamically sized).
-    ///
-    /// The caller must guarantee that `hex_input` is exactly `N * 2` bytes of
-    /// valid hex ASCII.
-    fn from_validated_hex(hex_input: &[u8]) -> Self {
-        debug_assert_eq!(hex_input.len(), N * 2);
-        debug_assert!(crate::check(hex_input), "from_validated_hex: input is not valid hex");
-        let casted: &[[u8; 2]] = bytemuck::cast_slice(hex_input);
-        Self {
-            inner: RawHexStr {
-                prefix: P::VALUE,
-                bytes: casted.try_into().expect("from_validated_hex: slice with incorrect length"),
-            },
-        }
+        Some(unsafe { Self::from_hex_unchecked(hex) })
     }
 
     /// View the full string as a byte slice (includes prefix when present).
-    ///
-    /// Uses `bytemuck::bytes_of` on the inner `repr(C)` storage, so no raw
-    /// pointer arithmetic is needed.
     pub fn as_bytes(&self) -> &[u8] {
-        const {assert!(core::mem::size_of::<RawHexStr<N, P>>() == Self::LEN)};
-        let res = bytemuck::bytes_of(&self.inner);
+        const { assert!(core::mem::size_of::<RawHexStr<N, P>>() == Self::LEN) };
+        let res = IntoBytes::as_bytes(&self.inner);
         debug_assert_eq!(res.len(), Self::LEN);
         res
+    }
+
+    /// View the hex content (without prefix) as a byte slice.
+    pub fn as_bytes_no_prefix(&self) -> &[u8] {
+        let bytes = self.as_bytes();
+        &bytes[P::LEN..]
     }
 
     /// View the full string as a `&str`.
@@ -172,8 +154,7 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
 
     /// Decode the hex content back to raw bytes, ignoring the prefix.
     pub fn decode(&self) -> [u8; N] {
-        // SAFETY: `inner.bytes` is `[[u8; 2]; N]` — `N * 2` contiguous `u8`.
-        let hex_bytes = unsafe { slice::from_raw_parts(self.inner.bytes.as_ptr().cast::<u8>(), N * 2) };
+        let hex_bytes = self.as_bytes_no_prefix();
         let mut out: [MaybeUninit<u8>; N] = maybe_uninit::uninit_array();
         let result = backend::decode(hex_bytes, &mut out);
         debug_assert!(result.is_ok(), "HexStr invariant violated: contained non-hex bytes");
@@ -247,7 +228,7 @@ impl<const N: usize, P: Prefix> PartialEq<str> for HexStr<N, P> {
     }
 }
 
-impl<const N: usize> FromStr for HexStr<N, NoPrefix> {
+impl<const N: usize, P: Prefix> FromStr for HexStr<N, P> {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -259,8 +240,14 @@ impl<const N: usize> FromStr for HexStr<N, NoPrefix> {
         // Decode to validate hex content — captures InvalidChar errors.
         let mut scratch: [MaybeUninit<u8>; N] = maybe_uninit::uninit_array();
         backend::decode(input, &mut scratch)?;
-        // Input is valid hex. Use the consolidated constructor.
-        Ok(Self::from_validated_hex(input))
+        // Input is valid hex — reinterpret as [[u8; 2]; N] and construct.
+        let bytes: &[[u8; 2]; N] = FromBytes::ref_from_bytes(input).expect("length already checked above");
+        Ok(Self {
+            inner: RawHexStr {
+                prefix: P::VALUE,
+                bytes: *bytes,
+            },
+        })
     }
 }
 
