@@ -123,6 +123,7 @@ fn hex_str_type_properties() {
     let hex: HexStr<2> = HexStr::encode_lower(&[0xab, 0xcd]);
     let s: &str = &hex;
     assert_eq!(s, "abcd");
+    assert_eq!(&*hex, "abcd");
     let sr: &str = hex.as_ref();
     assert_eq!(sr, "abcd");
     let br: &[u8] = hex.as_ref();
@@ -150,6 +151,26 @@ fn hex_str_type_properties() {
     assert_eq!(p_upper.as_str(), "0xCAFEBABE");
     assert_eq!(p_lower.decode(), input);
     assert_eq!(p_upper.decode(), input);
+}
+
+#[test]
+fn missized_fixed_containers_are_rejected() {
+    assert_eq!(
+        better_hex::encode::<HexStr<4>>(&[0xabu8]).unwrap_err(),
+        Error::InvalidLength { expected: 8, got: 2 }
+    );
+    assert_eq!(
+        better_hex::encode::<PrefixedHexStr<4>>(&[0xabu8]).unwrap_err(),
+        Error::InvalidLength { expected: 8, got: 2 }
+    );
+    assert_eq!(
+        better_hex::decode::<[u8; 4]>(b"ab").unwrap_err(),
+        Error::InvalidLength { expected: 8, got: 2 }
+    );
+    assert_eq!(
+        better_hex::ct::decode_to::<[u8; 4]>(b"ab").unwrap_err(),
+        Error::InvalidLength { expected: 8, got: 2 }
+    );
 }
 
 // ── HexStr const fns ────────────────────────────────────────────────────────
@@ -215,6 +236,26 @@ fn heapless_capacity_overflow() {
 fn arrayvec_capacity_overflow() {
     assert!(better_hex::encode::<arrayvec::ArrayString<4>>(&[0xab, 0xcd, 0xef]).is_err());
     assert!(better_hex::decode::<arrayvec::ArrayVec<u8, 2>>(b"aabbcc").is_err());
+}
+
+#[cfg(feature = "heapless")]
+#[test]
+fn heapless_oversized_container_ok() {
+    // Variable-length containers with more capacity than needed should succeed.
+    let s: heapless::String<100> = better_hex::encode(&[0xab]).unwrap();
+    assert_eq!(&*s, "ab");
+    let v: heapless::Vec<u8, 100> = better_hex::decode(b"ab").unwrap();
+    assert_eq!(&*v, &[0xab]);
+}
+
+#[cfg(feature = "arrayvec")]
+#[test]
+fn arrayvec_oversized_container_ok() {
+    // Variable-length containers with more capacity than needed should succeed.
+    let s: arrayvec::ArrayString<100> = better_hex::encode(&[0xab]).unwrap();
+    assert_eq!(&*s, "ab");
+    let v: arrayvec::ArrayVec<u8, 100> = better_hex::decode(b"ab").unwrap();
+    assert_eq!(&*v, &[0xab]);
 }
 
 // ── Serde error paths ───────────────────────────────────────────────────────

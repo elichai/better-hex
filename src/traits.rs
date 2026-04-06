@@ -446,7 +446,7 @@ unsafe impl<const N: usize, P: Prefix> Container for HexStr<N, P> {
     type Handle = MaybeUninit::<crate::hex_str::RawHexStr<N, P>>;
     #[inline]
     fn new(min_capacity: usize) -> Result<Self::Handle, Error> {
-        if min_capacity > N * 2 {
+        if min_capacity != N * 2 {
             return Err(Error::InvalidLength {
                 expected: N * 2,
                 got: min_capacity,
