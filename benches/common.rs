@@ -35,7 +35,10 @@ impl Buffers {
             .map(|_| {
                 let mut buf = vec![0u8; size];
                 rng.fill_bytes(&mut buf);
-                better_hex::encode::<String>(&buf).unwrap().into_bytes().into_boxed_slice()
+                better_hex::encode::<String>(&buf)
+                    .unwrap()
+                    .into_bytes()
+                    .into_boxed_slice()
             })
             .collect();
         Self { buffers, index: 0 }

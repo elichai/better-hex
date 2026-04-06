@@ -250,7 +250,9 @@ fn bench_serde_serialize(c: &mut Criterion) {
 
         group.bench_function(BenchmarkId::new("better_hex", size), |b| {
             b.iter(|| {
-                let val = BetterHexWrap { data: bufs.next().to_vec() };
+                let val = BetterHexWrap {
+                    data: bufs.next().to_vec(),
+                };
                 serde_json::to_string(black_box(&val)).unwrap()
             });
         });
@@ -260,7 +262,9 @@ fn bench_serde_serialize(c: &mut Criterion) {
             use serde_bench::ConstHexWrap;
             group.bench_function(BenchmarkId::new("const_hex", size), |b| {
                 b.iter(|| {
-                    let val = ConstHexWrap { data: bufs.next().to_vec() };
+                    let val = ConstHexWrap {
+                        data: bufs.next().to_vec(),
+                    };
                     serde_json::to_string(black_box(&val)).unwrap()
                 });
             });
@@ -280,7 +284,10 @@ fn bench_serde_deserialize(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(size as u64));
 
         // Pre-build JSON strings outside the measurement loop.
-        let bh_json = serde_json::to_string(&BetterHexWrap { data: bufs.next().to_vec() }).unwrap();
+        let bh_json = serde_json::to_string(&BetterHexWrap {
+            data: bufs.next().to_vec(),
+        })
+        .unwrap();
         group.bench_function(BenchmarkId::new("better_hex", size), |b| {
             b.iter(|| serde_json::from_str::<BetterHexWrap>(black_box(&bh_json)).unwrap());
         });
@@ -288,7 +295,10 @@ fn bench_serde_deserialize(c: &mut Criterion) {
         #[cfg(feature = "_bench_const_hex")]
         {
             use serde_bench::ConstHexWrap;
-            let ch_json = serde_json::to_string(&ConstHexWrap { data: bufs.next().to_vec() }).unwrap();
+            let ch_json = serde_json::to_string(&ConstHexWrap {
+                data: bufs.next().to_vec(),
+            })
+            .unwrap();
             group.bench_function(BenchmarkId::new("const_hex", size), |b| {
                 b.iter(|| serde_json::from_str::<ConstHexWrap>(black_box(&ch_json)).unwrap());
             });

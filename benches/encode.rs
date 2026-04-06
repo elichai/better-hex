@@ -32,7 +32,10 @@ fn bench_encode(c: &mut Criterion) {
         #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
         group.bench_function(BenchmarkId::new("neon", size), |b| {
             b.iter(|| {
-                better_hex::bench_internals::neon::encode::<false>(black_box(bufs.next()), black_box(output.as_mut_slice()))
+                better_hex::bench_internals::neon::encode::<false>(
+                    black_box(bufs.next()),
+                    black_box(output.as_mut_slice()),
+                )
             })
         });
 

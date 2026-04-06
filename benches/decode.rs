@@ -25,10 +25,7 @@ const fn ct_decode_nibble_casefold(byte: u8) -> u16 {
 /// Decode loop using the case-fold nibble decoder, for benchmarking against `ct_scalar::decode`.
 #[cfg(feature = "_bench_internals")]
 #[inline(never)]
-fn ct_decode_casefold(
-    input: &[u8],
-    output: &mut [MaybeUninit<u8>],
-) -> Result<(), better_hex::Error> {
+fn ct_decode_casefold(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), better_hex::Error> {
     let mut err: u16 = 0;
     for (pair, out_byte) in input.chunks_exact(2).zip(output.iter_mut()) {
         let hi = ct_decode_nibble_casefold(pair[0]);
@@ -37,7 +34,11 @@ fn ct_decode_casefold(
         err |= lo >> 8;
         out_byte.write(((hi << 4) | lo) as u8);
     }
-    if err != 0 { Err(better_hex::Error::InvalidEncoding) } else { Ok(()) }
+    if err != 0 {
+        Err(better_hex::Error::InvalidEncoding)
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(feature = "_bench_internals")]
@@ -74,11 +75,8 @@ fn bench_decode(c: &mut Criterion) {
         #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
         group.bench_function(BenchmarkId::new("neon_ct", size), |b| {
             b.iter(|| {
-                better_hex::bench_internals::neon::ct_decode(
-                    black_box(bufs.next()),
-                    black_box(output.as_mut_slice()),
-                )
-                .unwrap()
+                better_hex::bench_internals::neon::ct_decode(black_box(bufs.next()), black_box(output.as_mut_slice()))
+                    .unwrap()
             })
         });
 

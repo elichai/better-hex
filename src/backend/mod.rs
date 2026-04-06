@@ -175,7 +175,9 @@ pub(crate) mod test_support {
 
     /// Deterministic input bytes for a given size.
     pub(crate) fn make_input(size: usize) -> alloc::vec::Vec<u8> {
-        (0..size).map(|i| ((i as u8).wrapping_mul(37)).wrapping_add(11)).collect()
+        (0..size)
+            .map(|i| ((i as u8).wrapping_mul(37)).wrapping_add(11))
+            .collect()
     }
 
     fn scalar_encode<const UPPER: bool>(input: &[u8]) -> alloc::vec::Vec<u8> {
@@ -245,7 +247,10 @@ pub(crate) mod test_support {
                 let mut inv_out = alloc::vec![MaybeUninit::uninit(); size];
                 assert_eq!(
                     decode(&invalid, &mut inv_out),
-                    Err(Error::InvalidChar { byte: b'G', index: bad_index }),
+                    Err(Error::InvalidChar {
+                        byte: b'G',
+                        index: bad_index
+                    }),
                     "decode wrong error at size {size}"
                 );
 
