@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use crate::{
-    FromHex, HexTarget, backend, error::Error, maybe_uninit, prefix::{NoPrefix, Prefix, WithPrefix}
+    HexTarget, backend, error::Error, maybe_uninit, prefix::{NoPrefix, Prefix}
 };
 use core::{fmt, mem::MaybeUninit, ops::Deref, slice, str::FromStr};
 
@@ -60,35 +60,91 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
         HexTarget::encode_hex_upper(input).expect("Cannot fail, sizes are exact")
     }
 
-    /// Construct a `HexStr` from a validated hex string.
+    /// Encode bytes to lowercase hex at compile time.
+    pub const fn const_encode_lower(input: &[u8; N]) -> Self {
+        Self {
+            inner: RawHexStr {
+                prefix: P::VALUE,
+                bytes: const_encode_bytes(input, HEX_CHARS_LOWER),
+            },
+        }
+    }
+
+    /// Encode bytes to uppercase hex at compile time.
+    pub const fn const_encode_upper(input: &[u8; N]) -> Self {
+        Self {
+            inner: RawHexStr {
+                prefix: P::VALUE,
+                bytes: const_encode_bytes(input, HEX_CHARS_UPPER),
+            },
+        }
+    }
+
+
+    /// Construct a `HexStr` from a hex byte array.
+    ///
+    /// `M` must equal `N * 2` (enforced at compile time). Returns `None` if
+    /// any byte is not valid hex ASCII (`[0-9a-fA-F]`).
+    pub fn from_hex<const M: usize>(hex: [u8; M]) -> Option<Self> {
+        const { assert!(M == N * 2, "hex input length must equal N * 2") };
+        if !crate::check(&hex) {
+            return None;
+        }
+        // SAFETY: `crate::check` confirmed all bytes are valid hex ASCII.
+        Some(unsafe { Self::from_hex_unchecked(hex) })
+    }
+
+    /// Construct a `HexStr` from a hex byte array without validation.
+    ///
+    /// `M` must equal `N * 2` (enforced at compile time).
+    ///
+    /// # Safety
+    ///
+    /// Every byte in `hex` must be valid hex ASCII (`[0-9a-fA-F]`).
+    /// Violating this produces a `HexStr` whose `decode()` will return
+    /// garbage or error, and whose string representation contains non-hex
+    /// characters.
+    pub const unsafe fn from_hex_unchecked<const M: usize>(hex: [u8; M]) -> Self {
+        const { assert!(M == N * 2, "hex input length must equal N * 2") };
+        Self {
+            inner: RawHexStr {
+                prefix: P::VALUE,
+                // SAFETY: We've const asserted that the length is correct, and the caller must uphold the invariant that all bytes are valid hex ASCII.
+                bytes: unsafe { core::mem::transmute_copy(&hex) },
+            },
+        }
+    }
+
+    /// Construct a `HexStr` from a hex byte array at compile time.
+    ///
+    /// `M` must equal `N * 2` (enforced at compile time). Returns `None` if
+    /// any byte is not valid hex ASCII.
+    pub const fn const_from_hex<const M: usize>(hex: [u8; M]) -> Option<Self> {
+        const {
+            assert!(M == N * 2, "hex input length must equal N * 2")
+         };
+        if !const_check(&hex) {
+            return None;
+        }
+        // SAFETY: We've const asserted that the bytes are valid hex ASCII, so this constructor's invariant is upheld.
+        Some(unsafe {
+            Self::from_hex_unchecked(hex)
+        })
+    }
+
+    /// Internal: construct from a validated hex slice (dynamically sized).
     ///
     /// The caller must guarantee that `hex_input` is exactly `N * 2` bytes of
-    /// valid hex ASCII. This is enforced by calling `backend::decode` first.
+    /// valid hex ASCII.
     fn from_validated_hex(hex_input: &[u8]) -> Self {
         debug_assert_eq!(hex_input.len(), N * 2);
-        let mut out = MaybeUninit::<RawHexStr<N, P>>::uninit();
-        let bytes = maybe_uninit::as_bytes_mut(&mut out);
-        let prefix = P::VALUE;
-        let prefix_bytes = prefix.bytes();
-        let (prefix_out, hex_out) = bytes.split_at_mut(prefix_bytes.len());
-        prefix_out.copy_from_slice(prefix_bytes);
-        // Copy the already-validated hex chars directly.
-        for (dst, &src) in hex_out.iter_mut().zip(hex_input) {
-            dst.write(src);
-        }
-        debug_assert!(
-            {
-                // SAFETY: we just initialized every byte above.
-                let check = unsafe { maybe_uninit::assume_init_slice(bytes) };
-                core::str::from_utf8(check).is_ok()
+        debug_assert!(crate::check(hex_input), "from_validated_hex: input is not valid hex");
+        let casted: &[[u8; 2]] = bytemuck::cast_slice(hex_input);
+        Self {
+            inner: RawHexStr {
+                prefix: P::VALUE,
+                bytes: casted.try_into().expect("from_validated_hex: slice with incorrect length"),
             },
-            "from_validated_hex: result is not valid UTF-8"
-        );
-        // SAFETY: both prefix and hex regions are fully initialized.
-        unsafe {
-            Self {
-                inner: out.assume_init(),
-            }
         }
     }
 
@@ -143,28 +199,6 @@ const fn const_encode_bytes<const N: usize>(input: &[u8; N], table: &[u8; 16]) -
         i += 1;
     }
     bytes
-}
-
-impl<const N: usize, P: Prefix> HexStr<N, P> {
-    /// Encode bytes to lowercase hex at compile time.
-    pub const fn const_encode_lower(input: &[u8; N]) -> Self {
-        Self {
-            inner: RawHexStr {
-                prefix: P::VALUE,
-                bytes: const_encode_bytes(input, HEX_CHARS_LOWER),
-            },
-        }
-    }
-
-    /// Encode bytes to uppercase hex at compile time.
-    pub const fn const_encode_upper(input: &[u8; N]) -> Self {
-        Self {
-            inner: RawHexStr {
-                prefix: P::VALUE,
-                bytes: const_encode_bytes(input, HEX_CHARS_UPPER),
-            },
-        }
-    }
 }
 
 impl<const N: usize, P: Prefix> Deref for HexStr<N, P> {
