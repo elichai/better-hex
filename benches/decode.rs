@@ -1,8 +1,6 @@
 #[cfg(feature = "_bench_internals")]
 use better_hex::bench_internals::{ct_scalar, dispatched_ct_decode, dispatched_decode, scalar};
 #[cfg(feature = "_bench_internals")]
-use core::mem::MaybeUninit;
-#[cfg(feature = "_bench_internals")]
 use criterion::{BenchmarkId, Throughput};
 use criterion::{Criterion, criterion_group, criterion_main};
 #[cfg(feature = "_bench_internals")]
@@ -30,14 +28,14 @@ const fn ct_decode_nibble_3range(byte: u8) -> u16 {
 /// isolated effect of switching from 3-range to casefold nibble decoding.
 #[cfg(feature = "_bench_internals")]
 #[inline(never)]
-fn ct_decode_3range(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), better_hex::Error> {
+unsafe fn ct_decode_3range(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), better_hex::Error> {
     let mut err: u16 = 0;
-    for (pair, out_byte) in input.chunks_exact(2).zip(output.iter_mut()) {
-        let hi = ct_decode_nibble_3range(pair[0]);
-        let lo = ct_decode_nibble_3range(pair[1]);
+    for i in 0..byte_len {
+        let hi = ct_decode_nibble_3range(unsafe { src.add(i * 2).read() });
+        let lo = ct_decode_nibble_3range(unsafe { src.add(i * 2 + 1).read() });
         err |= hi >> 8;
         err |= lo >> 8;
-        out_byte.write(((hi << 4) | lo) as u8);
+        unsafe { dst.add(i).write(((hi << 4) | lo) as u8) };
     }
     if err != 0 {
         Err(better_hex::Error::InvalidEncoding)
@@ -46,51 +44,62 @@ fn ct_decode_3range(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), 
     }
 }
 
+#[inline(always)]
+fn call(
+    decode_fn: unsafe fn(*const u8, *mut u8, usize) -> Result<(), better_hex::Error>,
+    input: &[u8],
+    output: &mut [u8],
+) -> Result<(), better_hex::Error> {
+    assert_eq!(input.len(), output.len() * 2, "input length must be twice output length");
+    // SAFETY: `decode_fn` requires valid pointers and length; these come from valid slices. The backend will overwrite every element on success.
+    unsafe { decode_fn(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) }
+}
+
 #[cfg(feature = "_bench_internals")]
 fn bench_decode(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode");
 
     for &size in common::BENCH_SIZES {
         let mut bufs = common::Buffers::new_hex(size);
-        let mut output: Vec<MaybeUninit<u8>> = vec![MaybeUninit::uninit(); size];
+        let mut output: Vec<u8> = vec![0; size];
 
         // Throughput is measured in *output* (decoded) bytes.
         group.throughput(Throughput::Bytes(size as u64));
 
         group.bench_function(BenchmarkId::new("scalar", size), |b| {
-            b.iter(|| scalar::decode(black_box(bufs.next()), black_box(output.as_mut_slice())).unwrap())
+            b.iter(|| {
+                call(scalar::decode, black_box(bufs.next()), black_box(&mut output)).unwrap()
+            })
         });
 
         group.bench_function(BenchmarkId::new("ct_scalar", size), |b| {
-            b.iter(|| ct_scalar::decode(black_box(bufs.next()), black_box(output.as_mut_slice())).unwrap())
+            b.iter(|| call(ct_scalar::decode, black_box(bufs.next()), black_box(&mut output)).unwrap())
         });
 
         group.bench_function(BenchmarkId::new("ct_3range", size), |b| {
-            b.iter(|| ct_decode_3range(black_box(bufs.next()), black_box(output.as_mut_slice())).unwrap())
+            b.iter(|| {
+                call(ct_decode_3range, black_box(bufs.next()), black_box(&mut output)).unwrap()
+            })
         });
 
         #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
         group.bench_function(BenchmarkId::new("neon", size), |b| {
-            b.iter(|| {
-                better_hex::bench_internals::neon::decode(black_box(bufs.next()), black_box(output.as_mut_slice()))
-                    .unwrap()
-            })
+            b.iter(|| call(better_hex::bench_internals::neon::decode, black_box(bufs.next()), black_box(&mut output)).unwrap())
         });
 
         #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
         group.bench_function(BenchmarkId::new("neon_ct", size), |b| {
-            b.iter(|| {
-                better_hex::bench_internals::neon::ct_decode(black_box(bufs.next()), black_box(output.as_mut_slice()))
-                    .unwrap()
-            })
+            b.iter(|| call(better_hex::bench_internals::neon::ct_decode, black_box(bufs.next()), black_box(&mut output)).unwrap())
         });
 
         group.bench_function(BenchmarkId::new("dispatched", size), |b| {
-            b.iter(|| dispatched_decode(black_box(bufs.next()), black_box(output.as_mut_slice())).unwrap())
+            let out_mu = unsafe { &mut *(output.as_mut_slice() as *mut [u8] as *mut [core::mem::MaybeUninit<u8>]) };
+            b.iter(|| dispatched_decode(black_box(bufs.next()), black_box(out_mu)).unwrap())
         });
 
         group.bench_function(BenchmarkId::new("dispatched_ct", size), |b| {
-            b.iter(|| dispatched_ct_decode(black_box(bufs.next()), black_box(output.as_mut_slice())).unwrap())
+            let out_mu = unsafe { &mut *(output.as_mut_slice() as *mut [u8] as *mut [core::mem::MaybeUninit<u8>]) };
+            b.iter(|| dispatched_ct_decode(black_box(bufs.next()), black_box(out_mu)).unwrap())
         });
     }
 
