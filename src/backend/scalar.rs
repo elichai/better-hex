@@ -93,7 +93,8 @@ const DECODE_LUT: [u8; 256] = {
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
 /// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
-pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
+#[inline]
+pub unsafe fn encode_inner<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
     let table = if UPPER { HEX_UPPER } else { HEX_LOWER };
     for i in 0..byte_len {
         // SAFETY: `i < byte_len` so `src.add(i)` is in bounds for reads
@@ -102,6 +103,11 @@ pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: 
         unsafe { dst.add(i * 2).write(table[usize::from(byte >> 4)]) };
         unsafe { dst.add(i * 2 + 1).write(table[usize::from(byte & 0x0f)]) };
     }
+}
+
+/// See [`encode_inner`].
+pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
+    unsafe { encode_inner::<UPPER>(src, dst, byte_len) }
 }
 
 /// Scalar hex decoder using a 256-byte lookup table.
@@ -119,7 +125,8 @@ pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: 
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
-pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+#[inline]
+pub unsafe fn decode_inner(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
     for i in 0..byte_len {
         // SAFETY: `i < byte_len` so `src.add(i * 2 + {0,1})` is in bounds
         // for reads and `dst.add(i)` is in bounds for writes.
@@ -139,9 +146,15 @@ pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<()
     Ok(())
 }
 
+/// See [`decode_inner`].
+pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+    unsafe { decode_inner(src, dst, byte_len) }
+}
+
 /// Check if every byte in `input` is a valid hex ASCII character.
 ///
 /// Uses `DECODE_LUT`: a byte is valid iff its LUT entry is not `NIL`.
+#[inline]
 pub fn check(input: &[u8]) -> bool {
     input.iter().all(|&b| DECODE_LUT[b as usize] != NIL)
 }

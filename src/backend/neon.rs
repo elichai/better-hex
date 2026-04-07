@@ -173,7 +173,7 @@ pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: 
         } else {
             // SAFETY: `src.add(i)` is valid for `byte_len - i` reads,
             // `dst.add(i * 2)` is valid for `(byte_len - i) * 2` writes.
-            unsafe { scalar::encode::<UPPER>(src.add(i), dst.add(i * 2), byte_len - i) };
+            unsafe { scalar::encode_inner::<UPPER>(src.add(i), dst.add(i * 2), byte_len - i) };
         }
     }
 }
@@ -232,7 +232,7 @@ unsafe fn decode_inner<const SHORT_CIRCUIT: bool>(src: *const u8, dst: *mut u8, 
             if chunk_err != 0 {
                 // SAFETY: `src.add(i)` valid for remaining hex,
                 // `dst.add(i / 2)` valid for remaining bytes.
-                return unsafe { scalar::decode(src.add(i), dst.add(i / 2), byte_len - i / 2) }.map_err(|e| match e {
+                return unsafe { scalar::decode_inner(src.add(i), dst.add(i / 2), byte_len - i / 2) }.map_err(|e| match e {
                     Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
                     other => other,
                 });
@@ -256,13 +256,13 @@ unsafe fn decode_inner<const SHORT_CIRCUIT: bool>(src: *const u8, dst: *mut u8, 
         if SHORT_CIRCUIT {
             // SAFETY: `src.add(i)` valid for `tail_byte_len * 2` hex bytes,
             // `dst.add(i / 2)` valid for `tail_byte_len` output bytes.
-            unsafe { scalar::decode(src.add(i), dst.add(i / 2), tail_byte_len) }.map_err(|e| match e {
+            unsafe { scalar::decode_inner(src.add(i), dst.add(i / 2), tail_byte_len) }.map_err(|e| match e {
                 Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
                 other => other,
             })?;
         } else {
             // SAFETY: same pointer validity as above.
-            if unsafe { ct_scalar::decode(src.add(i), dst.add(i / 2), tail_byte_len) }.is_err() {
+            if unsafe { ct_scalar::decode_inner(src.add(i), dst.add(i / 2), tail_byte_len) }.is_err() {
                 err |= 0x80;
             }
         }
@@ -344,6 +344,7 @@ fn decode_nibbles_with_consts(
 /// - `SHORT_CIRCUIT = true`: returns false on the first invalid chunk.
 /// - `SHORT_CIRCUIT = false` (CT): accumulates validity across all chunks,
 ///   checks at the end. Tail uses `ct_scalar::check`.
+#[inline]
 fn check_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
     let simd_end = input.len() / 16 * 16;
     let mut i = 0usize;

@@ -82,7 +82,7 @@ pub(crate) unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byt
     let done = chunks * 16;
     // SAFETY: `src.add(done)` valid for `byte_len - done` reads,
     // `dst.add(done * 2)` valid for `(byte_len - done) * 2` writes.
-    unsafe { scalar::encode::<UPPER>(src.add(done), dst.add(done * 2), byte_len - done) };
+    unsafe { scalar::encode_inner::<UPPER>(src.add(done), dst.add(done * 2), byte_len - done) };
 }
 
 /// Inner decode implementation generic over short-circuit mode.
@@ -137,7 +137,7 @@ unsafe fn decode_inner<const SHORT_CIRCUIT: bool>(src: *const u8, dst: *mut u8, 
                 // Fall back to scalar on the remaining input to get precise error info.
                 // SAFETY: `src.add(hex_off)` valid for remaining hex bytes,
                 // `dst.add(byte_off)` valid for remaining output bytes.
-                return unsafe { scalar::decode(src.add(hex_off), dst.add(byte_off), byte_len - byte_off) }.map_err(
+                return unsafe { scalar::decode_inner(src.add(hex_off), dst.add(byte_off), byte_len - byte_off) }.map_err(
                     |e| match e {
                         Error::InvalidChar { byte, index } => Error::InvalidChar {
                             byte,
@@ -175,7 +175,7 @@ unsafe fn decode_inner<const SHORT_CIRCUIT: bool>(src: *const u8, dst: *mut u8, 
         let tail_byte_len = byte_len - consumed_bytes;
         if SHORT_CIRCUIT {
             // SAFETY: tail pointers valid for remaining hex/byte counts.
-            unsafe { scalar::decode(src.add(consumed_hex), dst.add(consumed_bytes), tail_byte_len) }.map_err(
+            unsafe { scalar::decode_inner(src.add(consumed_hex), dst.add(consumed_bytes), tail_byte_len) }.map_err(
                 |e| match e {
                     Error::InvalidChar { byte, index } => Error::InvalidChar {
                         byte,
@@ -186,7 +186,7 @@ unsafe fn decode_inner<const SHORT_CIRCUIT: bool>(src: *const u8, dst: *mut u8, 
             )?;
         } else {
             // SAFETY: same pointer validity as above.
-            if unsafe { ct_scalar::decode(src.add(consumed_hex), dst.add(consumed_bytes), tail_byte_len) }.is_err() {
+            if unsafe { ct_scalar::decode_inner(src.add(consumed_hex), dst.add(consumed_bytes), tail_byte_len) }.is_err() {
                 err_accum |= 1;
             }
         }

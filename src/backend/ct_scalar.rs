@@ -83,8 +83,9 @@ const fn ct_decode_nibble(byte: u8) -> u16 {
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
 /// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
+#[inline]
 #[allow(dead_code)]
-pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
+pub unsafe fn encode_inner<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
     for i in 0..byte_len {
         // SAFETY: `i < byte_len` so `src.add(i)` is in bounds for reads
         // and `dst.add(i * 2 + {0,1})` is in bounds for writes.
@@ -92,6 +93,12 @@ pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: 
         unsafe { dst.add(i * 2).write(ct_encode_nibble::<UPPER>(byte >> 4)) };
         unsafe { dst.add(i * 2 + 1).write(ct_encode_nibble::<UPPER>(byte & 0x0F)) };
     }
+}
+
+/// See [`encode_inner`].
+#[allow(dead_code)]
+pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
+    unsafe { encode_inner::<UPPER>(src, dst, byte_len) }
 }
 
 /// Constant-time hex decoder.
@@ -111,7 +118,8 @@ pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: 
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
-pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+#[inline]
+pub unsafe fn decode_inner(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
     let mut err: u16 = 0;
 
     for i in 0..byte_len {
@@ -130,10 +138,16 @@ pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<()
     if err != 0 { Err(Error::InvalidEncoding) } else { Ok(()) }
 }
 
+/// See [`decode_inner`].
+pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+    unsafe { decode_inner(src, dst, byte_len) }
+}
+
 /// Constant-time hex validator.
 ///
 /// Returns `true` iff every byte in `input` is a valid hex ASCII character
 /// (`[0-9a-fA-F]`). Examines all bytes without short-circuiting.
+#[inline]
 pub fn check(input: &[u8]) -> bool {
     let mut err: u16 = 0;
     for &byte in input {
