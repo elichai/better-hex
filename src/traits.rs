@@ -202,7 +202,7 @@ impl<const N: usize, P: Prefix> HexTarget for HexStr<N, P> {
 fn to_hex_container<const UPPER: bool, C: Container>(input: &[u8]) -> Result<C, Error> {
     let hex_len = input.len() * 2;
     let mut out = C::new(hex_len)?;
-    crate::backend::encode::<UPPER>(input, &mut C::as_mut_slice(&mut out)[..hex_len]);
+    crate::backend::encode::<UPPER>(input, &mut C::as_mut_slice(&mut out)[..hex_len])?;
     // SAFETY: the first `hex_len` bytes of the spare capacity have been
     // initialized by `backend::encode` with valid hex ASCII characters.
     // Hex ASCII is a subset of UTF-8, satisfying `set_len`'s requirement
@@ -218,12 +218,6 @@ fn from_hex_container<C: Container>(hex: &[u8]) -> Result<C, Error> {
             !C::REQUIRES_UTF8,
             "from_hex_container writes raw decoded bytes, not valid UTF-8; use only with byte containers"
         )
-    }
-    if !hex.len().is_multiple_of(2) {
-        return Err(Error::InvalidLength {
-            expected: hex.len() + 1,
-            got: hex.len(),
-        });
     }
     let out_len = hex.len() / 2;
     let mut out = C::new(out_len)?;

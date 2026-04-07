@@ -28,12 +28,6 @@ pub fn decode<T: FromHex>(input: impl AsRef<[u8]>) -> Result<T, T::Error> {
 /// Returns [`Error::InvalidChar`] if any byte in `input` is not a valid hex character.
 #[inline]
 pub fn decode_to_slice<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a [u8], Error> {
-    if input.len() != output.len() * 2 {
-        return Err(Error::InvalidLength {
-            expected: output.len() * 2,
-            got: input.len(),
-        });
-    }
     // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`; the pointer cast
     // preserves the slice length. Treating initialized `u8` as `MaybeUninit<u8>`
     // is always valid (widening the validity invariant). The backend will
@@ -51,12 +45,6 @@ pub fn check(input: &[u8]) -> bool {
 /// Internal: decode hex into a fixed-size array using the backend directly.
 /// Used by the `FromHex` impl for `[u8; N]`.
 pub(crate) fn decode_array<const N: usize>(input: &[u8]) -> Result<[u8; N], Error> {
-    if input.len() != N * 2 {
-        return Err(Error::InvalidLength {
-            expected: N * 2,
-            got: input.len(),
-        });
-    }
     let mut out = maybe_uninit::uninit_array::<N>();
     backend::decode(input, &mut out)?;
     // SAFETY: backend initialized all N bytes on Ok.

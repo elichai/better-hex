@@ -8,14 +8,7 @@ use crate::{backend, error::Error, maybe_uninit, traits::HexTarget};
 /// Encode `input` into a caller-provided `output` buffer, returning `&mut str`.
 #[inline]
 fn encode_to_slice_inner<'a, const UPPER: bool>(input: &[u8], output: &'a mut [u8]) -> Result<&'a mut str, Error> {
-    let expected = input.len() * 2;
-    if output.len() != expected {
-        return Err(Error::InvalidLength {
-            expected,
-            got: output.len(),
-        });
-    }
-    backend::encode::<UPPER>(input, maybe_uninit::slice_as_uninit_mut(output));
+    backend::encode::<UPPER>(input, maybe_uninit::slice_as_uninit_mut(output))?;
     // SAFETY: backend wrote valid hex ASCII (valid UTF-8) into every byte.
     Ok(unsafe { maybe_uninit::bytes_to_hex_str_mut(output) })
 }

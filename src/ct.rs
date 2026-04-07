@@ -31,20 +31,13 @@ pub fn encode_upper<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a mut st
 
 /// Shared implementation for CT encode.
 fn encode_inner<'a, const UPPER: bool>(input: &[u8], output: &'a mut [u8]) -> Result<&'a mut str, Error> {
-    let expected = input.len() * 2;
-    if output.len() != expected {
-        return Err(Error::InvalidLength {
-            expected,
-            got: output.len(),
-        });
-    }
     // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`; pointer and length
     // come from a valid `&mut [u8]`. Treating initialized bytes as `MaybeUninit`
     // is always valid (widening the validity invariant). The backend will
     // overwrite every element.
     let uninit =
         unsafe { core::slice::from_raw_parts_mut(output.as_mut_ptr().cast::<MaybeUninit<u8>>(), output.len()) };
-    backend::ct_encode::<UPPER>(input, uninit);
+    backend::ct_encode::<UPPER>(input, uninit)?;
     debug_assert!(output.iter().all(|b| b.is_ascii()), "ct encode produced non-ASCII");
     // SAFETY: ct_encode wrote valid hex ASCII into every byte of `output`.
     // Hex ASCII is a subset of valid UTF-8.
@@ -59,13 +52,6 @@ fn encode_inner<'a, const UPPER: bool>(input: &[u8], output: &'a mut [u8]) -> Re
 ///
 /// Returns [`Error::InvalidLength`] if `input.len() != output.len() * 2`.
 pub fn decode<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a [u8], Error> {
-    let expected = output.len() * 2;
-    if input.len() != expected {
-        return Err(Error::InvalidLength {
-            expected,
-            got: input.len(),
-        });
-    }
     // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`; pointer and length
     // come from a valid `&mut [u8]`. Treating initialized bytes as `MaybeUninit`
     // is always valid (widening the validity invariant). The backend will
@@ -102,13 +88,6 @@ impl<const N: usize> FromHex for [u8; N] {
 
     fn from_hex(hex: impl AsRef<[u8]>) -> Result<Self, Self::Error> {
         let hex = hex.as_ref();
-        let expected = N * 2;
-        if hex.len() != expected {
-            return Err(Error::InvalidLength {
-                expected,
-                got: hex.len(),
-            });
-        }
         let mut out: [MaybeUninit<u8>; N] = maybe_uninit::uninit_array();
         backend::ct_decode(hex, &mut out)?;
         // SAFETY: ct_decode returned Ok, guaranteeing all N bytes are initialized.
@@ -122,12 +101,6 @@ impl FromHex for alloc::vec::Vec<u8> {
 
     fn from_hex(hex: impl AsRef<[u8]>) -> Result<Self, Self::Error> {
         let hex = hex.as_ref();
-        if !hex.len().is_multiple_of(2) {
-            return Err(Error::InvalidLength {
-                expected: hex.len() + 1,
-                got: hex.len(),
-            });
-        }
         let out_len = hex.len() / 2;
         let mut out = alloc::vec::Vec::with_capacity(out_len);
         backend::ct_decode(hex, &mut out.spare_capacity_mut()[..out_len])?;
