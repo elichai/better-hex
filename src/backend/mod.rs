@@ -72,68 +72,101 @@ macro_rules! dispatch {
 /// After a successful return, all `output[..input.len() * 2]` elements are
 /// initialized with valid hex ASCII bytes.
 ///
-/// # Panics (debug only)
-///
-/// Panics if `output.len() != input.len() * 2`.
+/// Returns `Err(InvalidLength)` if `output.len() != input.len() * 2`.
 #[inline]
-pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
+pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
+    if output.len() != input.len() * 2 {
+        return Err(Error::InvalidLength { expected: input.len() * 2, got: output.len() });
+    }
+    let src = input.as_ptr();
+    let dst = output.as_mut_ptr().cast::<u8>();
+    let byte_len = input.len();
+    // SAFETY: `src` and `dst` derived from valid, non-overlapping slice borrows.
+    // The length check above guarantees `dst` is writable for `byte_len * 2`
+    // bytes. CPU feature requirements are satisfied by `platform::detect()`
+    // only returning a variant after confirming support.
     dispatch!(
-        scalar: scalar::encode::<UPPER>(input, output),
-        neon: neon::encode::<UPPER>(input, output),
-        ssse3: unsafe { x86::encode_ssse3::<UPPER>(input, output) },
-        avx2: unsafe { x86::encode_avx2::<UPPER>(input, output) },
-        avx512: unsafe { x86::encode_avx512::<UPPER>(input, output) },
-        wasm: wasm::encode::<UPPER>(input, output),
-    )
+        scalar: unsafe { scalar::encode::<UPPER>(src, dst, byte_len) },
+        neon: unsafe { neon::encode::<UPPER>(src, dst, byte_len) },
+        ssse3: unsafe { x86::encode_ssse3::<UPPER>(src, dst, byte_len) },
+        avx2: unsafe { x86::encode_avx2::<UPPER>(src, dst, byte_len) },
+        avx512: unsafe { x86::encode_avx512::<UPPER>(src, dst, byte_len) },
+        wasm: unsafe { wasm::encode::<UPPER>(src, dst, byte_len) },
+    );
+    Ok(())
 }
 
 /// Decode hex `input` into `output`.
 ///
-/// Returns `Ok(())` on success or `Err(InvalidChar { .. })` on the first
-/// invalid hex character.
-///
-/// # Panics (debug only)
-///
-/// Panics if `output.len() != input.len() / 2` or input length is odd.
+/// Returns `Ok(())` on success, `Err(InvalidChar { .. })` on the first
+/// invalid hex character, or `Err(InvalidLength)` if the buffer sizes
+/// are wrong.
 #[inline]
 pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
+    if input.len() != output.len() * 2 {
+        return Err(Error::InvalidLength { expected: output.len() * 2, got: input.len() });
+    }
+    let src = input.as_ptr();
+    let byte_len = output.len();
+    let dst = output.as_mut_ptr().cast::<u8>();
+    // SAFETY: `src` and `dst` derived from valid, non-overlapping slice borrows.
+    // The length check above guarantees `byte_len = input.len() / 2`, so src
+    // is readable for `byte_len * 2` bytes and dst writable for `byte_len`.
     dispatch!(
-        scalar: scalar::decode(input, output),
-        neon: neon::decode(input, output),
-        ssse3: unsafe { x86::decode_ssse3(input, output) },
-        avx2: unsafe { x86::decode_avx2(input, output) },
-        avx512: unsafe { x86::decode_avx512(input, output) },
-        wasm: wasm::decode(input, output),
+        scalar: unsafe { scalar::decode(src, dst, byte_len) },
+        neon: unsafe { neon::decode(src, dst, byte_len) },
+        ssse3: unsafe { x86::decode_ssse3(src, dst, byte_len) },
+        avx2: unsafe { x86::decode_avx2(src, dst, byte_len) },
+        avx512: unsafe { x86::decode_avx512(src, dst, byte_len) },
+        wasm: unsafe { wasm::decode(src, dst, byte_len) },
     )
 }
 
 /// Constant-time encode. SIMD encode is already CT (register LUT, no
 /// memory-indexed lookups). Only the scalar fallback differs: `ct_scalar`
 /// uses branchless arithmetic instead of a lookup table.
+///
+/// Returns `Err(InvalidLength)` if `output.len() != input.len() * 2`.
 #[inline]
-pub fn ct_encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
+pub fn ct_encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
+    if output.len() != input.len() * 2 {
+        return Err(Error::InvalidLength { expected: input.len() * 2, got: output.len() });
+    }
+    let byte_len = input.len();
+    let src = input.as_ptr();
+    let dst = output.as_mut_ptr().cast::<u8>();
+    // SAFETY: same as `encode` — valid, non-overlapping slice-derived pointers.
     dispatch!(
-        scalar: ct_scalar::encode::<UPPER>(input, output),
-        neon: neon::encode::<UPPER>(input, output),
-        ssse3: unsafe { x86::encode_ssse3::<UPPER>(input, output) },
-        avx2: unsafe { x86::encode_avx2::<UPPER>(input, output) },
-        avx512: unsafe { x86::encode_avx512::<UPPER>(input, output) },
-        wasm: wasm::encode::<UPPER>(input, output),
-    )
+        scalar: unsafe { ct_scalar::encode::<UPPER>(src, dst, byte_len) },
+        neon: unsafe { neon::encode::<UPPER>(src, dst, byte_len) },
+        ssse3: unsafe { x86::encode_ssse3::<UPPER>(src, dst, byte_len) },
+        avx2: unsafe { x86::encode_avx2::<UPPER>(src, dst, byte_len) },
+        avx512: unsafe { x86::encode_avx512::<UPPER>(src, dst, byte_len) },
+        wasm: unsafe { wasm::encode::<UPPER>(src, dst, byte_len) },
+    );
+    Ok(())
 }
 
 /// Constant-time decode. Uses CT SIMD variants (no early return, error
 /// accumulation) with `ct_scalar` as the scalar fallback.
-/// Returns `Error::InvalidEncoding` (not `InvalidChar`) on failure.
+/// Returns `Error::InvalidEncoding` (not `InvalidChar`) on failure, or
+/// `Err(InvalidLength)` if the buffer sizes are wrong.
 #[inline]
 pub fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
+    if input.len() != output.len() * 2 {
+        return Err(Error::InvalidLength { expected: output.len() * 2, got: input.len() });
+    }
+    let byte_len = output.len();
+    let src = input.as_ptr();
+    let dst = output.as_mut_ptr().cast::<u8>();
+    // SAFETY: same as `decode` — valid, non-overlapping slice-derived pointers.
     dispatch!(
-        scalar: ct_scalar::decode(input, output),
-        neon: neon::ct_decode(input, output),
-        ssse3: unsafe { x86::ct_decode_ssse3(input, output) },
-        avx2: unsafe { x86::ct_decode_avx2(input, output) },
-        avx512: unsafe { x86::ct_decode_avx512(input, output) },
-        wasm: wasm::ct_decode(input, output),
+        scalar: unsafe { ct_scalar::decode(src, dst, byte_len) },
+        neon: unsafe { neon::ct_decode(src, dst, byte_len) },
+        ssse3: unsafe { x86::ct_decode_ssse3(src, dst, byte_len) },
+        avx2: unsafe { x86::ct_decode_avx2(src, dst, byte_len) },
+        avx512: unsafe { x86::ct_decode_avx512(src, dst, byte_len) },
+        wasm: unsafe { wasm::ct_decode(src, dst, byte_len) },
     )
 }
 
@@ -181,9 +214,10 @@ pub(crate) mod test_support {
     }
 
     fn scalar_encode<const UPPER: bool>(input: &[u8]) -> alloc::vec::Vec<u8> {
-        let mut out = alloc::vec![MaybeUninit::uninit(); input.len() * 2];
-        scalar::encode::<UPPER>(input, &mut out);
-        out.into_iter().map(|m| unsafe { m.assume_init() }).collect()
+        let mut out = alloc::vec![0u8; input.len() * 2];
+        // SAFETY: pointers derived from valid slices with correct lengths.
+        unsafe { scalar::encode::<UPPER>(input.as_ptr(), out.as_mut_ptr(), input.len()) };
+        out
     }
 
     /// Exercise a SIMD backend's encode/decode/check against the scalar oracle

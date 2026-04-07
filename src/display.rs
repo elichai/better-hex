@@ -74,7 +74,8 @@ pub(crate) fn write_hex_to<const UPPER: bool, const BUF: usize, W: fmt::Write>(i
     let mut pos = 0;
     // Full chunks.
     while pos + chunk_size <= input.len() {
-        backend::encode::<UPPER>(&input[pos..pos + chunk_size], &mut buf);
+        // Length invariant: buf.len() == BUF == chunk_size * 2.
+        backend::encode::<UPPER>(&input[pos..pos + chunk_size], &mut buf).expect("buf is correctly sized");
         // SAFETY: backend initialized BUF bytes of valid hex ASCII.
         let s = unsafe { maybe_uninit::assume_init_str(&buf) };
         w.write_str(s)?;
@@ -85,7 +86,8 @@ pub(crate) fn write_hex_to<const UPPER: bool, const BUF: usize, W: fmt::Write>(i
     if pos < input.len() {
         let rest = &input[pos..];
         let hex_len = rest.len() * 2;
-        backend::encode::<UPPER>(rest, &mut buf[..hex_len]);
+        // Length invariant: buf[..hex_len].len() == rest.len() * 2.
+        backend::encode::<UPPER>(rest, &mut buf[..hex_len]).expect("buf is correctly sized");
         // SAFETY: backend initialized hex_len bytes of valid hex ASCII.
         let s = unsafe { maybe_uninit::assume_init_str(&buf[..hex_len]) };
         w.write_str(s)?;

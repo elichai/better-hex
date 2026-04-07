@@ -60,10 +60,11 @@ impl fmt::Display for CtHexDisplayAdapter<'_> {
         for chunk in self.data.chunks(chunk_size) {
             let hex_len = chunk.len() * 2;
             let hex_buf = &mut buf[..hex_len];
+            // Length invariant: hex_buf.len() == chunk.len() * 2.
             if self.upper {
-                backend::ct_encode::<true>(chunk, hex_buf);
+                backend::ct_encode::<true>(chunk, hex_buf).expect("buf is correctly sized");
             } else {
-                backend::ct_encode::<false>(chunk, hex_buf);
+                backend::ct_encode::<false>(chunk, hex_buf).expect("buf is correctly sized");
             }
             // SAFETY: ct_encode wrote `hex_len` bytes of valid hex ASCII (= valid UTF-8).
             let s = unsafe {
