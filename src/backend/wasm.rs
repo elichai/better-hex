@@ -29,7 +29,6 @@ use crate::backend::ct_scalar;
 use crate::backend::scalar;
 use crate::error::Error;
 use core::arch::wasm32::*;
-use core::mem::MaybeUninit;
 
 /// Lower-case hex lookup table: nibble value 0..15 → ASCII `'0'..'f'`.
 const HEX_LOWER: [u8; 16] = *b"0123456789abcdef";
@@ -38,15 +37,15 @@ const HEX_UPPER: [u8; 16] = *b"0123456789ABCDEF";
 
 /// Encode `input` bytes as hex into `output`, using SIMD128 for 16-byte chunks.
 ///
-/// After return every element of `output[..input.len() * 2]` is initialised
+/// After return every element of `dst[..byte_len * 2]` is initialised
 /// with a valid hex ASCII byte.
 ///
-/// # Panics (debug only)
+/// # Safety
 ///
-/// Panics if `output.len() != input.len() * 2`.
-pub(crate) fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
-    debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
-
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
+/// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
+pub(crate) unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
     let table = if UPPER { &HEX_UPPER } else { &HEX_LOWER };
 
     // Load the 16-byte hex LUT into a SIMD register.
@@ -54,40 +53,36 @@ pub(crate) fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<
     let lut = unsafe { v128_load(table.as_ptr().cast()) };
     let mask_lo = u8x16_splat(0x0F);
 
-    let chunks = input.len() / 16;
+    let chunks = byte_len / 16;
     for i in 0..chunks {
-        let src = &input[i * 16..];
-        let dst = &mut output[i * 32..];
-
-        // SAFETY: we know at least 16 bytes remain in src and 32 in dst.
-        let chunk = unsafe { v128_load(src.as_ptr().cast()) };
-
-        // Split each byte into high and low nibbles.
-        let lo_nibbles = v128_and(chunk, mask_lo);
-        let hi_nibbles = u8x16_shr(chunk, 4);
-
-        // LUT lookup: nibble → ASCII hex character.
-        let lo_ascii = u8x16_swizzle(lut, lo_nibbles);
-        let hi_ascii = u8x16_swizzle(lut, hi_nibbles);
-
-        // Interleave: for each byte position k, output[2k] = hi_ascii[k],
-        // output[2k+1] = lo_ascii[k].
-        //
-        // First 16 output bytes (positions 0..8 from each vector):
-        let out0 = u8x16_shuffle::<0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23>(hi_ascii, lo_ascii);
-        // Second 16 output bytes (positions 8..16 from each vector):
-        let out1 = u8x16_shuffle::<8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31>(hi_ascii, lo_ascii);
-
-        // SAFETY: dst has at least 32 bytes of MaybeUninit<u8>.
+        // SAFETY: `i * 16 + 16 <= byte_len` so src read and dst write are in bounds.
         unsafe {
-            v128_store(dst.as_mut_ptr().cast(), out0);
-            v128_store(dst.as_mut_ptr().add(16).cast(), out1);
+            let chunk = v128_load(src.add(i * 16).cast());
+
+            // Split each byte into high and low nibbles.
+            let lo_nibbles = v128_and(chunk, mask_lo);
+            let hi_nibbles = u8x16_shr(chunk, 4);
+
+            // LUT lookup: nibble → ASCII hex character.
+            let lo_ascii = u8x16_swizzle(lut, lo_nibbles);
+            let hi_ascii = u8x16_swizzle(lut, hi_nibbles);
+
+            // Interleave: for each byte position k, output[2k] = hi_ascii[k],
+            // output[2k+1] = lo_ascii[k].
+            let out0 = u8x16_shuffle::<0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23>(hi_ascii, lo_ascii);
+            let out1 = u8x16_shuffle::<8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31>(hi_ascii, lo_ascii);
+
+            let out_ptr = dst.add(i * 32);
+            v128_store(out_ptr.cast(), out0);
+            v128_store(out_ptr.add(16).cast(), out1);
         }
     }
 
     // Tail: delegate remaining bytes to scalar.
     let done = chunks * 16;
-    scalar::encode::<UPPER>(&input[done..], &mut output[done * 2..]);
+    // SAFETY: `src.add(done)` valid for `byte_len - done` reads,
+    // `dst.add(done * 2)` valid for `(byte_len - done) * 2` writes.
+    unsafe { scalar::encode::<UPPER>(src.add(done), dst.add(done * 2), byte_len - done) };
 }
 
 /// Inner decode implementation generic over short-circuit mode.
@@ -98,22 +93,26 @@ pub(crate) fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<
 /// When `SHORT_CIRCUIT = false` (constant-time path): accumulates all error
 /// bits across every chunk without branching on validity, then delegates the
 /// tail to `ct_scalar::decode`.
+///
+/// # Safety
+///
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
+/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[inline]
-fn decode_inner<const SHORT_CIRCUIT: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
-    debug_assert_eq!(output.len(), input.len() / 2, "output buffer wrong size for decode");
-    debug_assert!(input.len() % 2 == 0, "input length must be even");
-
+unsafe fn decode_inner<const SHORT_CIRCUIT: bool>(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+    let hex_len = byte_len * 2;
     let mut err_accum: u16 = 0;
 
-    let chunks = input.len() / 32;
+    let chunks = hex_len / 32;
     for i in 0..chunks {
-        let src = &input[i * 32..];
-        let dst = &mut output[i * 16..];
+        let hex_off = i * 32;
+        let byte_off = i * 16;
 
         // Load two 16-byte halves of the 32-byte hex input.
-        // SAFETY: at least 32 bytes remain in src, 16 in dst.
-        let nib0 = unsafe { v128_load(src.as_ptr().cast()) };
-        let nib1 = unsafe { v128_load(src.as_ptr().add(16).cast()) };
+        // SAFETY: `hex_off + 32 <= hex_len` and `byte_off + 16 <= byte_len`.
+        let nib0 = unsafe { v128_load(src.add(hex_off).cast()) };
+        let nib1 = unsafe { v128_load(src.add(hex_off + 16).cast()) };
 
         //  Mula–Langdale nibble decode (Algorithm #3)
         //
@@ -136,14 +135,17 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(input: &[u8], output: &mut [MaybeUnin
         if SHORT_CIRCUIT {
             if ok0 != 0 || ok1 != 0 {
                 // Fall back to scalar on the remaining input to get precise error info.
-                let consumed = i * 32;
-                return scalar::decode(&input[consumed..], &mut output[consumed / 2..]).map_err(|e| match e {
-                    Error::InvalidChar { byte, index } => Error::InvalidChar {
-                        byte,
-                        index: index + consumed,
+                // SAFETY: `src.add(hex_off)` valid for remaining hex bytes,
+                // `dst.add(byte_off)` valid for remaining output bytes.
+                return unsafe { scalar::decode(src.add(hex_off), dst.add(byte_off), byte_len - byte_off) }.map_err(
+                    |e| match e {
+                        Error::InvalidChar { byte, index } => Error::InvalidChar {
+                            byte,
+                            index: index + hex_off,
+                        },
+                        other => other,
                     },
-                    other => other,
-                });
+                );
             }
         } else {
             err_accum |= ok0 | ok1;
@@ -160,25 +162,31 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(input: &[u8], output: &mut [MaybeUnin
         let lo = u8x16_shuffle::<1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31>(nibbles0, nibbles1);
         let packed = v128_or(u8x16_shl(hi, 4), lo);
 
-        // SAFETY: dst has at least 16 bytes of MaybeUninit<u8>.
+        // SAFETY: `byte_off + 16 <= byte_len`.
         unsafe {
-            v128_store(dst.as_mut_ptr().cast(), packed);
+            v128_store(dst.add(byte_off).cast(), packed);
         }
     }
 
     // Tail: delegate remaining bytes to scalar (or ct_scalar for CT path).
-    let consumed = chunks * 32;
-    if consumed < input.len() {
+    let consumed_hex = chunks * 32;
+    let consumed_bytes = chunks * 16;
+    if consumed_hex < hex_len {
+        let tail_byte_len = byte_len - consumed_bytes;
         if SHORT_CIRCUIT {
-            scalar::decode(&input[consumed..], &mut output[consumed / 2..]).map_err(|e| match e {
-                Error::InvalidChar { byte, index } => Error::InvalidChar {
-                    byte,
-                    index: index + consumed,
+            // SAFETY: tail pointers valid for remaining hex/byte counts.
+            unsafe { scalar::decode(src.add(consumed_hex), dst.add(consumed_bytes), tail_byte_len) }.map_err(
+                |e| match e {
+                    Error::InvalidChar { byte, index } => Error::InvalidChar {
+                        byte,
+                        index: index + consumed_hex,
+                    },
+                    other => other,
                 },
-                other => other,
-            })?;
+            )?;
         } else {
-            if ct_scalar::decode(&input[consumed..], &mut output[consumed / 2..]).is_err() {
+            // SAFETY: same pointer validity as above.
+            if unsafe { ct_scalar::decode(src.add(consumed_hex), dst.add(consumed_bytes), tail_byte_len) }.is_err() {
                 err_accum |= 1;
             }
         }
@@ -196,20 +204,26 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(input: &[u8], output: &mut [MaybeUnin
 /// Returns `Ok(())` on success. On the first invalid hex character, returns
 /// `Err(InvalidChar { byte, index })`.
 ///
-/// # Panics (debug only)
+/// # Safety
 ///
-/// Panics if `output.len() != input.len() / 2` or `input.len()` is odd.
-#[inline]
-pub(crate) fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
-    decode_inner::<true>(input, output)
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
+/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
+pub(crate) unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+    unsafe { decode_inner::<true>(src, dst, byte_len) }
 }
 
 /// Constant-time variant of [`decode`]: processes all chunks without
 /// short-circuiting on invalid input, accumulating errors across the entire
 /// input before returning.
-#[inline]
-pub(crate) fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
-    decode_inner::<false>(input, output)
+///
+/// # Safety
+///
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
+/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
+pub(crate) unsafe fn ct_decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+    unsafe { decode_inner::<false>(src, dst, byte_len) }
 }
 
 /// Decode 16 hex-ASCII bytes in `v` into nibble values, returning the nibble
@@ -312,6 +326,13 @@ mod tests {
 
     #[test]
     fn wasm_matches_scalar_oracle() {
-        exercise_backend(encode::<false>, encode::<true>, decode, ct_decode, check, ct_check);
+        exercise_backend(
+            |input, output| unsafe { encode::<false>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
+            |input, output| unsafe { encode::<true>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
+            |input, output| unsafe { decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) },
+            |input, output| unsafe { ct_decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) },
+            check,
+            ct_check,
+        );
     }
 }

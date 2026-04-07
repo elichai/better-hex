@@ -49,7 +49,6 @@ use core::arch::x86_64::*;
 use crate::backend::ct_scalar;
 use crate::backend::scalar;
 use crate::error::Error;
-use core::mem::MaybeUninit;
 
 /// Hex-encode `input` into `output` using SSSE3 `pshufb` for the hot loop.
 ///
@@ -58,14 +57,14 @@ use core::mem::MaybeUninit;
 ///
 /// # Safety
 ///
-/// Caller must ensure the CPU supports SSSE3.
+/// - The CPU must support SSSE3.
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
+/// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
 #[target_feature(enable = "ssse3")]
-pub(crate) unsafe fn encode_ssse3<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
-    debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
-
+pub(crate) unsafe fn encode_ssse3<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
     // SAFETY: all intrinsics below require SSSE3, guaranteed by #[target_feature].
-    // Pointer arithmetic is safe because we stay within the bounds checked by
-    // `simd_end` (rounded down to a multiple of 16).
+    // Pointer arithmetic stays within the bounds guaranteed by the caller.
     unsafe {
         let lut = if UPPER {
             _mm_loadu_si128(b"0123456789ABCDEF".as_ptr().cast())
@@ -75,10 +74,10 @@ pub(crate) unsafe fn encode_ssse3<const UPPER: bool>(input: &[u8], output: &mut 
         let mask_lo = _mm_set1_epi8(0x0F);
 
         let mut i = 0usize;
-        let simd_end = input.len() & !15; // round down to multiple of 16
+        let simd_end = byte_len & !15; // round down to multiple of 16
 
         while i < simd_end {
-            let chunk = _mm_loadu_si128(input.as_ptr().add(i).cast());
+            let chunk = _mm_loadu_si128(src.add(i).cast());
 
             // Split nibbles.
             let lo = _mm_and_si128(chunk, mask_lo);
@@ -93,7 +92,7 @@ pub(crate) unsafe fn encode_ssse3<const UPPER: bool>(input: &[u8], output: &mut 
             let out1 = _mm_unpackhi_epi8(hex_hi, hex_lo);
 
             // Store 32 bytes (two __m128i).
-            let out_ptr = output.as_mut_ptr().add(i * 2).cast::<__m128i>();
+            let out_ptr = dst.add(i * 2).cast::<__m128i>();
             _mm_storeu_si128(out_ptr, out0);
             _mm_storeu_si128(out_ptr.add(1), out1);
 
@@ -101,10 +100,8 @@ pub(crate) unsafe fn encode_ssse3<const UPPER: bool>(input: &[u8], output: &mut 
         }
 
         // Scalar tail.
-        if i < input.len() {
-            let input_tail = unsafe { input.get_unchecked(i..) };
-            let output_tail = unsafe { output.get_unchecked_mut(i * 2..) };
-            scalar::encode::<UPPER>(input_tail, output_tail);
+        if i < byte_len {
+            scalar::encode::<UPPER>(src.add(i), dst.add(i * 2), byte_len - i);
         }
     }
 }
@@ -124,11 +121,12 @@ pub(crate) unsafe fn encode_ssse3<const UPPER: bool>(input: &[u8], output: &mut 
 ///
 /// # Safety
 ///
-/// Caller must ensure the CPU supports AVX2.
+/// - The CPU must support AVX2.
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
+/// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn encode_avx2<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
-    debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
-
+pub(crate) unsafe fn encode_avx2<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
     // SAFETY: all intrinsics below require AVX2, guaranteed by #[target_feature].
     unsafe {
         let lut = if UPPER {
@@ -139,10 +137,10 @@ pub(crate) unsafe fn encode_avx2<const UPPER: bool>(input: &[u8], output: &mut [
         let mask_lo = _mm256_set1_epi8(0x0F);
 
         let mut i = 0usize;
-        let simd_end = input.len() & !31; // round down to multiple of 32
+        let simd_end = byte_len & !31; // round down to multiple of 32
 
         while i < simd_end {
-            let chunk = _mm256_loadu_si256(input.as_ptr().add(i).cast());
+            let chunk = _mm256_loadu_si256(src.add(i).cast());
 
             // Split nibbles.
             let lo = _mm256_and_si256(chunk, mask_lo);
@@ -164,7 +162,7 @@ pub(crate) unsafe fn encode_avx2<const UPPER: bool>(input: &[u8], output: &mut [
             let out1 = _mm256_permute2x128_si256(interleaved_lo, interleaved_hi, 0x31);
 
             // Store 64 bytes (two __m256i).
-            let out_ptr = output.as_mut_ptr().add(i * 2).cast::<__m256i>();
+            let out_ptr = dst.add(i * 2).cast::<__m256i>();
             _mm256_storeu_si256(out_ptr, out0);
             _mm256_storeu_si256(out_ptr.add(1), out1);
 
@@ -172,10 +170,8 @@ pub(crate) unsafe fn encode_avx2<const UPPER: bool>(input: &[u8], output: &mut [
         }
 
         // Tail: fall through to SSSE3 for any remaining 16+ bytes, then scalar.
-        if i < input.len() {
-            let input_tail = unsafe { input.get_unchecked(i..) };
-            let output_tail = unsafe { output.get_unchecked_mut(i * 2..) };
-            encode_ssse3::<UPPER>(input_tail, output_tail);
+        if i < byte_len {
+            encode_ssse3::<UPPER>(src.add(i), dst.add(i * 2), byte_len - i);
         }
     }
 }
@@ -285,15 +281,18 @@ unsafe fn decode_chunk_128(
 ///
 /// # Safety
 ///
-/// Caller must ensure the CPU supports SSSE3.
+/// - The CPU must support SSSE3.
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
+/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[inline]
 #[target_feature(enable = "ssse3")]
 unsafe fn decode_ssse3_inner<const SHORT_CIRCUIT: bool>(
-    input: &[u8],
-    output: &mut [MaybeUninit<u8>],
+    src: *const u8,
+    dst: *mut u8,
+    byte_len: usize,
 ) -> Result<(), Error> {
-    debug_assert_eq!(output.len(), input.len() / 2, "output buffer wrong size for decode");
-    debug_assert!(input.len() % 2 == 0, "input length must be even");
+    let hex_len = byte_len * 2;
 
     // SAFETY: all intrinsics below require SSSE3, guaranteed by #[target_feature].
     unsafe {
@@ -307,11 +306,11 @@ unsafe fn decode_ssse3_inner<const SHORT_CIRCUIT: bool>(
         let mut i = 0usize;
         let mut o = 0usize;
         let mut err_accum = 0i32;
-        let simd_end = input.len() & !31;
+        let simd_end = hex_len & !31;
 
         while i < simd_end {
-            let chunk0 = _mm_loadu_si128(input.as_ptr().add(i).cast());
-            let chunk1 = _mm_loadu_si128(input.as_ptr().add(i + 16).cast());
+            let chunk0 = _mm_loadu_si128(src.add(i).cast());
+            let chunk1 = _mm_loadu_si128(src.add(i + 16).cast());
 
             let (decoded0, check0) = decode_chunk_128(chunk0, delta_check, delta_rebase, one, mask_hi, weights);
             let (decoded1, check1) = decode_chunk_128(chunk1, delta_check, delta_rebase, one, mask_hi, weights);
@@ -323,29 +322,28 @@ unsafe fn decode_ssse3_inner<const SHORT_CIRCUIT: bool>(
 
             if SHORT_CIRCUIT {
                 if mask != 0 {
-                    return scalar::decode(input, output);
+                    return scalar::decode(src, dst, byte_len);
                 }
             } else {
                 err_accum |= mask;
             }
 
-            _mm_storel_epi64(output.as_mut_ptr().add(o).cast(), decoded0);
-            _mm_storel_epi64(output.as_mut_ptr().add(o + 8).cast(), decoded1);
+            _mm_storel_epi64(dst.add(o).cast(), decoded0);
+            _mm_storel_epi64(dst.add(o + 8).cast(), decoded1);
 
             i += 32;
             o += 16;
         }
 
-        if i < input.len() {
-            let input_tail = unsafe { input.get_unchecked(i..) };
-            let output_tail = unsafe { output.get_unchecked_mut(o..) };
+        if i < hex_len {
+            let tail_byte_len = byte_len - o;
             if SHORT_CIRCUIT {
-                scalar::decode(input_tail, output_tail).map_err(|e| match e {
+                scalar::decode(src.add(i), dst.add(o), tail_byte_len).map_err(|e| match e {
                     Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
                     other => other,
                 })?;
             } else {
-                if ct_scalar::decode(input_tail, output_tail).is_err() {
+                if ct_scalar::decode(src.add(i), dst.add(o), tail_byte_len).is_err() {
                     err_accum |= 1;
                 }
             }
@@ -365,12 +363,14 @@ unsafe fn decode_ssse3_inner<const SHORT_CIRCUIT: bool>(
 ///
 /// # Safety
 ///
-/// Caller must ensure the CPU supports SSSE3.
-#[inline]
+/// - The CPU must support SSSE3.
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
+/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[target_feature(enable = "ssse3")]
-pub(crate) unsafe fn decode_ssse3(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
-    // SAFETY: caller guarantees SSSE3.
-    unsafe { decode_ssse3_inner::<true>(input, output) }
+pub(crate) unsafe fn decode_ssse3(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+    // SAFETY: caller guarantees SSSE3 and pointer validity.
+    unsafe { decode_ssse3_inner::<true>(src, dst, byte_len) }
 }
 
 /// Constant-time hex-decode `input` into `output` using SSSE3.
@@ -380,12 +380,15 @@ pub(crate) unsafe fn decode_ssse3(input: &[u8], output: &mut [MaybeUninit<u8>]) 
 ///
 /// # Safety
 ///
-/// Caller must ensure the CPU supports SSSE3.
+/// - The CPU must support SSSE3.
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
+/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[inline]
 #[target_feature(enable = "ssse3")]
-pub(crate) unsafe fn ct_decode_ssse3(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
-    // SAFETY: caller guarantees SSSE3.
-    unsafe { decode_ssse3_inner::<false>(input, output) }
+pub(crate) unsafe fn ct_decode_ssse3(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+    // SAFETY: caller guarantees SSSE3 and pointer validity.
+    unsafe { decode_ssse3_inner::<false>(src, dst, byte_len) }
 }
 
 /// Decode a single 256-bit register (32 hex chars → 16 output bytes) using
@@ -432,15 +435,18 @@ unsafe fn decode_chunk_256(
 ///
 /// # Safety
 ///
-/// Caller must ensure the CPU supports AVX2.
+/// - The CPU must support AVX2.
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
+/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[inline]
 #[target_feature(enable = "avx2")]
 unsafe fn decode_avx2_inner<const SHORT_CIRCUIT: bool>(
-    input: &[u8],
-    output: &mut [MaybeUninit<u8>],
+    src: *const u8,
+    dst: *mut u8,
+    byte_len: usize,
 ) -> Result<(), Error> {
-    debug_assert_eq!(output.len(), input.len() / 2, "output buffer wrong size for decode");
-    debug_assert!(input.len() % 2 == 0, "input length must be even");
+    let hex_len = byte_len * 2;
 
     // SAFETY: all intrinsics below require AVX2 (implies SSSE3),
     // guaranteed by #[target_feature].
@@ -454,11 +460,11 @@ unsafe fn decode_avx2_inner<const SHORT_CIRCUIT: bool>(
         let mut i = 0usize;
         let mut o = 0usize;
         let mut err_accum = 0i32;
-        let simd_end = input.len() & !63;
+        let simd_end = hex_len & !63;
 
         while i < simd_end {
-            let chunk0 = _mm256_loadu_si256(input.as_ptr().add(i).cast());
-            let chunk1 = _mm256_loadu_si256(input.as_ptr().add(i + 32).cast());
+            let chunk0 = _mm256_loadu_si256(src.add(i).cast());
+            let chunk1 = _mm256_loadu_si256(src.add(i + 32).cast());
 
             let (decoded0, check0) = decode_chunk_256(chunk0, delta_check, delta_rebase, one, mask_hi, weights);
             let (decoded1, check1) = decode_chunk_256(chunk1, delta_check, delta_rebase, one, mask_hi, weights);
@@ -468,32 +474,30 @@ unsafe fn decode_avx2_inner<const SHORT_CIRCUIT: bool>(
 
             if SHORT_CIRCUIT {
                 if mask != 0 {
-                    return scalar::decode(input, output);
+                    return scalar::decode(src, dst, byte_len);
                 }
             } else {
                 err_accum |= mask;
             }
 
             // Store low 16 bytes of each decoded __m256i.
-            let out_ptr = output.as_mut_ptr().add(o);
-            _mm_storeu_si128(out_ptr.cast(), _mm256_castsi256_si128(decoded0));
-            _mm_storeu_si128(out_ptr.add(16).cast(), _mm256_castsi256_si128(decoded1));
+            _mm_storeu_si128(dst.add(o).cast(), _mm256_castsi256_si128(decoded0));
+            _mm_storeu_si128(dst.add(o + 16).cast(), _mm256_castsi256_si128(decoded1));
 
             i += 64;
             o += 32;
         }
 
         // Tail: fall through to SSSE3, then scalar.
-        if i < input.len() {
-            let input_tail = unsafe { input.get_unchecked(i..) };
-            let output_tail = unsafe { output.get_unchecked_mut(o..) };
+        if i < hex_len {
+            let tail_byte_len = byte_len - o;
             if SHORT_CIRCUIT {
-                decode_ssse3(input_tail, output_tail).map_err(|e| match e {
+                decode_ssse3(src.add(i), dst.add(o), tail_byte_len).map_err(|e| match e {
                     Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
                     other => other,
                 })?;
             } else {
-                if ct_decode_ssse3(input_tail, output_tail).is_err() {
+                if ct_decode_ssse3(src.add(i), dst.add(o), tail_byte_len).is_err() {
                     err_accum |= 1;
                 }
             }
@@ -514,12 +518,14 @@ unsafe fn decode_avx2_inner<const SHORT_CIRCUIT: bool>(
 ///
 /// # Safety
 ///
-/// Caller must ensure the CPU supports AVX2.
-#[inline]
+/// - The CPU must support AVX2.
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
+/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn decode_avx2(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
-    // SAFETY: caller guarantees AVX2.
-    unsafe { decode_avx2_inner::<true>(input, output) }
+pub(crate) unsafe fn decode_avx2(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+    // SAFETY: caller guarantees AVX2 and pointer validity.
+    unsafe { decode_avx2_inner::<true>(src, dst, byte_len) }
 }
 
 /// Constant-time hex-decode `input` into `output` using AVX2.
@@ -530,12 +536,15 @@ pub(crate) unsafe fn decode_avx2(input: &[u8], output: &mut [MaybeUninit<u8>]) -
 ///
 /// # Safety
 ///
-/// Caller must ensure the CPU supports AVX2.
+/// - The CPU must support AVX2.
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
+/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn ct_decode_avx2(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
-    // SAFETY: caller guarantees AVX2.
-    unsafe { decode_avx2_inner::<false>(input, output) }
+pub(crate) unsafe fn ct_decode_avx2(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+    // SAFETY: caller guarantees AVX2 and pointer validity.
+    unsafe { decode_avx2_inner::<false>(src, dst, byte_len) }
 }
 
 /// Check whether every byte in `input` is a valid hex ASCII character,
@@ -737,11 +746,12 @@ pub(crate) unsafe fn ct_check_avx2(input: &[u8]) -> bool {
 ///
 /// # Safety
 ///
-/// Caller must ensure the CPU supports AVX-512BW.
+/// - The CPU must support AVX-512BW.
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
+/// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
 #[target_feature(enable = "avx512bw")]
-pub(crate) unsafe fn encode_avx512<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
-    debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
-
+pub(crate) unsafe fn encode_avx512<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
     // SAFETY: all intrinsics below require AVX-512BW (implies AVX-512F),
     // guaranteed by #[target_feature].
     unsafe {
@@ -758,10 +768,10 @@ pub(crate) unsafe fn encode_avx512<const UPPER: bool>(input: &[u8], output: &mut
         let perm_idx = _mm512_setr_epi64(0, 4, 1, 5, 2, 6, 3, 7);
 
         let mut i = 0usize;
-        let simd_end = input.len() & !63; // round down to multiple of 64
+        let simd_end = byte_len & !63; // round down to multiple of 64
 
         while i < simd_end {
-            let chunk = _mm512_loadu_si512(input.as_ptr().add(i).cast());
+            let chunk = _mm512_loadu_si512(src.add(i).cast());
 
             // Split nibbles.
             let lo = _mm512_and_si512(chunk, mask_lo);
@@ -780,7 +790,7 @@ pub(crate) unsafe fn encode_avx512<const UPPER: bool>(input: &[u8], output: &mut
             let out1 = _mm512_permutexvar_epi64(perm_idx, interleaved_hi);
 
             // Store 128 bytes (two __m512i).
-            let out_ptr = output.as_mut_ptr().add(i * 2).cast::<__m512i>();
+            let out_ptr = dst.add(i * 2).cast::<__m512i>();
             _mm512_storeu_si512(out_ptr.cast(), out0);
             _mm512_storeu_si512(out_ptr.add(1).cast(), out1);
 
@@ -788,10 +798,8 @@ pub(crate) unsafe fn encode_avx512<const UPPER: bool>(input: &[u8], output: &mut
         }
 
         // Tail: fall through to AVX2 for any remaining 32+ bytes, then SSSE3, then scalar.
-        if i < input.len() {
-            let input_tail = unsafe { input.get_unchecked(i..) };
-            let output_tail = unsafe { output.get_unchecked_mut(i * 2..) };
-            encode_avx2::<UPPER>(input_tail, output_tail);
+        if i < byte_len {
+            encode_avx2::<UPPER>(src.add(i), dst.add(i * 2), byte_len - i);
         }
     }
 }
@@ -844,15 +852,18 @@ unsafe fn decode_chunk_512(
 ///
 /// # Safety
 ///
-/// Caller must ensure the CPU supports AVX-512BW.
+/// - The CPU must support AVX-512BW.
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
+/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[inline]
 #[target_feature(enable = "avx512bw")]
 unsafe fn decode_avx512_inner<const SHORT_CIRCUIT: bool>(
-    input: &[u8],
-    output: &mut [MaybeUninit<u8>],
+    src: *const u8,
+    dst: *mut u8,
+    byte_len: usize,
 ) -> Result<(), Error> {
-    debug_assert_eq!(output.len(), input.len() / 2, "output buffer wrong size for decode");
-    debug_assert!(input.len() % 2 == 0, "input length must be even");
+    let hex_len = byte_len * 2;
 
     // SAFETY: all intrinsics below require AVX-512BW (implies AVX-512F),
     // guaranteed by #[target_feature].
@@ -868,11 +879,11 @@ unsafe fn decode_avx512_inner<const SHORT_CIRCUIT: bool>(
         let mut i = 0usize;
         let mut o = 0usize;
         let mut err_accum = 0u64;
-        let simd_end = input.len() & !127;
+        let simd_end = hex_len & !127;
 
         while i < simd_end {
-            let chunk0 = _mm512_loadu_si512(input.as_ptr().add(i).cast());
-            let chunk1 = _mm512_loadu_si512(input.as_ptr().add(i + 64).cast());
+            let chunk0 = _mm512_loadu_si512(src.add(i).cast());
+            let chunk1 = _mm512_loadu_si512(src.add(i + 64).cast());
 
             let (decoded0, mask0) =
                 decode_chunk_512(chunk0, delta_check, delta_rebase, one, mask_hi, weights, perm_idx);
@@ -884,32 +895,30 @@ unsafe fn decode_avx512_inner<const SHORT_CIRCUIT: bool>(
 
             if SHORT_CIRCUIT {
                 if combined_mask != 0 {
-                    return scalar::decode(input, output);
+                    return scalar::decode(src, dst, byte_len);
                 }
             } else {
                 err_accum |= combined_mask;
             }
 
             // Store low 32 bytes of each decoded __m512i.
-            let out_ptr = output.as_mut_ptr().add(o);
-            _mm256_storeu_si256(out_ptr.cast(), _mm512_castsi512_si256(decoded0));
-            _mm256_storeu_si256(out_ptr.add(32).cast(), _mm512_castsi512_si256(decoded1));
+            _mm256_storeu_si256(dst.add(o).cast(), _mm512_castsi512_si256(decoded0));
+            _mm256_storeu_si256(dst.add(o + 32).cast(), _mm512_castsi512_si256(decoded1));
 
             i += 128;
             o += 64;
         }
 
         // Tail: fall through to AVX2, then SSSE3, then scalar.
-        if i < input.len() {
-            let input_tail = unsafe { input.get_unchecked(i..) };
-            let output_tail = unsafe { output.get_unchecked_mut(o..) };
+        if i < hex_len {
+            let tail_byte_len = byte_len - o;
             if SHORT_CIRCUIT {
-                decode_avx2(input_tail, output_tail).map_err(|e| match e {
+                decode_avx2(src.add(i), dst.add(o), tail_byte_len).map_err(|e| match e {
                     Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
                     other => other,
                 })?;
             } else {
-                if ct_decode_avx2(input_tail, output_tail).is_err() {
+                if ct_decode_avx2(src.add(i), dst.add(o), tail_byte_len).is_err() {
                     err_accum |= 1;
                 }
             }
@@ -930,12 +939,14 @@ unsafe fn decode_avx512_inner<const SHORT_CIRCUIT: bool>(
 ///
 /// # Safety
 ///
-/// Caller must ensure the CPU supports AVX-512BW.
-#[inline]
+/// - The CPU must support AVX-512BW.
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
+/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[target_feature(enable = "avx512bw")]
-pub(crate) unsafe fn decode_avx512(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
-    // SAFETY: caller guarantees AVX-512BW.
-    unsafe { decode_avx512_inner::<true>(input, output) }
+pub(crate) unsafe fn decode_avx512(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+    // SAFETY: caller guarantees AVX-512BW and pointer validity.
+    unsafe { decode_avx512_inner::<true>(src, dst, byte_len) }
 }
 
 /// Constant-time hex-decode `input` into `output` using AVX-512BW.
@@ -946,12 +957,15 @@ pub(crate) unsafe fn decode_avx512(input: &[u8], output: &mut [MaybeUninit<u8>])
 ///
 /// # Safety
 ///
-/// Caller must ensure the CPU supports AVX-512BW.
+/// - The CPU must support AVX-512BW.
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
+/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[inline]
 #[target_feature(enable = "avx512bw")]
-pub(crate) unsafe fn ct_decode_avx512(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
-    // SAFETY: caller guarantees AVX-512BW.
-    unsafe { decode_avx512_inner::<false>(input, output) }
+pub(crate) unsafe fn ct_decode_avx512(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+    // SAFETY: caller guarantees AVX-512BW and pointer validity.
+    unsafe { decode_avx512_inner::<false>(src, dst, byte_len) }
 }
 
 /// Check whether every byte in `input` is a valid hex ASCII character,
@@ -1060,10 +1074,10 @@ mod tests {
         assert!(cfg!(miri) || has_ssse3::init().get());
 
         exercise_backend(
-            |input, output| unsafe { encode_ssse3::<false>(input, output) },
-            |input, output| unsafe { encode_ssse3::<true>(input, output) },
-            |input, output| unsafe { decode_ssse3(input, output) },
-            |input, output| unsafe { ct_decode_ssse3(input, output) },
+            |input, output| unsafe { encode_ssse3::<false>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
+            |input, output| unsafe { encode_ssse3::<true>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
+            |input, output| unsafe { decode_ssse3(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) },
+            |input, output| unsafe { ct_decode_ssse3(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) },
             |input| unsafe { check_ssse3(input) },
             |input| unsafe { ct_check_ssse3(input) },
         );
@@ -1078,10 +1092,10 @@ mod tests {
         assert!(cfg!(miri) || has_avx2::init().get());
 
         exercise_backend(
-            |input, output| unsafe { encode_avx2::<false>(input, output) },
-            |input, output| unsafe { encode_avx2::<true>(input, output) },
-            |input, output| unsafe { decode_avx2(input, output) },
-            |input, output| unsafe { ct_decode_avx2(input, output) },
+            |input, output| unsafe { encode_avx2::<false>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
+            |input, output| unsafe { encode_avx2::<true>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
+            |input, output| unsafe { decode_avx2(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) },
+            |input, output| unsafe { ct_decode_avx2(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) },
             |input| unsafe { check_avx2(input) },
             |input| unsafe { ct_check_avx2(input) },
         );
@@ -1096,10 +1110,10 @@ mod tests {
         assert!(cfg!(miri) || has_avx512bw::init().get());
 
         exercise_backend(
-            |input, output| unsafe { encode_avx512::<false>(input, output) },
-            |input, output| unsafe { encode_avx512::<true>(input, output) },
-            |input, output| unsafe { decode_avx512(input, output) },
-            |input, output| unsafe { ct_decode_avx512(input, output) },
+            |input, output| unsafe { encode_avx512::<false>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
+            |input, output| unsafe { encode_avx512::<true>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
+            |input, output| unsafe { decode_avx512(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) },
+            |input, output| unsafe { ct_decode_avx512(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) },
             |input| unsafe { check_avx512(input) },
             |input| unsafe { ct_check_avx512(input) },
         );

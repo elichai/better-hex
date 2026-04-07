@@ -28,7 +28,6 @@
 //! returning `false` iff any high bit was ever set.
 
 use crate::error::Error;
-use core::mem::MaybeUninit;
 
 /// Branchless nibble-to-ASCII encoder (no LUT).
 ///
@@ -79,52 +78,53 @@ const fn ct_decode_nibble(byte: u8) -> u16 {
 /// Encodes every byte of `input` into exactly two hex ASCII characters written
 /// into `output`. Uses branchless nibble arithmetic; no lookup table.
 ///
-/// Uses `chunks_exact_mut(2)` with `zip` to avoid bounds checks without unsafe:
-/// the chunk size is known at compile time, and `zip` bounds the iteration
-/// to `min(input.len(), output.len() / 2)`.
+/// # Safety
 ///
-/// # Contract
-///
-/// Caller should ensure `output` has exactly `input.len() * 2` elements.
-/// Only `min(input.len(), output.len() / 2)` bytes will be encoded.
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
+/// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
 #[allow(dead_code)]
-pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
-    debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
-    let (pairs, _) = output.as_chunks_mut::<2>();
-    for (&byte, pair) in input.iter().zip(pairs) {
-        pair[0].write(ct_encode_nibble::<UPPER>(byte >> 4));
-        pair[1].write(ct_encode_nibble::<UPPER>(byte & 0x0F));
+pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
+    for i in 0..byte_len {
+        // SAFETY: `i < byte_len` so `src.add(i)` is in bounds for reads
+        // and `dst.add(i * 2 + {0,1})` is in bounds for writes.
+        let byte = unsafe { src.add(i).read() };
+        unsafe { dst.add(i * 2).write(ct_encode_nibble::<UPPER>(byte >> 4)) };
+        unsafe { dst.add(i * 2 + 1).write(ct_encode_nibble::<UPPER>(byte & 0x0F)) };
     }
 }
 
 /// Constant-time hex decoder.
 ///
-/// Processes **all** bytes in `input` before returning — no early exit on
-/// invalid characters. Error information is accumulated in a single flag;
-/// the exact position of the first invalid byte is intentionally not revealed
-/// to avoid timing side-channels.
+/// Processes **all** bytes before returning — no early exit on invalid
+/// characters. Error information is accumulated in a single flag; the exact
+/// position of the first invalid byte is intentionally not revealed to avoid
+/// timing side-channels.
 ///
 /// Returns `Ok(())` on success or `Err(InvalidEncoding)` if any byte was
 /// not a valid hex ASCII character.
 ///
-/// # Panics (debug only)
+/// All elements of `dst[..byte_len]` are initialized on return (even on `Err`).
 ///
-/// Panics if `output.len() != input.len() / 2` or `input.len()` is odd.
-pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
-    debug_assert_eq!(output.len(), input.len() / 2, "output buffer wrong size for decode");
-    debug_assert!(input.len().is_multiple_of(2), "input length must be even");
-
+/// # Safety
+///
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
+/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
+pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
     let mut err: u16 = 0;
 
-    for (pair, out_byte) in input.chunks_exact(2).zip(output.iter_mut()) {
-        let hi = ct_decode_nibble(pair[0]);
-        let lo = ct_decode_nibble(pair[1]);
+    for i in 0..byte_len {
+        // SAFETY: `i < byte_len` so `src.add(i * 2 + {0,1})` is in bounds
+        // for reads and `dst.add(i)` is in bounds for writes.
+        let hi = ct_decode_nibble(unsafe { src.add(i * 2).read() });
+        let lo = ct_decode_nibble(unsafe { src.add(i * 2 + 1).read() });
         // Accumulate error: if either nibble has bit 8+ set, err becomes non-zero.
         err |= hi >> 8;
         err |= lo >> 8;
         // Always write, even if invalid — we never branch on the values.
         // The caller must not trust the output buffer if decode returns Err.
-        out_byte.write(((hi << 4) | lo) as u8);
+        unsafe { dst.add(i).write(((hi << 4) | lo) as u8) };
     }
 
     if err != 0 { Err(Error::InvalidEncoding) } else { Ok(()) }
@@ -219,33 +219,35 @@ mod tests {
             *item = i as u8;
         }
 
-        let mut upper_out = [MaybeUninit::uninit(); 512];
-        let mut lower_out = [MaybeUninit::uninit(); 512];
-        encode::<true>(&input, &mut upper_out);
-        encode::<false>(&input, &mut lower_out);
-
-        // Collect the initialized hex ASCII bytes.
-        let upper_bytes: [u8; 512] = core::array::from_fn(|i| unsafe { upper_out[i].assume_init() });
-        let lower_bytes: [u8; 512] = core::array::from_fn(|i| unsafe { lower_out[i].assume_init() });
+        let mut upper_out = [0u8; 512];
+        let mut lower_out = [0u8; 512];
+        // SAFETY: pointers derived from fixed-size arrays with correct lengths.
+        unsafe {
+            encode::<true>(input.as_ptr(), upper_out.as_mut_ptr(), input.len());
+            encode::<false>(input.as_ptr(), lower_out.as_mut_ptr(), input.len());
+        }
 
         // Decode back and compare.
-        let mut decoded = [MaybeUninit::uninit(); 256];
-        decode(&upper_bytes, &mut decoded).expect("upper decode failed");
-        let got: [u8; 256] = core::array::from_fn(|i| unsafe { decoded[i].assume_init() });
-        assert_eq!(got, input, "upper roundtrip");
+        let mut decoded = [0u8; 256];
+        // SAFETY: pointers derived from fixed-size arrays with correct lengths.
+        unsafe { decode(upper_out.as_ptr(), decoded.as_mut_ptr(), decoded.len()) }
+            .expect("upper decode failed");
+        assert_eq!(decoded, input, "upper roundtrip");
 
-        let mut decoded2 = [MaybeUninit::uninit(); 256];
-        decode(&lower_bytes, &mut decoded2).expect("lower decode failed");
-        let got2: [u8; 256] = core::array::from_fn(|i| unsafe { decoded2[i].assume_init() });
-        assert_eq!(got2, input, "lower roundtrip");
+        let mut decoded2 = [0u8; 256];
+        // SAFETY: pointers derived from fixed-size arrays with correct lengths.
+        unsafe { decode(lower_out.as_ptr(), decoded2.as_mut_ptr(), decoded2.len()) }
+            .expect("lower decode failed");
+        assert_eq!(decoded2, input, "lower roundtrip");
     }
 
     #[test]
     fn decode_invalid_returns_error() {
         // A single invalid byte anywhere must cause Err(InvalidEncoding).
         let input = b"0g"; // 'g' is not valid hex
-        let mut out = [MaybeUninit::uninit(); 1];
-        assert_eq!(decode(input, &mut out), Err(Error::InvalidEncoding));
+        let mut out = [0u8; 1];
+        // SAFETY: pointers derived from valid arrays with correct lengths.
+        assert_eq!(unsafe { decode(input.as_ptr(), out.as_mut_ptr(), out.len()) }, Err(Error::InvalidEncoding));
     }
 
     #[test]
@@ -255,8 +257,9 @@ mod tests {
         // all return the same Err variant (no positional info leaks).
         let inputs: &[&[u8]] = &[b"zz", b"zg", b"gz"];
         for &inp in inputs {
-            let mut out = [MaybeUninit::uninit(); 1];
-            assert_eq!(decode(inp, &mut out), Err(Error::InvalidEncoding), "input {:?}", inp);
+            let mut out = [0u8; 1];
+            // SAFETY: all inputs are 2 bytes, out is 1 byte.
+            assert_eq!(unsafe { decode(inp.as_ptr(), out.as_mut_ptr(), out.len()) }, Err(Error::InvalidEncoding), "input {:?}", inp);
         }
     }
 

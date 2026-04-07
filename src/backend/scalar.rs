@@ -28,7 +28,6 @@
 //! alternatives using branchless arithmetic.
 
 use crate::error::Error;
-use core::mem::MaybeUninit;
 
 /// 16-byte lookup table mapping nibble values (0–15) to lowercase ASCII hex
 /// characters (`b'0'..=b'9'`, `b'a'..=b'f'`).
@@ -89,21 +88,19 @@ const DECODE_LUT: [u8; 256] = {
 /// nibble (`byte & 0x0F`), then indexes into `HEX_LOWER` or `HEX_UPPER` to
 /// produce two ASCII hex characters.
 ///
-/// Uses `chunks_exact_mut(2)` with `zip` to avoid bounds checks without unsafe:
-/// the chunk size is known at compile time, and `zip` bounds the iteration
-/// to `min(input.len(), output.len() / 2)`.
+/// # Safety
 ///
-/// # Contract
-///
-/// Caller should ensure `output` has exactly `input.len() * 2` elements.
-/// Only `min(input.len(), output.len() / 2)` bytes will be encoded.
-pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
-    debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
+/// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
+pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
     let table = if UPPER { HEX_UPPER } else { HEX_LOWER };
-    let (pairs, _) = output.as_chunks_mut::<2>();
-    for (&byte, pair) in input.iter().zip(pairs) {
-        pair[0].write(table[usize::from(byte >> 4)]);
-        pair[1].write(table[usize::from(byte & 0x0f)]);
+    for i in 0..byte_len {
+        // SAFETY: `i < byte_len` so `src.add(i)` is in bounds for reads
+        // and `dst.add(i * 2 + {0,1})` is in bounds for writes.
+        let byte = unsafe { src.add(i).read() };
+        unsafe { dst.add(i * 2).write(table[usize::from(byte >> 4)]) };
+        unsafe { dst.add(i * 2 + 1).write(table[usize::from(byte & 0x0f)]) };
     }
 }
 
@@ -115,31 +112,29 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
 /// If either maps to `NIL`, returns `InvalidChar` with the offending byte
 /// and its index. Otherwise combines the two nibbles: `(hi << 4) | lo`.
 ///
-/// # Safety contract
+/// All elements of `dst[..byte_len]` are initialized on `Ok`.
 ///
-/// Caller must ensure `output` has exactly `input.len() / 2` elements and
-/// that `input.len()` is even. All elements of `output` will be initialized
-/// on `Ok`.
-pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
-    debug_assert_eq!(output.len(), input.len() / 2, "output buffer wrong size for decode");
-    debug_assert!(input.len().is_multiple_of(2), "input length must be even");
-    for (i, (pair, out_byte)) in input.chunks_exact(2).zip(output.iter_mut()).enumerate() {
-        let hi = DECODE_LUT[pair[0] as usize];
-        let lo = DECODE_LUT[pair[1] as usize];
+/// # Safety
+///
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
+/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
+pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+    for i in 0..byte_len {
+        // SAFETY: `i < byte_len` so `src.add(i * 2 + {0,1})` is in bounds
+        // for reads and `dst.add(i)` is in bounds for writes.
+        let b0 = unsafe { src.add(i * 2).read() };
+        let b1 = unsafe { src.add(i * 2 + 1).read() };
+        let hi = DECODE_LUT[b0 as usize];
+        let lo = DECODE_LUT[b1 as usize];
         if (hi | lo) == NIL {
             // Determine which nibble was invalid for the error message.
             if hi == NIL {
-                return Err(Error::InvalidChar {
-                    byte: pair[0],
-                    index: i * 2,
-                });
+                return Err(Error::InvalidChar { byte: b0, index: i * 2 });
             }
-            return Err(Error::InvalidChar {
-                byte: pair[1],
-                index: i * 2 + 1,
-            });
+            return Err(Error::InvalidChar { byte: b1, index: i * 2 + 1 });
         }
-        out_byte.write((hi << 4) | lo);
+        unsafe { dst.add(i).write((hi << 4) | lo) };
     }
     Ok(())
 }

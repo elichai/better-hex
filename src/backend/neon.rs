@@ -77,16 +77,19 @@
 use crate::backend::{ct_scalar, scalar};
 use crate::error::Error;
 use core::arch::aarch64::*;
-use core::mem::MaybeUninit;
 
 /// NEON hex encoder — processes 32 input bytes (producing 64 hex chars) per
 /// main loop iteration using 2x-unrolled table lookup. A single remaining
 /// 16-byte chunk is handled separately, and the final < 16 bytes use an
 /// overlapping NEON read (re-encoding the last 16 bytes) when the tail is
 /// >= 4 bytes and the total input is >= 16 bytes; otherwise scalar is used.
-pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
-    debug_assert_eq!(output.len(), input.len() * 2, "output buffer wrong size for encode");
-
+///
+/// # Safety
+///
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
+/// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
+pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
     let lut_bytes: [u8; 16] = if UPPER {
         *b"0123456789ABCDEF"
     } else {
@@ -97,19 +100,16 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
     let lut = unsafe { vld1q_u8(lut_bytes.as_ptr()) };
     let mask_lo = unsafe { vdupq_n_u8(0x0F) };
 
-    let in_base = input.as_ptr();
-    let out_base = output.as_mut_ptr().cast::<u8>();
-    let len = input.len();
     let mut i = 0usize;
 
     // Process 32 bytes (2x16) per iteration to reduce loop overhead
     // and give the OoO engine more independent work per iteration.
-    let simd_end_2x = len / 32 * 32;
+    let simd_end_2x = byte_len / 32 * 32;
     while i < simd_end_2x {
         unsafe {
             // Load two 16-byte chunks.
-            let chunk_a = vld1q_u8(in_base.add(i));
-            let chunk_b = vld1q_u8(in_base.add(i + 16));
+            let chunk_a = vld1q_u8(src.add(i));
+            let chunk_b = vld1q_u8(src.add(i + 16));
 
             // Process chunk A.
             let hi_a = vshrq_n_u8::<4>(chunk_a);
@@ -126,7 +126,7 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
             let zipped_b = vzipq_u8(hi_hex_b, lo_hex_b);
 
             // Store all 64 output bytes.
-            let out = out_base.add(i * 2);
+            let out = dst.add(i * 2);
             vst1q_u8(out, zipped_a.0);
             vst1q_u8(out.add(16), zipped_a.1);
             vst1q_u8(out.add(32), zipped_b.0);
@@ -135,17 +135,17 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
         i += 32;
     }
 
-    // Handle a remaining 16-byte chunk if `len % 32 >= 16`.
+    // Handle a remaining 16-byte chunk if `byte_len % 32 >= 16`.
     // (There can be at most one, since the 2x loop handles pairs.)
-    if i + 16 <= len {
+    if i + 16 <= byte_len {
         unsafe {
-            let chunk = vld1q_u8(in_base.add(i));
+            let chunk = vld1q_u8(src.add(i));
             let hi_nibbles = vshrq_n_u8::<4>(chunk);
             let lo_nibbles = vandq_u8(chunk, mask_lo);
             let hi_hex = vqtbl1q_u8(lut, hi_nibbles);
             let lo_hex = vqtbl1q_u8(lut, lo_nibbles);
             let zipped = vzipq_u8(hi_hex, lo_hex);
-            let out = out_base.add(i * 2);
+            let out = dst.add(i * 2);
             vst1q_u8(out, zipped.0);
             vst1q_u8(out.add(16), zipped.1);
         }
@@ -156,24 +156,24 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
     // 16 input bytes when the tail is >= 4 bytes (worth the SIMD overhead)
     // and the total input is >= 16 bytes (so the overlap is valid). For
     // tiny tails (< 4 bytes) the scalar path is cheaper.
-    if i < len {
-        let remaining = len - i;
-        if remaining >= 4 && len >= 16 {
+    if i < byte_len {
+        let remaining = byte_len - i;
+        if remaining >= 4 && byte_len >= 16 {
             unsafe {
-                let chunk = vld1q_u8(in_base.add(len - 16));
+                let chunk = vld1q_u8(src.add(byte_len - 16));
                 let hi_nibbles = vshrq_n_u8::<4>(chunk);
                 let lo_nibbles = vandq_u8(chunk, mask_lo);
                 let hi_hex = vqtbl1q_u8(lut, hi_nibbles);
                 let lo_hex = vqtbl1q_u8(lut, lo_nibbles);
                 let zipped = vzipq_u8(hi_hex, lo_hex);
-                let out = out_base.add((len - 16) * 2);
+                let out = dst.add((byte_len - 16) * 2);
                 vst1q_u8(out, zipped.0);
                 vst1q_u8(out.add(16), zipped.1);
             }
         } else {
-            let input_tail = unsafe { input.get_unchecked(i..) };
-            let output_tail = unsafe { output.get_unchecked_mut(i * 2..) };
-            scalar::encode::<UPPER>(input_tail, output_tail);
+            // SAFETY: `src.add(i)` is valid for `byte_len - i` reads,
+            // `dst.add(i * 2)` is valid for `(byte_len - i) * 2` writes.
+            unsafe { scalar::encode::<UPPER>(src.add(i), dst.add(i * 2), byte_len - i) };
         }
     }
 }
@@ -188,11 +188,16 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
 ///   end if any invalid character was seen. Tail bytes use `ct_scalar::decode`.
 ///
 /// See module-level documentation for the full algorithm description.
-fn decode_inner<const SHORT_CIRCUIT: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
-    debug_assert_eq!(output.len(), input.len() / 2, "output buffer wrong size for decode");
-    debug_assert!(input.len().is_multiple_of(2), "input length must be even");
-
-    let simd_end = input.len() / 32 * 32;
+///
+/// # Safety
+///
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
+/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
+#[inline]
+unsafe fn decode_inner<const SHORT_CIRCUIT: bool>(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+    let hex_len = byte_len * 2;
+    let simd_end = hex_len / 32 * 32;
     let mut i = 0usize;
     let mut err: u8 = 0;
 
@@ -208,8 +213,8 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(input: &[u8], output: &mut [MaybeUnin
     let c_validate = unsafe { vdupq_n_u8(0x70) };
 
     while i < simd_end {
-        let v0 = unsafe { vld1q_u8(input.as_ptr().add(i)) };
-        let v1 = unsafe { vld1q_u8(input.as_ptr().add(i + 16)) };
+        let v0 = unsafe { vld1q_u8(src.add(i)) };
+        let v1 = unsafe { vld1q_u8(src.add(i + 16)) };
 
         let nib0 = decode_nibbles_with_consts(v0, c_c6, c_six, c_f0, c_df, c_a, c_ten);
         let nib1 = decode_nibbles_with_consts(v1, c_c6, c_six, c_f0, c_df, c_a, c_ten);
@@ -225,9 +230,9 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(input: &[u8], output: &mut [MaybeUnin
 
         if SHORT_CIRCUIT {
             if chunk_err != 0 {
-                let input_tail = unsafe { input.get_unchecked(i..) };
-                let output_tail = unsafe { output.get_unchecked_mut(i / 2..) };
-                return scalar::decode(input_tail, output_tail).map_err(|e| match e {
+                // SAFETY: `src.add(i)` valid for remaining hex,
+                // `dst.add(i / 2)` valid for remaining bytes.
+                return unsafe { scalar::decode(src.add(i), dst.add(i / 2), byte_len - i / 2) }.map_err(|e| match e {
                     Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
                     other => other,
                 });
@@ -240,22 +245,24 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(input: &[u8], output: &mut [MaybeUnin
         let deinterleaved = unsafe { vuzpq_u8(nib0, nib1) };
         let combined = unsafe { vorrq_u8(vshlq_n_u8::<4>(deinterleaved.0), deinterleaved.1) };
 
-        let out_ptr = output.as_mut_ptr().cast::<u8>().wrapping_add(i / 2);
+        let out_ptr = dst.wrapping_add(i / 2);
         unsafe { vst1q_u8(out_ptr, combined) };
 
         i += 32;
     }
 
-    if i < input.len() {
-        let input_tail = unsafe { input.get_unchecked(i..) };
-        let output_tail = unsafe { output.get_unchecked_mut(i / 2..) };
+    if i < hex_len {
+        let tail_byte_len = byte_len - i / 2;
         if SHORT_CIRCUIT {
-            scalar::decode(input_tail, output_tail).map_err(|e| match e {
+            // SAFETY: `src.add(i)` valid for `tail_byte_len * 2` hex bytes,
+            // `dst.add(i / 2)` valid for `tail_byte_len` output bytes.
+            unsafe { scalar::decode(src.add(i), dst.add(i / 2), tail_byte_len) }.map_err(|e| match e {
                 Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
                 other => other,
             })?;
         } else {
-            if ct_scalar::decode(input_tail, output_tail).is_err() {
+            // SAFETY: same pointer validity as above.
+            if unsafe { ct_scalar::decode(src.add(i), dst.add(i / 2), tail_byte_len) }.is_err() {
                 err |= 0x80;
             }
         }
@@ -273,9 +280,14 @@ fn decode_inner<const SHORT_CIRCUIT: bool>(input: &[u8], output: &mut [MaybeUnin
 /// On validation failure within a SIMD chunk, falls back to scalar decoding
 /// from the start of that chunk to produce the exact `InvalidChar` error with
 /// the correct byte and index.
-#[inline]
-pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
-    decode_inner::<true>(input, output)
+///
+/// # Safety
+///
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
+/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
+pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+    unsafe { decode_inner::<true>(src, dst, byte_len) }
 }
 
 /// Constant-time NEON hex decoder — processes all bytes, no early exit.
@@ -283,9 +295,14 @@ pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error>
 /// Accumulates error bits across all chunks and returns `Error::InvalidEncoding`
 /// at the end if any invalid character was encountered. Does not reveal the
 /// position of the invalid character.
-#[inline]
-pub fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
-    decode_inner::<false>(input, output)
+///
+/// # Safety
+///
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
+/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
+pub unsafe fn ct_decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+    unsafe { decode_inner::<false>(src, dst, byte_len) }
 }
 
 /// Decode a 16-byte NEON vector of hex ASCII characters into nibble values,
@@ -331,10 +348,11 @@ fn check_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
     let simd_end = input.len() / 16 * 16;
     let mut i = 0usize;
     let mut all_valid = true;
+    let in_base = input.as_ptr();
 
     while i < simd_end {
         // SAFETY: `i + 16 <= input.len()`.
-        let v = unsafe { vld1q_u8(input.as_ptr().add(i)) };
+        let v = unsafe { vld1q_u8(in_base.add(i)) };
 
         let ge_0 = unsafe { vcgeq_u8(v, vdupq_n_u8(b'0')) };
         let le_9 = unsafe { vcleq_u8(v, vdupq_n_u8(b'9')) };
@@ -395,6 +413,13 @@ mod tests {
 
     #[test]
     fn neon_matches_scalar_oracle() {
-        exercise_backend(encode::<false>, encode::<true>, decode, ct_decode, check, ct_check);
+        exercise_backend(
+            |input, output| unsafe { encode::<false>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
+            |input, output| unsafe { encode::<true>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
+            |input, output| unsafe { decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) },
+            |input, output| unsafe { ct_decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) },
+            check,
+            ct_check,
+        );
     }
 }
