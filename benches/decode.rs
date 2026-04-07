@@ -10,26 +10,31 @@ use std::hint::black_box;
 #[cfg(feature = "_bench_internals")]
 mod common;
 
-/// Case-fold nibble decoder (jedisct1-style): merges upper/lower into one range check.
+/// Original 3-range constant-time nibble decoder, before it was replaced by the
+/// case-fold variant in `ct_scalar`. Tests each hex range independently:
+/// `'0'-'9'`, `'A'-'F'`, `'a'-'f'` — three masked adds vs two in the casefold
+/// version. Kept here to benchmark the regression/improvement from the switch.
 #[cfg(feature = "_bench_internals")]
 #[inline(always)]
-const fn ct_decode_nibble_casefold(byte: u8) -> u16 {
+const fn ct_decode_nibble_3range(byte: u8) -> u16 {
     let b = byte as i16;
-    let upper = b & !0x20; // 'a'-'f' → 'A'-'F'
     let mut ret: i16 = -1;
     ret += (((0x2Fi16 - b) & (b - 0x3A)) >> 8) & (b - 47); // '0'-'9'
-    ret += (((0x40i16 - upper) & (upper - 0x47)) >> 8) & (upper - 54); // 'A'-'F' + 'a'-'f'
+    ret += (((0x40i16 - b) & (b - 0x47)) >> 8) & (b - 54); // 'A'-'F'
+    ret += (((0x60i16 - b) & (b - 0x67)) >> 8) & (b - 86); // 'a'-'f'
     ret as u16
 }
 
-/// Decode loop using the case-fold nibble decoder, for benchmarking against `ct_scalar::decode`.
+/// Full decode loop using the 3-range nibble decoder, matching the structure of
+/// `ct_scalar::decode` but with the old nibble function. Used to measure the
+/// isolated effect of switching from 3-range to casefold nibble decoding.
 #[cfg(feature = "_bench_internals")]
 #[inline(never)]
-fn ct_decode_casefold(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), better_hex::Error> {
+fn ct_decode_3range(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), better_hex::Error> {
     let mut err: u16 = 0;
     for (pair, out_byte) in input.chunks_exact(2).zip(output.iter_mut()) {
-        let hi = ct_decode_nibble_casefold(pair[0]);
-        let lo = ct_decode_nibble_casefold(pair[1]);
+        let hi = ct_decode_nibble_3range(pair[0]);
+        let lo = ct_decode_nibble_3range(pair[1]);
         err |= hi >> 8;
         err |= lo >> 8;
         out_byte.write(((hi << 4) | lo) as u8);
@@ -60,8 +65,8 @@ fn bench_decode(c: &mut Criterion) {
             b.iter(|| ct_scalar::decode(black_box(bufs.next()), black_box(output.as_mut_slice())).unwrap())
         });
 
-        group.bench_function(BenchmarkId::new("ct_casefold", size), |b| {
-            b.iter(|| ct_decode_casefold(black_box(bufs.next()), black_box(output.as_mut_slice())).unwrap())
+        group.bench_function(BenchmarkId::new("ct_3range", size), |b| {
+            b.iter(|| ct_decode_3range(black_box(bufs.next()), black_box(output.as_mut_slice())).unwrap())
         });
 
         #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]

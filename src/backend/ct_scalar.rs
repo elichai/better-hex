@@ -16,10 +16,11 @@
 //!
 //! # Decoding
 //!
-//! Each input byte is tested against all three valid ranges
-//! (`'0'-'9'`, `'A'-'F'`, `'a'-'f'`) simultaneously. Invalid bytes produce a
-//! value with bit 8 set (i.e. > 0xFF when treated as u16), which is accumulated
-//! via `err |= val >> 8`. The function processes **all** bytes before returning.
+//! Each input byte is case-folded (`b & !0x20`) to merge upper/lowercase letter
+//! ranges, then tested against two ranges (`'0'-'9'` and `'A'-'F'`/`'a'-'f'`).
+//! Invalid bytes produce a value with bit 8 set (i.e. > 0xFF when treated as
+//! u16), which is accumulated via `err |= val >> 8`. The function processes
+//! **all** bytes before returning.
 //!
 //! # Validation
 //!
@@ -48,30 +49,28 @@ const fn ct_encode_nibble<const UPPER: bool>(nibble: u8) -> u8 {
     ret as u8
 }
 
-/// Branchless ASCII-to-nibble decoder (no LUT).
+/// Branchless ASCII-to-nibble decoder with case-folding (no LUT).
 ///
 /// Returns the nibble value in `0..=15` when the byte is valid hex, or a
 /// value `> 0xFF` (bit 8 set) when `byte` is not a valid hex character.
 ///
-/// The three valid ranges each contribute through independent, overlapping
-/// range-masked arithmetic expressions that combine additively:
+/// Uses a case-fold trick (`b & !0x20`) to merge uppercase and lowercase
+/// letter ranges into a single check, reducing three range tests to two:
 /// - `'0'-'9'` (0x30..=0x39): `b - 47` masked by `(0x2F-b)>>8 & (b-0x3A)>>8`
-/// - `'A'-'F'` (0x41..=0x46): `b - 54` masked by …
-/// - `'a'-'f'` (0x61..=0x66): `b - 86` masked by …
+/// - `'A'-'F'` / `'a'-'f'`: fold via `upper = b & !0x20`, then `upper - 54`
+///   masked by `(0x40-upper)>>8 & (upper-0x47)>>8`
 ///
-/// Because exactly one range (or none) matches, the sum is correct.
 /// The initial `ret = -1` makes an invalid byte produce `≤ -1` (bit 8 set in
 /// i16), which callers detect by checking `ret >> 8` (non-zero ⇒ invalid).
 #[inline(always)]
 const fn ct_decode_nibble(byte: u8) -> u16 {
     let b = byte as i16;
+    let upper = b & !0x20; // 'a'-'f' → 'A'-'F', digits unchanged
     let mut ret: i16 = -1;
-    // '0'..='9': 0x30..=0x39; mask: (0x2F-b)<0 AND (b-0x3A)<0
+    // '0'..='9': 0x30..=0x39
     ret += (((0x2Fi16 - b) & (b - 0x3A)) >> 8) & (b - 47);
-    // 'A'..='F': 0x41..=0x46; mask: (0x40-b)<0 AND (b-0x47)<0
-    ret += (((0x40i16 - b) & (b - 0x47)) >> 8) & (b - 54);
-    // 'a'..='f': 0x60..=0x66; mask: (0x60-b)<0 AND (b-0x67)<0
-    ret += (((0x60i16 - b) & (b - 0x67)) >> 8) & (b - 86);
+    // 'A'-'F' + 'a'-'f' via case-fold
+    ret += (((0x40i16 - upper) & (upper - 0x47)) >> 8) & (upper - 54);
     ret as u16
 }
 
@@ -111,7 +110,6 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) {
 /// # Panics (debug only)
 ///
 /// Panics if `output.len() != input.len() / 2` or `input.len()` is odd.
-#[inline]
 pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     debug_assert_eq!(output.len(), input.len() / 2, "output buffer wrong size for decode");
     debug_assert!(input.len().is_multiple_of(2), "input length must be even");
