@@ -35,8 +35,7 @@ fn encode_inner<'a, const UPPER: bool>(input: &[u8], output: &'a mut [u8]) -> Re
     // come from a valid `&mut [u8]`. Treating initialized bytes as `MaybeUninit`
     // is always valid (widening the validity invariant). The backend will
     // overwrite every element.
-    let uninit =
-        unsafe { core::slice::from_raw_parts_mut(output.as_mut_ptr().cast::<MaybeUninit<u8>>(), output.len()) };
+    let uninit = maybe_uninit::slice_as_uninit_mut(output);
     backend::ct_encode::<UPPER>(input, uninit)?;
     debug_assert!(output.iter().all(|b| b.is_ascii()), "ct encode produced non-ASCII");
     // SAFETY: ct_encode wrote valid hex ASCII into every byte of `output`.
@@ -56,8 +55,7 @@ pub fn decode<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a [u8], Error>
     // come from a valid `&mut [u8]`. Treating initialized bytes as `MaybeUninit`
     // is always valid (widening the validity invariant). The backend will
     // overwrite every element on success.
-    let uninit =
-        unsafe { core::slice::from_raw_parts_mut(output.as_mut_ptr().cast::<MaybeUninit<u8>>(), output.len()) };
+    let uninit = maybe_uninit::slice_as_uninit_mut(output);
     backend::ct_decode(input, uninit)?;
     Ok(output)
 }

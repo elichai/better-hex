@@ -4,7 +4,7 @@
 //! wrappers around the generic helpers defined here, parameterised on case
 //! (upper/lower), prefix (with/without `"0x"`), and timing behaviour (fast/CT).
 
-use crate::error::Error;
+use crate::{error::Error, maybe_uninit};
 use core::fmt;
 use serde::{Deserializer, Serializer, de};
 
@@ -68,7 +68,7 @@ impl fmt::Display for CtHexDisplayAdapter<'_> {
             }
             // SAFETY: ct_encode wrote `hex_len` bytes of valid hex ASCII (= valid UTF-8).
             let s = unsafe {
-                let init = core::slice::from_raw_parts(hex_buf.as_ptr().cast::<u8>(), hex_len);
+                let init = maybe_uninit::assume_init_slice(hex_buf);
                 core::str::from_utf8_unchecked(init)
             };
             f.write_str(s)?;

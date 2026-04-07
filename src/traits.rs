@@ -395,8 +395,9 @@ unsafe impl<const N: usize> Container for heapless::Vec<u8, N> {
     fn as_mut_slice(handle: &mut Self::Handle) -> &mut [MaybeUninit<u8>] {
         // SAFETY: heapless 0.9 — as_mut_ptr() points to the backing [u8; N].
         // We expose the full buffer as MaybeUninit.
+        let capacity = handle.capacity();
         let ptr = handle.as_mut_ptr().cast::<MaybeUninit<u8>>();
-        unsafe { core::slice::from_raw_parts_mut(ptr, N) }
+        unsafe { core::slice::from_raw_parts_mut(ptr, capacity) }
     }
 
     unsafe fn set_len(mut handle: Self::Handle, new_len: usize) -> Self {

@@ -32,7 +32,7 @@ pub fn decode_to_slice<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a [u8
     // preserves the slice length. Treating initialized `u8` as `MaybeUninit<u8>`
     // is always valid (widening the validity invariant). The backend will
     // overwrite every element on success.
-    let mu_output = unsafe { &mut *(output as *mut [u8] as *mut [core::mem::MaybeUninit<u8>]) };
+    let mu_output = maybe_uninit::slice_as_uninit_mut(output);
     backend::decode(input, mu_output)?;
     Ok(output)
 }
