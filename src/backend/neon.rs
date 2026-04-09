@@ -232,10 +232,12 @@ unsafe fn decode_inner<const SHORT_CIRCUIT: bool>(src: *const u8, dst: *mut u8, 
             if chunk_err != 0 {
                 // SAFETY: `src.add(i)` valid for remaining hex,
                 // `dst.add(i / 2)` valid for remaining bytes.
-                return unsafe { scalar::decode_inner(src.add(i), dst.add(i / 2), byte_len - i / 2) }.map_err(|e| match e {
-                    Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
-                    other => other,
-                });
+                return unsafe { scalar::decode_inner(src.add(i), dst.add(i / 2), byte_len - i / 2) }.map_err(
+                    |e| match e {
+                        Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
+                        other => other,
+                    },
+                );
             }
         } else {
             err |= chunk_err;

@@ -96,6 +96,10 @@ pub unsafe fn encode_inner<const UPPER: bool>(src: *const u8, dst: *mut u8, byte
 }
 
 /// See [`encode_inner`].
+///
+/// # Safety
+///
+/// Same requirements as [`encode_inner`].
 #[allow(dead_code)]
 pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
     unsafe { encode_inner::<UPPER>(src, dst, byte_len) }
@@ -136,6 +140,10 @@ pub unsafe fn decode_inner(src: *const u8, dst: *mut u8, byte_len: usize) -> Res
 }
 
 /// See [`decode_inner`].
+///
+/// # Safety
+///
+/// Same requirements as [`decode_inner`].
 pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
     unsafe { decode_inner(src, dst, byte_len) }
 }
@@ -241,14 +249,12 @@ mod tests {
         // Decode back and compare.
         let mut decoded = [0u8; 256];
         // SAFETY: pointers derived from fixed-size arrays with correct lengths.
-        unsafe { decode(upper_out.as_ptr(), decoded.as_mut_ptr(), decoded.len()) }
-            .expect("upper decode failed");
+        unsafe { decode(upper_out.as_ptr(), decoded.as_mut_ptr(), decoded.len()) }.expect("upper decode failed");
         assert_eq!(decoded, input, "upper roundtrip");
 
         let mut decoded2 = [0u8; 256];
         // SAFETY: pointers derived from fixed-size arrays with correct lengths.
-        unsafe { decode(lower_out.as_ptr(), decoded2.as_mut_ptr(), decoded2.len()) }
-            .expect("lower decode failed");
+        unsafe { decode(lower_out.as_ptr(), decoded2.as_mut_ptr(), decoded2.len()) }.expect("lower decode failed");
         assert_eq!(decoded2, input, "lower roundtrip");
     }
 
@@ -258,7 +264,10 @@ mod tests {
         let input = b"0g"; // 'g' is not valid hex
         let mut out = [0u8; 1];
         // SAFETY: pointers derived from valid arrays with correct lengths.
-        assert_eq!(unsafe { decode(input.as_ptr(), out.as_mut_ptr(), out.len()) }, Err(Error::InvalidEncoding));
+        assert_eq!(
+            unsafe { decode(input.as_ptr(), out.as_mut_ptr(), out.len()) },
+            Err(Error::InvalidEncoding)
+        );
     }
 
     #[test]
@@ -270,7 +279,12 @@ mod tests {
         for &inp in inputs {
             let mut out = [0u8; 1];
             // SAFETY: all inputs are 2 bytes, out is 1 byte.
-            assert_eq!(unsafe { decode(inp.as_ptr(), out.as_mut_ptr(), out.len()) }, Err(Error::InvalidEncoding), "input {:?}", inp);
+            assert_eq!(
+                unsafe { decode(inp.as_ptr(), out.as_mut_ptr(), out.len()) },
+                Err(Error::InvalidEncoding),
+                "input {:?}",
+                inp
+            );
         }
     }
 

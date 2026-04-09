@@ -49,7 +49,11 @@ unsafe fn ct_decode_casefold(src: *const u8, dst: *mut u8, byte_len: usize) -> R
             err |= lo >> 8;
             dst.add(i).write(((hi << 4) | lo) as u8);
         }
-        if err != 0 { Err(better_hex::Error::InvalidEncoding) } else { Ok(()) }
+        if err != 0 {
+            Err(better_hex::Error::InvalidEncoding)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -104,7 +108,11 @@ unsafe fn ct_decode_casefold_unrolled(src: *const u8, dst: *mut u8, byte_len: us
             dst.add(i).write(((hi << 4) | lo) as u8);
         }
 
-        if err != 0 { Err(better_hex::Error::InvalidEncoding) } else { Ok(()) }
+        if err != 0 {
+            Err(better_hex::Error::InvalidEncoding)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -171,7 +179,11 @@ unsafe fn ct_decode_swar(src: *const u8, dst: *mut u8, byte_len: usize) -> Resul
             dst_tail = dst_tail.add(1);
         }
 
-        if err != 0 { Err(better_hex::Error::InvalidEncoding) } else { Ok(()) }
+        if err != 0 {
+            Err(better_hex::Error::InvalidEncoding)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -237,7 +249,11 @@ unsafe fn ct_decode_agent_swar(src: *const u8, dst: *mut u8, byte_len: usize) ->
             dst_tail = dst_tail.add(1);
         }
 
-        if err != 0 { Err(better_hex::Error::InvalidEncoding) } else { Ok(()) }
+        if err != 0 {
+            Err(better_hex::Error::InvalidEncoding)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -245,6 +261,7 @@ unsafe fn ct_decode_agent_swar(src: *const u8, dst: *mut u8, byte_len: usize) ->
 /// into two packed u64 tables (delta_check + delta_rebase) via variable shift.
 /// ~9 ops per nibble, serial dependency chain.
 #[cfg(feature = "_bench_internals")]
+#[allow(dead_code)] // Reference implementation kept for comparison with the _ct variant.
 #[inline(always)]
 const fn ct_decode_nibble_varshift(byte: u8) -> u16 {
     // Lemire delta_rebase: entries at indices 2,3,4,6; rest=0
@@ -306,18 +323,28 @@ unsafe fn ct_decode_varshift(src: *const u8, dst: *mut u8, byte_len: usize) -> R
             err |= lo >> 8;
             dst.add(i).write(((hi << 4) | lo) as u8);
         }
-        if err != 0 { Err(better_hex::Error::InvalidEncoding) } else { Ok(()) }
+        if err != 0 {
+            Err(better_hex::Error::InvalidEncoding)
+        } else {
+            Ok(())
+        }
     }
 }
 
+#[cfg(feature = "_bench_internals")]
 #[inline(always)]
 fn call(
     decode_fn: unsafe fn(*const u8, *mut u8, usize) -> Result<(), better_hex::Error>,
     input: &[u8],
     output: &mut [u8],
 ) -> Result<(), better_hex::Error> {
-    assert_eq!(input.len(), output.len() * 2, "input length must be twice output length");
-    // SAFETY: `decode_fn` requires valid pointers and length; these come from valid slices. The backend will overwrite every element on success.
+    assert_eq!(
+        input.len(),
+        output.len() * 2,
+        "input length must be twice output length"
+    );
+    // SAFETY: `decode_fn` requires valid pointers and length; these come from valid slices.
+    // The backend will overwrite every element on success.
     unsafe { decode_fn(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) }
 }
 
@@ -333,9 +360,7 @@ fn bench_decode(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(size as u64));
 
         group.bench_function(BenchmarkId::new("scalar", size), |b| {
-            b.iter(|| {
-                call(scalar::decode, black_box(bufs.next()), black_box(&mut output)).unwrap()
-            })
+            b.iter(|| call(scalar::decode, black_box(bufs.next()), black_box(&mut output)).unwrap())
         });
 
         group.bench_function(BenchmarkId::new("ct_scalar", size), |b| {
@@ -343,49 +368,58 @@ fn bench_decode(c: &mut Criterion) {
         });
 
         group.bench_function(BenchmarkId::new("ct_casefold", size), |b| {
-            b.iter(|| {
-                call(ct_decode_casefold, black_box(bufs.next()), black_box(&mut output)).unwrap()
-            })
+            b.iter(|| call(ct_decode_casefold, black_box(bufs.next()), black_box(&mut output)).unwrap())
         });
 
         group.bench_function(BenchmarkId::new("ct_unrolled", size), |b| {
             b.iter(|| {
-                call(ct_decode_casefold_unrolled, black_box(bufs.next()), black_box(&mut output)).unwrap()
+                call(
+                    ct_decode_casefold_unrolled,
+                    black_box(bufs.next()),
+                    black_box(&mut output),
+                )
+                .unwrap()
             })
         });
 
         group.bench_function(BenchmarkId::new("ct_swar", size), |b| {
-            b.iter(|| {
-                call(ct_decode_swar, black_box(bufs.next()), black_box(&mut output)).unwrap()
-            })
+            b.iter(|| call(ct_decode_swar, black_box(bufs.next()), black_box(&mut output)).unwrap())
         });
 
         group.bench_function(BenchmarkId::new("ct_agent_swar", size), |b| {
-            b.iter(|| {
-                call(ct_decode_agent_swar, black_box(bufs.next()), black_box(&mut output)).unwrap()
-            })
+            b.iter(|| call(ct_decode_agent_swar, black_box(bufs.next()), black_box(&mut output)).unwrap())
         });
 
         group.bench_function(BenchmarkId::new("ct_varshift", size), |b| {
-            b.iter(|| {
-                call(ct_decode_varshift, black_box(bufs.next()), black_box(&mut output)).unwrap()
-            })
+            b.iter(|| call(ct_decode_varshift, black_box(bufs.next()), black_box(&mut output)).unwrap())
         });
 
         group.bench_function(BenchmarkId::new("ct_3range", size), |b| {
-            b.iter(|| {
-                call(ct_decode_3range, black_box(bufs.next()), black_box(&mut output)).unwrap()
-            })
+            b.iter(|| call(ct_decode_3range, black_box(bufs.next()), black_box(&mut output)).unwrap())
         });
 
         #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
         group.bench_function(BenchmarkId::new("neon", size), |b| {
-            b.iter(|| call(better_hex::bench_internals::neon::decode, black_box(bufs.next()), black_box(&mut output)).unwrap())
+            b.iter(|| {
+                call(
+                    better_hex::bench_internals::neon::decode,
+                    black_box(bufs.next()),
+                    black_box(&mut output),
+                )
+                .unwrap()
+            })
         });
 
         #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
         group.bench_function(BenchmarkId::new("neon_ct", size), |b| {
-            b.iter(|| call(better_hex::bench_internals::neon::ct_decode, black_box(bufs.next()), black_box(&mut output)).unwrap())
+            b.iter(|| {
+                call(
+                    better_hex::bench_internals::neon::ct_decode,
+                    black_box(bufs.next()),
+                    black_box(&mut output),
+                )
+                .unwrap()
+            })
         });
 
         group.bench_function(BenchmarkId::new("dispatched", size), |b| {

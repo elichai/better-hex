@@ -248,6 +248,7 @@ fn from_hex_container<C: Container>(hex: &[u8]) -> Result<C, Error> {
 ///   at compile time, since decoded hex output is raw bytes, not UTF-8.
 unsafe trait Container: Sized {
     /// `true` if `set_len` requires the written bytes to be valid UTF-8.
+    #[allow(dead_code)] // Read by `from_hex_container`, which is feature-gated.
     const REQUIRES_UTF8: bool;
     type Handle;
     /// Allocate or create a container with at least `min_capacity` bytes.

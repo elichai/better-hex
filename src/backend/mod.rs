@@ -51,7 +51,6 @@ macro_rules! dispatch {
         wasm: $wasm:expr $(,)?
     ) => {
         match platform::detect() {
-            Platform::Uninit => unreachable!(),
             Platform::Scalar => $scalar,
             #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
             Platform::Neon => $neon,
@@ -76,7 +75,10 @@ macro_rules! dispatch {
 #[inline]
 pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     if output.len() != input.len() * 2 {
-        return Err(Error::InvalidLength { expected: input.len() * 2, got: output.len() });
+        return Err(Error::InvalidLength {
+            expected: input.len() * 2,
+            got: output.len(),
+        });
     }
     let src = input.as_ptr();
     let dst = output.as_mut_ptr().cast::<u8>();
@@ -104,7 +106,10 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) -
 #[inline]
 pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     if input.len() != output.len() * 2 {
-        return Err(Error::InvalidLength { expected: output.len() * 2, got: input.len() });
+        return Err(Error::InvalidLength {
+            expected: output.len() * 2,
+            got: input.len(),
+        });
     }
     let src = input.as_ptr();
     let byte_len = output.len();
@@ -130,7 +135,10 @@ pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error>
 #[inline]
 pub fn ct_encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     if output.len() != input.len() * 2 {
-        return Err(Error::InvalidLength { expected: input.len() * 2, got: output.len() });
+        return Err(Error::InvalidLength {
+            expected: input.len() * 2,
+            got: output.len(),
+        });
     }
     let byte_len = input.len();
     let src = input.as_ptr();
@@ -154,7 +162,10 @@ pub fn ct_encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]
 #[inline]
 pub fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     if input.len() != output.len() * 2 {
-        return Err(Error::InvalidLength { expected: output.len() * 2, got: input.len() });
+        return Err(Error::InvalidLength {
+            expected: output.len() * 2,
+            got: input.len(),
+        });
     }
     let byte_len = output.len();
     let src = input.as_ptr();

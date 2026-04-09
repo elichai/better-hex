@@ -70,7 +70,8 @@ pub(crate) unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byt
             // Interleave: for each byte position k, output[2k] = hi_ascii[k],
             // output[2k+1] = lo_ascii[k].
             let out0 = u8x16_shuffle::<0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23>(hi_ascii, lo_ascii);
-            let out1 = u8x16_shuffle::<8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31>(hi_ascii, lo_ascii);
+            let out1 =
+                u8x16_shuffle::<8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31>(hi_ascii, lo_ascii);
 
             let out_ptr = dst.add(i * 32);
             v128_store(out_ptr.cast(), out0);
@@ -137,15 +138,14 @@ unsafe fn decode_inner<const SHORT_CIRCUIT: bool>(src: *const u8, dst: *mut u8, 
                 // Fall back to scalar on the remaining input to get precise error info.
                 // SAFETY: `src.add(hex_off)` valid for remaining hex bytes,
                 // `dst.add(byte_off)` valid for remaining output bytes.
-                return unsafe { scalar::decode_inner(src.add(hex_off), dst.add(byte_off), byte_len - byte_off) }.map_err(
-                    |e| match e {
+                return unsafe { scalar::decode_inner(src.add(hex_off), dst.add(byte_off), byte_len - byte_off) }
+                    .map_err(|e| match e {
                         Error::InvalidChar { byte, index } => Error::InvalidChar {
                             byte,
                             index: index + hex_off,
                         },
                         other => other,
-                    },
-                );
+                    });
             }
         } else {
             err_accum |= ok0 | ok1;
@@ -186,7 +186,9 @@ unsafe fn decode_inner<const SHORT_CIRCUIT: bool>(src: *const u8, dst: *mut u8, 
             )?;
         } else {
             // SAFETY: same pointer validity as above.
-            if unsafe { ct_scalar::decode_inner(src.add(consumed_hex), dst.add(consumed_bytes), tail_byte_len) }.is_err() {
+            if unsafe { ct_scalar::decode_inner(src.add(consumed_hex), dst.add(consumed_bytes), tail_byte_len) }
+                .is_err()
+            {
                 err_accum |= 1;
             }
         }

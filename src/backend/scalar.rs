@@ -106,6 +106,10 @@ pub unsafe fn encode_inner<const UPPER: bool>(src: *const u8, dst: *mut u8, byte
 }
 
 /// See [`encode_inner`].
+///
+/// # Safety
+///
+/// Same requirements as [`encode_inner`].
 pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
     unsafe { encode_inner::<UPPER>(src, dst, byte_len) }
 }
@@ -139,7 +143,10 @@ pub unsafe fn decode_inner(src: *const u8, dst: *mut u8, byte_len: usize) -> Res
             if hi == NIL {
                 return Err(Error::InvalidChar { byte: b0, index: i * 2 });
             }
-            return Err(Error::InvalidChar { byte: b1, index: i * 2 + 1 });
+            return Err(Error::InvalidChar {
+                byte: b1,
+                index: i * 2 + 1,
+            });
         }
         unsafe { dst.add(i).write((hi << 4) | lo) };
     }
@@ -147,6 +154,10 @@ pub unsafe fn decode_inner(src: *const u8, dst: *mut u8, byte_len: usize) -> Res
 }
 
 /// See [`decode_inner`].
+///
+/// # Safety
+///
+/// Same requirements as [`decode_inner`].
 pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
     unsafe { decode_inner(src, dst, byte_len) }
 }

@@ -11,12 +11,12 @@ mod common;
 
 #[cfg(feature = "_bench_internals")]
 #[inline(always)]
-fn call(
-    encode_fn: unsafe fn(*const u8, *mut u8, usize),
-    input: &[u8],
-    output: &mut [u8],
-) {
-    assert_eq!(output.len(), input.len() * 2, "output length must be twice input length");
+fn call(encode_fn: unsafe fn(*const u8, *mut u8, usize), input: &[u8], output: &mut [u8]) {
+    assert_eq!(
+        output.len(),
+        input.len() * 2,
+        "output length must be twice input length"
+    );
     // SAFETY: pointers derived from valid slices with correct lengths.
     unsafe { encode_fn(input.as_ptr(), output.as_mut_ptr(), input.len()) }
 }
@@ -36,7 +36,13 @@ fn bench_encode(c: &mut Criterion) {
         });
 
         group.bench_function(BenchmarkId::new("ct_scalar", size), |b| {
-            b.iter(|| call(ct_scalar::encode::<false>, black_box(bufs.next()), black_box(&mut output)))
+            b.iter(|| {
+                call(
+                    ct_scalar::encode::<false>,
+                    black_box(bufs.next()),
+                    black_box(&mut output),
+                )
+            })
         });
 
         #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]

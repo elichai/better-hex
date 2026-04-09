@@ -40,27 +40,27 @@ fn roundtrip_all_apis() {
         str_buf.clear();
 
         // encode_to_slice / decode_to_slice — lower
-        better_hex::encode_to_slice(&input, &mut hex_buf).unwrap();
+        better_hex::encode_to_slice(input, &mut hex_buf).unwrap();
         better_hex::decode_to_slice(&hex_buf, &mut dec_buf).unwrap();
         assert_eq!(dec_buf, input, "slice roundtrip (lower) failed at size {size}");
 
         // encode_to_slice / decode_to_slice — upper
-        better_hex::encode_to_slice_upper(&input, &mut hex_buf).unwrap();
+        better_hex::encode_to_slice_upper(input, &mut hex_buf).unwrap();
         better_hex::decode_to_slice(&hex_buf, &mut dec_buf).unwrap();
         assert_eq!(dec_buf, input, "slice roundtrip (upper) failed at size {size}");
 
         // encode::<String> / decode::<Vec<u8>>
-        let hex: String = better_hex::encode(&input).unwrap();
+        let hex: String = better_hex::encode(input).unwrap();
         assert_eq!(hex.len(), hex_len);
         let decoded: Vec<u8> = better_hex::decode(&hex).unwrap();
         assert_eq!(decoded, input, "String/Vec roundtrip failed at size {size}");
 
         // CT encode/decode — lower and upper
-        better_hex::ct::encode_lower(&input, &mut hex_buf).unwrap();
+        better_hex::ct::encode_lower(input, &mut hex_buf).unwrap();
         better_hex::ct::decode(&hex_buf, &mut dec_buf).unwrap();
         assert_eq!(dec_buf, input, "CT lower roundtrip failed at size {size}");
 
-        better_hex::ct::encode_upper(&input, &mut hex_buf).unwrap();
+        better_hex::ct::encode_upper(input, &mut hex_buf).unwrap();
         better_hex::ct::decode(&hex_buf, &mut dec_buf).unwrap();
         assert_eq!(dec_buf, input, "CT upper roundtrip failed at size {size}");
 
@@ -75,7 +75,7 @@ fn roundtrip_all_apis() {
         assert_eq!(ct_from_hex_vec, input, "ct::FromHex<Vec> at size {size}");
 
         // ToHex — write_hex + encode_hex (lower and upper)
-        let expected_upper: String = better_hex::encode_upper(&input).unwrap();
+        let expected_upper: String = better_hex::encode_upper(input).unwrap();
 
         input.write_hex(&mut str_buf, false).unwrap();
         assert_eq!(str_buf, hex, "write_hex lower at size {size}");
@@ -89,9 +89,9 @@ fn roundtrip_all_apis() {
         assert_eq!(trait_upper, expected_upper, "encode_hex_upper at size {size}");
 
         // HexTarget for String (lower + upper)
-        let ht: String = <String as HexTarget>::encode_hex(&input).unwrap();
+        let ht: String = <String as HexTarget>::encode_hex(input).unwrap();
         assert_eq!(ht.len(), hex_len);
-        let ht_upper: String = <String as HexTarget>::encode_hex_upper(&input).unwrap();
+        let ht_upper: String = <String as HexTarget>::encode_hex_upper(input).unwrap();
         assert_eq!(ht_upper.len(), hex_len);
 
         // Display (all 5 format modes)

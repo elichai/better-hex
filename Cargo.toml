@@ -2,6 +2,7 @@
 name = "better-hex"
 version = "0.1.0"
 edition = "2024"
+autobenches = false
 license = "MIT OR Apache-2.0"
 description = "Fast hex encoding/decoding with SIMD, const fn, and constant-time support"
 
@@ -13,7 +14,7 @@ disable-simd = []
 serde = ["dep:serde"]
 heapless = ["dep:heapless"]
 arrayvec = ["dep:arrayvec"]
-_bench_internals = []
+_bench_internals = ["std"]
 _bench_const_hex = []
 _bench_faster_hex = []
 _bench_hex = []

@@ -58,7 +58,7 @@ fn decode_error_paths() {
     ));
 
     // Boundary chars just outside valid hex ranges
-    for &byte in &[b'/', b':', b'@', b'G', b'`', b'g'] {
+    for &byte in b"/:@G`g" {
         let mut out = [0u8; 1];
         assert!(better_hex::decode_to_slice(&[b'0', byte], &mut out).is_err());
     }
@@ -84,15 +84,18 @@ fn ct_error_paths() {
     );
 
     // CT processes all bytes (invalid at start and end → same error)
-    let mut hex = better_hex::encode_string(&[0u8; 32]);
-    let bytes = unsafe { hex.as_bytes_mut() };
-    bytes[0] = b'Z';
-    bytes[63] = b'Z';
-    let mut out = [0u8; 32];
-    assert_eq!(
-        better_hex::ct::decode(bytes, &mut out).unwrap_err(),
-        Error::InvalidEncoding
-    );
+    #[cfg(feature = "alloc")]
+    {
+        let mut hex = better_hex::encode_string(&[0u8; 32]);
+        let bytes = unsafe { hex.as_bytes_mut() };
+        bytes[0] = b'Z';
+        bytes[63] = b'Z';
+        let mut out = [0u8; 32];
+        assert_eq!(
+            better_hex::ct::decode(bytes, &mut out).unwrap_err(),
+            Error::InvalidEncoding
+        );
+    }
 
     // CT check
     assert!(better_hex::ct::check(b"deadbeef"));
@@ -311,6 +314,7 @@ fn serde_error_paths() {
         data: [u8; 4],
     }
     #[derive(Serialize, Deserialize, Debug)]
+    #[allow(clippy::upper_case_acronyms)]
     struct CUP {
         #[serde(with = "better_hex::serde::ct::upper_prefixed")]
         data: [u8; 4],
