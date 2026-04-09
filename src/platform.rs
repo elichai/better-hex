@@ -1,23 +1,22 @@
-//! Runtime platform detection with atomic caching.
+//! Platform detection for backend dispatch.
 //!
 //! [`detect()`] returns the best available SIMD backend as a [`Platform`] enum
-//! variant. The result is cached in an [`AtomicU8`] so subsequent calls are a
-//! single relaxed load + branch.
-
-use core::sync::atomic::{AtomicU8, Ordering};
+//! variant.
+//!
+//! On targets where the SIMD level is known at compile time (aarch64+NEON,
+//! wasm32+simd128, x86+avx512bw, or `disable-simd`), `detect()` returns a
+//! constant — no atomic load, no branch. Only x86/x86_64 without a
+//! compile-time-known top-tier feature falls through to runtime CPUID,
+//! cached in an [`AtomicU8`].
 
 /// Detected SIMD platform for backend dispatch.
 ///
 /// Variants are `#[cfg]`-gated so only platforms reachable on the current
-/// target exist. `Uninit` is the sentinel stored in the atomic before the
-/// first detection.
+/// target exist.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)] // Scalar is constructed inside cfg_if which the lint can't see through.
 pub(crate) enum Platform {
-    /// Not yet detected. Discriminant **must** be 0 so the zero-initialized
-    /// atomic starts in this state.
-    Uninit = 0,
     Scalar,
     #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
     Neon,
@@ -31,46 +30,29 @@ pub(crate) enum Platform {
     Wasm,
 }
 
-static CACHED: AtomicU8 = AtomicU8::new(Platform::Uninit as u8);
-impl Platform {
-    #[inline(always)]
-    fn load() -> Self {
-        // SAFETY: `CACHED` is initialized to `Uninit as u8` (== 0) and only
-        // ever written by `store()` with a valid `Platform` discriminant.
-        unsafe { core::mem::transmute::<u8, Self>(CACHED.load(Ordering::Relaxed)) }
-    }
-    #[inline(always)]
-    fn store(self) {
-        CACHED.store(self as u8, Ordering::Relaxed);
-    }
-}
-
-/// Return the best available platform, caching the result in an atomic.
-#[inline]
+/// Return the best available platform.
+///
+/// On platforms where the SIMD level is known at compile time (aarch64+NEON,
+/// wasm32+simd128, x86+avx512bw, or `disable-simd`), this returns a constant
+/// with zero runtime overhead — no atomic load, no branch.
+///
+/// Only x86/x86_64 without compile-time avx512bw goes through the cached
+/// atomic path (CPUID on first call, then a single relaxed load thereafter).
+#[inline(always)]
 pub(crate) fn detect() -> Platform {
-    let p = Platform::load();
-    if p != Platform::Uninit {
-        return p;
-    }
-    detect_cold()
-}
-
-#[cold]
-#[inline(never)]
-fn detect_cold() -> Platform {
-    let p = detect_impl();
-    p.store();
-    p
-}
-
-fn detect_impl() -> Platform {
     cfg_if::cfg_if! {
         if #[cfg(feature = "disable-simd")] {
             Platform::Scalar
         } else if #[cfg(all(target_arch = "aarch64", target_feature = "neon"))] {
             Platform::Neon
+        } else if #[cfg(all(
+            any(target_arch = "x86", target_arch = "x86_64"),
+            target_feature = "avx512bw",
+        ))] {
+            // Highest x86 tier known at compile time — nothing higher to probe.
+            Platform::Avx512bw
         } else if #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {
-            detect_x86()
+            runtime::detect()
         } else if #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))] {
             Platform::Wasm
         } else {
@@ -79,31 +61,67 @@ fn detect_impl() -> Platform {
     }
 }
 
-#[cfg(all(not(feature = "disable-simd"), any(target_arch = "x86", target_arch = "x86_64")))]
-fn detect_x86() -> Platform {
-    cfg_if::cfg_if! {
-        if #[cfg(feature = "std")] {
-            if std::is_x86_feature_detected!("avx512bw") {
-                Platform::Avx512bw
-            } else if std::is_x86_feature_detected!("avx2") {
-                Platform::Avx2
-            } else if std::is_x86_feature_detected!("ssse3") {
-                Platform::Ssse3
+/// Runtime detection machinery (x86/x86_64 only, when CPUID is needed)
+#[cfg(all(
+    not(feature = "disable-simd"),
+    any(target_arch = "x86", target_arch = "x86_64"),
+    not(target_feature = "avx512bw"),
+))]
+mod runtime {
+    use super::Platform;
+    use core::sync::atomic::{AtomicU8, Ordering};
+
+    type CachedPlatform = Option<Platform>;
+
+    static CACHED: AtomicU8 = AtomicU8::new(unsafe { core::mem::transmute::<CachedPlatform, u8>(None) });
+
+    /// Cached runtime CPUID detection. First call probes and caches;
+    /// subsequent calls are a single relaxed atomic load.
+    #[inline(always)]
+    pub(super) fn detect() -> Platform {
+        // SAFETY: `CACHED` is initialized to `None` and only ever written by `detect_impl()` with a valid `Platform` discriminant.
+        let p = unsafe { core::mem::transmute::<u8, CachedPlatform>(CACHED.load(Ordering::Relaxed)) };
+        if let Some(p) = p {
+            return p;
+        }
+        let p = detect_impl();
+        CACHED.store(
+            unsafe { core::mem::transmute::<CachedPlatform, u8>(Some(p)) },
+            Ordering::Relaxed,
+        );
+        p
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn detect_impl() -> Platform {
+        // avx512bw at compile time is handled in detect() directly.
+        // Lower compile-time tiers (avx2, ssse3) still need runtime probes
+        // because a higher tier might be available on the actual CPU.
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "std")] {
+                if std::is_x86_feature_detected!("avx512bw") {
+                    Platform::Avx512bw
+                } else if std::is_x86_feature_detected!("avx2") {
+                    Platform::Avx2
+                } else if std::is_x86_feature_detected!("ssse3") {
+                    Platform::Ssse3
+                } else {
+                    Platform::Scalar
+                }
             } else {
-                Platform::Scalar
-            }
-        } else {
-            cpufeatures::new!(cpuid_avx512bw, "avx512bw");
-            cpufeatures::new!(cpuid_avx2, "avx2");
-            cpufeatures::new!(cpuid_ssse3, "ssse3");
-            if cpuid_avx512bw::init().get() {
-                Platform::Avx512bw
-            } else if cpuid_avx2::init().get() {
-                Platform::Avx2
-            } else if cpuid_ssse3::init().get() {
-                Platform::Ssse3
-            } else {
-                Platform::Scalar
+                cpufeatures::new!(cpuid_avx512bw, "avx512bw");
+                cpufeatures::new!(cpuid_avx2, "avx2");
+                cpufeatures::new!(cpuid_ssse3, "ssse3");
+                if cpuid_avx512bw::init().get() {
+                    Platform::Avx512bw
+                } else if cpuid_avx2::init().get() {
+                    Platform::Avx2
+                } else if cpuid_ssse3::init().get() {
+                    Platform::Ssse3
+                } else {
+                    Platform::Scalar
+                }
             }
         }
     }
