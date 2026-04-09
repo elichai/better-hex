@@ -127,11 +127,8 @@ pub unsafe fn decode_inner(src: *const u8, dst: *mut u8, byte_len: usize) -> Res
         // for reads and `dst.add(i)` is in bounds for writes.
         let hi = ct_decode_nibble(unsafe { src.add(i * 2).read() });
         let lo = ct_decode_nibble(unsafe { src.add(i * 2 + 1).read() });
-        // Accumulate error: if either nibble has bit 8+ set, err becomes non-zero.
         err |= hi >> 8;
         err |= lo >> 8;
-        // Always write, even if invalid — we never branch on the values.
-        // The caller must not trust the output buffer if decode returns Err.
         unsafe { dst.add(i).write(((hi << 4) | lo) as u8) };
     }
 
