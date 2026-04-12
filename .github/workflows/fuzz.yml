@@ -1,3 +1,6 @@
+# NOTE: Third-party actions are referenced by tag rather than immutable SHA.
+# For a security-sensitive crate, consider pinning to full commit SHAs and
+# using Dependabot or Renovate to keep them up to date.
 name: Fuzz
 
 on:
@@ -24,6 +27,7 @@ jobs:
           - decode_oracle
           - roundtrip
           - lengths
+          - hex_str
     steps:
       - uses: actions/checkout@v4
 
@@ -50,11 +54,13 @@ jobs:
           if [ "$EVENT_NAME" = "schedule" ]; then
             echo "seconds=300" >> "$GITHUB_OUTPUT"
           else
-            echo "seconds=30" >> "$GITHUB_OUTPUT"
+            echo "seconds=60" >> "$GITHUB_OUTPUT"
           fi
 
+      # cargo-fuzz uses libfuzzer with AddressSanitizer enabled by default
+      # on nightly, so no extra RUSTFLAGS are needed for ASan coverage.
       - name: Run fuzzer
         env:
           FUZZ_TARGET: ${{ matrix.target }}
           FUZZ_SECONDS: ${{ steps.duration.outputs.seconds }}
-        run: cargo fuzz run "$FUZZ_TARGET" -- -max_total_time="$FUZZ_SECONDS"
+        run: cargo fuzz run "$FUZZ_TARGET" -- -max_total_time="$FUZZ_SECONDS" -rss_limit_mb=2048
