@@ -65,7 +65,7 @@ fn bench_encode_to_slice(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("better_hex", size), |b| {
             b.iter(|| {
                 // Discard the &mut str return to avoid a lifetime escape in FnMut.
-                let _ = better_hex::encode_to_slice(black_box(bufs.next()), black_box(dst.as_mut_slice()));
+                better_hex::encode_to_slice(black_box(bufs.next()), black_box(dst.as_mut_slice())).unwrap();
             });
         });
 
@@ -77,7 +77,21 @@ fn bench_encode_to_slice(c: &mut Criterion) {
         #[cfg(feature = "_bench_faster_hex")]
         group.bench_function(BenchmarkId::new("faster_hex", size), |b| {
             b.iter(|| {
-                let _ = faster_hex::hex_encode(black_box(bufs.next()), black_box(dst.as_mut_slice()));
+                faster_hex::hex_encode(black_box(bufs.next()), black_box(dst.as_mut_slice())).unwrap();
+            });
+        });
+
+        #[cfg(feature = "_bench_base16ct")]
+        group.bench_function(BenchmarkId::new("base16ct_lower", size), |b| {
+            b.iter(|| {
+                base16ct::lower::encode_str(black_box(bufs.next()), black_box(dst.as_mut_slice())).unwrap();
+            });
+        });
+
+        #[cfg(feature = "_bench_base16ct")]
+        group.bench_function(BenchmarkId::new("base16ct_upper", size), |b| {
+            b.iter(|| {
+                base16ct::upper::encode_str(black_box(bufs.next()), black_box(dst.as_mut_slice())).unwrap();
             });
         });
     }
@@ -144,7 +158,7 @@ fn bench_decode_to_slice(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("better_hex", size), |b| {
             b.iter(|| {
                 // Discard the &[u8] return to avoid a lifetime escape in FnMut.
-                let _ = better_hex::decode_to_slice(black_box(bufs.next()), black_box(dst.as_mut_slice()));
+                better_hex::decode_to_slice(black_box(bufs.next()), black_box(dst.as_mut_slice())).unwrap();
             });
         });
 
@@ -157,6 +171,13 @@ fn bench_decode_to_slice(c: &mut Criterion) {
         #[cfg(feature = "_bench_faster_hex")]
         group.bench_function(BenchmarkId::new("faster_hex", size), |b| {
             b.iter(|| faster_hex::hex_decode(black_box(bufs.next()), black_box(dst.as_mut_slice())));
+        });
+
+        #[cfg(feature = "_bench_base16ct")]
+        group.bench_function(BenchmarkId::new("base16ct", size), |b| {
+            b.iter(|| {
+                base16ct::mixed::decode(black_box(bufs.next()), black_box(dst.as_mut_slice())).unwrap();
+            });
         });
     }
 

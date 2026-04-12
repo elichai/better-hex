@@ -15,6 +15,7 @@ serde = ["dep:serde"]
 heapless = ["dep:heapless"]
 arrayvec = ["dep:arrayvec"]
 _bench_internals = ["std"]
+_bench_base16ct = []
 _bench_const_hex = []
 _bench_faster_hex = []
 _bench_hex = []
@@ -38,6 +39,7 @@ rand_xoshiro = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_test = "1"
+base16ct = "0.2"
 const-hex = { version = "1", features = ["serde"] }
 faster-hex = { version = "0.10", default-features = false, features = ["alloc"] }
 hex = "0.4"
