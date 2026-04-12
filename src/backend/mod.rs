@@ -421,35 +421,25 @@ mod boundary_tests {
         }
     }
 
+    /// Test every position in a large input — no assumptions about SIMD
+    /// chunk sizes. If the implementation changes its chunk widths, this
+    /// test still covers every boundary.
     #[test]
-    fn decode_invalid_at_chunk_boundary_positions() {
-        // 64 decoded bytes → 128 hex chars, covers all SIMD chunk boundaries.
-        const DECODED_LEN: usize = 64;
+    fn decode_invalid_at_every_position_large() {
+        const DECODED_LEN: usize = 256;
         const HEX_LEN: usize = DECODED_LEN * 2;
 
         let input = make_bytes(DECODED_LEN);
         let hex = encode_hex(&input);
         assert_eq!(hex.len(), HEX_LEN);
 
-        // Critical positions where SIMD chunks transition.
-        let critical_positions: &[usize] = &[
-            0, 1,           // very start
-            14, 15, 16, 17, // 16-byte hex boundary
-            30, 31, 32, 33, // end of first SSSE3 chunk
-            46, 47, 48, 49, // third 16-byte mark
-            62, 63, 64, 65, // AVX2 chunk boundary
-            94, 95, 96, 97, // sixth 16-byte mark
-            HEX_LEN - 2,   // near end
-            HEX_LEN - 1,   // very end
-        ];
-
-        for &pos in critical_positions {
+        for pos in 0..HEX_LEN {
             let mut bad = hex.clone();
             bad[pos] = b'Z';
 
             let mut d_out = vec![MaybeUninit::uninit(); DECODED_LEN];
             let res = decode(&bad, &mut d_out);
-            assert!(res.is_err(), "decode missed invalid byte at critical pos {pos}");
+            assert!(res.is_err(), "decode missed invalid byte at pos {pos}");
             if let Err(Error::InvalidChar { byte, index }) = res {
                 assert_eq!(byte, b'Z', "wrong byte at pos {pos}");
                 assert_eq!(index, pos, "wrong index at pos {pos}");
@@ -459,11 +449,11 @@ mod boundary_tests {
             assert_eq!(
                 ct_decode(&bad, &mut ct_out),
                 Err(Error::InvalidEncoding),
-                "ct_decode missed invalid byte at critical pos {pos}"
+                "ct_decode missed invalid byte at pos {pos}"
             );
 
-            assert!(!check(&bad), "check missed invalid byte at critical pos {pos}");
-            assert!(!ct_check(&bad), "ct_check missed invalid byte at critical pos {pos}");
+            assert!(!check(&bad), "check missed invalid byte at pos {pos}");
+            assert!(!ct_check(&bad), "ct_check missed invalid byte at pos {pos}");
         }
     }
 }
