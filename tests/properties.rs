@@ -50,15 +50,6 @@ proptest! {
         prop_assert_eq!(&decoded, &input);
     }
 
-    #[test]
-    fn roundtrip_ct(input in proptest::collection::vec(any::<u8>(), 0..512)) {
-        let mut hex_buf = vec![0u8; input.len() * 2];
-        better_hex::ct::encode_lower(&input, &mut hex_buf).unwrap();
-        let mut decoded = vec![0u8; input.len()];
-        better_hex::ct::decode(&hex_buf, &mut decoded).unwrap();
-        prop_assert_eq!(&decoded, &input);
-    }
-
     // ── output invariants ────────────────────────────────────────────────────
 
     #[test]
@@ -113,41 +104,6 @@ proptest! {
         prop_assert_eq!(&library, &naive);
     }
 
-    // ── cross-path equivalence ───────────────────────────────────────────────
-
-    #[test]
-    fn ct_encode_matches_fast(input in proptest::collection::vec(any::<u8>(), 0..512)) {
-        let fast: String = better_hex::encode(&input).unwrap();
-        let mut ct_out = vec![0u8; input.len() * 2];
-        let ct = better_hex::ct::encode_lower(&input, &mut ct_out).unwrap();
-        prop_assert_eq!(ct, fast.as_str());
-    }
-
-    #[test]
-    fn ct_encode_upper_matches_fast(input in proptest::collection::vec(any::<u8>(), 0..512)) {
-        let fast: String = better_hex::encode_upper(&input).unwrap();
-        let mut ct_out = vec![0u8; input.len() * 2];
-        let ct = better_hex::ct::encode_upper(&input, &mut ct_out).unwrap();
-        prop_assert_eq!(ct, fast.as_str());
-    }
-
-    #[test]
-    fn ct_decode_matches_fast(input in proptest::collection::vec(any::<u8>(), 0..256)) {
-        let hex: String = better_hex::encode(&input).unwrap();
-        let fast: Vec<u8> = better_hex::decode(&hex).unwrap();
-        let mut ct_out = vec![0u8; input.len()];
-        better_hex::ct::decode(hex.as_bytes(), &mut ct_out).unwrap();
-        prop_assert_eq!(&ct_out, &fast);
-    }
-
-    #[test]
-    fn ct_check_matches_fast(input in proptest::collection::vec(any::<u8>(), 0..512)) {
-        // ct::check and check() should agree: both require even length + valid hex chars.
-        let ct = better_hex::ct::check(&input);
-        let fast = better_hex::check(&input);
-        prop_assert_eq!(ct, fast);
-    }
-
     // ── display ──────────────────────────────────────────────────────────────
 
     #[test]
@@ -179,16 +135,4 @@ proptest! {
         prop_assert_eq!(decoded, original);
     }
 
-    #[test]
-    #[cfg(feature = "serde")]
-    fn serde_ct_roundtrip_vec(input in proptest::collection::vec(any::<u8>(), 0..512)) {
-        use serde::{Serialize, Deserialize};
-        #[derive(Serialize, Deserialize, PartialEq, Debug)]
-        struct W { #[serde(with = "better_hex::serde::ct")] data: Vec<u8> }
-
-        let original = W { data: input };
-        let json = serde_json::to_string(&original).unwrap();
-        let decoded: W = serde_json::from_str(&json).unwrap();
-        prop_assert_eq!(decoded, original);
-    }
 }

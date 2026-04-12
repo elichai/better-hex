@@ -55,24 +55,12 @@ fn roundtrip_all_apis() {
         let decoded: Vec<u8> = better_hex::decode(&hex).unwrap();
         assert_eq!(decoded, input, "String/Vec roundtrip failed at size {size}");
 
-        // CT encode/decode — lower and upper
-        better_hex::ct::encode_lower(input, &mut hex_buf).unwrap();
-        better_hex::ct::decode(&hex_buf, &mut dec_buf).unwrap();
-        assert_eq!(dec_buf, input, "CT lower roundtrip failed at size {size}");
-
-        better_hex::ct::encode_upper(input, &mut hex_buf).unwrap();
-        better_hex::ct::decode(&hex_buf, &mut dec_buf).unwrap();
-        assert_eq!(dec_buf, input, "CT upper roundtrip failed at size {size}");
-
-        // check / ct::check
+        // check
         assert!(better_hex::check(hex.as_bytes()), "check failed at size {size}");
-        assert!(better_hex::ct::check(hex.as_bytes()), "ct::check failed at size {size}");
 
-        // FromHex for Vec<u8> and ct::FromHex for Vec<u8>
+        // FromHex for Vec<u8>
         let from_hex_vec = Vec::<u8>::from_hex(&hex).unwrap();
         assert_eq!(from_hex_vec, input, "FromHex<Vec> at size {size}");
-        let ct_from_hex_vec = <Vec<u8> as better_hex::ct::FromHex>::from_hex(&hex).unwrap();
-        assert_eq!(ct_from_hex_vec, input, "ct::FromHex<Vec> at size {size}");
 
         // ToHex — write_hex + encode_hex (lower and upper)
         let expected_upper: String = better_hex::encode_upper(input).unwrap();
@@ -115,8 +103,6 @@ fn from_hex_array_sizes() {
         let hex: String = better_hex::encode(&input).unwrap();
         let decoded: [u8; N] = better_hex::decode(&hex).unwrap();
         assert_eq!(&decoded[..], &input[..]);
-        let ct: [u8; N] = better_hex::ct::decode_to(&hex).unwrap();
-        assert_eq!(&ct[..], &input[..]);
     }
     check::<0>();
     check::<1>();
@@ -273,10 +259,6 @@ mod serde_exhaustive {
     serde_suite!(upper, "better_hex::serde::upper");
     serde_suite!(prefixed, "better_hex::serde::prefixed");
     serde_suite!(upper_prefixed, "better_hex::serde::upper_prefixed");
-    serde_suite!(ct, "better_hex::serde::ct");
-    serde_suite!(ct_upper, "better_hex::serde::ct::upper");
-    serde_suite!(ct_prefixed, "better_hex::serde::ct::prefixed");
-    serde_suite!(ct_upper_prefixed, "better_hex::serde::ct::upper_prefixed");
 
     /// Verify the exact serialized token format of each module using serde_test.
     #[test]
@@ -316,31 +298,6 @@ mod serde_exhaustive {
             },
             &tokens("0xDEADBEEF"),
         );
-        assert_tokens(
-            &ct::A {
-                data: [0xde, 0xad, 0xbe, 0xef],
-            },
-            &tokens("deadbeef"),
-        );
-        assert_tokens(
-            &ct_upper::A {
-                data: [0xde, 0xad, 0xbe, 0xef],
-            },
-            &tokens("DEADBEEF"),
-        );
-        assert_tokens(
-            &ct_prefixed::A {
-                data: [0xde, 0xad, 0xbe, 0xef],
-            },
-            &tokens("0xdeadbeef"),
-        );
-        assert_tokens(
-            &ct_upper_prefixed::A {
-                data: [0xde, 0xad, 0xbe, 0xef],
-            },
-            &tokens("0xDEADBEEF"),
-        );
-
         // Also verify empty arrays
         assert_tokens(&fast::A { data: [0u8; 0] }, &tokens(""));
         assert_tokens(&prefixed::A { data: [0u8; 0] }, &tokens("0x"));

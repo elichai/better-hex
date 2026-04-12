@@ -8,10 +8,6 @@ use better_hex::{Error, HexStr, NoPrefix, Prefix, PrefixedHexStr, WithPrefix};
 
 #[test]
 fn error_display_and_equality() {
-    assert_eq!(
-        Error::InvalidChar { byte: b'G', index: 5 }.to_string(),
-        "invalid hex character 'G' (0x47) at index 5"
-    );
     assert_eq!(Error::InvalidEncoding.to_string(), "invalid hex encoding");
     assert_eq!(
         Error::InvalidLength { expected: 64, got: 40 }.to_string(),
@@ -43,11 +39,11 @@ fn decode_error_paths() {
         Err(Error::InvalidLength { .. })
     ));
 
-    // Invalid char position
+    // Invalid char
     let mut out = [0u8; 2];
     assert_eq!(
         better_hex::decode_to_slice(b"abGH", &mut out).unwrap_err(),
-        Error::InvalidChar { byte: b'G', index: 2 }
+        Error::InvalidEncoding
     );
 
     // Wrong output size
@@ -72,18 +68,8 @@ fn decode_error_paths() {
         better_hex::encode_to_slice(&[0xab, 0xcd], &mut buf),
         Err(Error::InvalidLength { expected: 4, got: 3 })
     ));
-}
 
-#[test]
-fn ct_error_paths() {
-    // CT decode returns InvalidEncoding, never InvalidChar
-    let mut out = [0u8; 2];
-    assert_eq!(
-        better_hex::ct::decode(b"abGH", &mut out).unwrap_err(),
-        Error::InvalidEncoding
-    );
-
-    // CT processes all bytes (invalid at start and end → same error)
+    // Processes all bytes (invalid at start and end → same error)
     #[cfg(feature = "alloc")]
     {
         let mut hex = better_hex::encode_string(&[0u8; 32]);
@@ -92,34 +78,16 @@ fn ct_error_paths() {
         bytes[63] = b'Z';
         let mut out = [0u8; 32];
         assert_eq!(
-            better_hex::ct::decode(bytes, &mut out).unwrap_err(),
+            better_hex::decode_to_slice(bytes, &mut out).unwrap_err(),
             Error::InvalidEncoding
         );
     }
-
-    // CT check
-    assert!(better_hex::ct::check(b"deadbeef"));
-    assert!(better_hex::ct::check(b"DEADBEEF"));
-    assert!(better_hex::ct::check(b""));
-    assert!(!better_hex::ct::check(b"deadbeeG"));
-    // ct::check must reject odd-length input (consistent with non-CT check)
-    assert!(!better_hex::ct::check(b"abc"));
-    assert!(!better_hex::ct::check(b"a"));
-    assert!(!better_hex::ct::check(b"deadbee"));
-
-    // CT encode/decode wrong-sized buffers
-    let mut buf = [0u8; 3];
-    assert!(better_hex::ct::encode_lower(&[0xab, 0xcd], &mut buf).is_err());
-    assert!(better_hex::ct::encode_upper(&[0xab, 0xcd], &mut buf).is_err());
-    let mut out = [0u8; 2];
-    assert!(better_hex::ct::decode(b"abc", &mut out).is_err());
 }
 
 #[cfg(feature = "alloc")]
 #[test]
-fn ct_from_hex_vec_odd_length() {
-    use better_hex::ct::FromHex;
-    assert!(Vec::<u8>::from_hex(b"abc").is_err());
+fn from_hex_vec_odd_length() {
+    assert!(better_hex::decode::<Vec<u8>>(b"abc").is_err());
 }
 
 // ── HexStr ──────────────────────────────────────────────────────────────────
@@ -161,7 +129,7 @@ fn hex_str_type_properties() {
     assert_eq!(parsed.decode(), [0xde, 0xad, 0xbe, 0xef]);
     assert!(matches!(
         "deadbeeG".parse::<HexStr<4>>(),
-        Err(Error::InvalidChar { .. })
+        Err(Error::InvalidEncoding)
     ));
     assert!(matches!(
         "deadbe".parse::<HexStr<4>>(),
@@ -205,12 +173,12 @@ fn prefixed_hex_str_from_str_errors() {
     // Wrong prefix
     assert_eq!(
         "1xcafebabe".parse::<PrefixedHexStr<4>>().unwrap_err(),
-        Error::InvalidChar { byte: b'1', index: 0 }
+        Error::InvalidEncoding
     );
     // Invalid hex after valid prefix
     assert_eq!(
         "0xcafebaGe".parse::<PrefixedHexStr<4>>().unwrap_err(),
-        Error::InvalidChar { byte: b'G', index: 8 }
+        Error::InvalidEncoding
     );
     // Bare hex without prefix but correct hex-only length
     assert_eq!(
@@ -231,10 +199,6 @@ fn missized_fixed_containers_are_rejected() {
     );
     assert_eq!(
         better_hex::decode::<[u8; 4]>(b"ab").unwrap_err(),
-        Error::InvalidLength { expected: 8, got: 2 }
-    );
-    assert_eq!(
-        better_hex::ct::decode_to::<[u8; 4]>(b"ab").unwrap_err(),
         Error::InvalidLength { expected: 8, got: 2 }
     );
 }
@@ -364,31 +328,12 @@ fn serde_error_paths() {
         #[serde(with = "better_hex::serde::prefixed")]
         data: Vec<u8>,
     }
-    #[derive(Serialize, Deserialize, Debug)]
-    struct C {
-        #[serde(with = "better_hex::serde::ct")]
-        data: [u8; 4],
-    }
-    #[derive(Serialize, Deserialize, Debug)]
-    struct CP {
-        #[serde(with = "better_hex::serde::ct::prefixed")]
-        data: [u8; 4],
-    }
-    #[derive(Serialize, Deserialize, Debug)]
-    #[allow(clippy::upper_case_acronyms)]
-    struct CUP {
-        #[serde(with = "better_hex::serde::ct::upper_prefixed")]
-        data: [u8; 4],
-    }
 
     // Invalid hex / odd length / wrong array length
     assert!(serde_json::from_str::<W>(r#"{"data":"ZZZZ"}"#).is_err());
     assert!(serde_json::from_str::<W>(r#"{"data":"abc"}"#).is_err());
     assert!(serde_json::from_str::<A>(r#"{"data":"deadbeefaa"}"#).is_err());
     assert!(serde_json::from_str::<P>(r#"{"data":"deadbeef"}"#).is_err()); // missing prefix
-    assert!(serde_json::from_str::<C>(r#"{"data":"abc"}"#).is_err());
-    assert!(serde_json::from_str::<C>(r#"{"data":"gggggggg"}"#).is_err());
-    assert!(serde_json::from_str::<CUP>(r#"{"data":"0xdeadbeefaa"}"#).is_err());
 
     // Wrong JSON type → expecting() message
     assert!(
@@ -399,18 +344,6 @@ fn serde_error_paths() {
     );
     assert!(
         serde_json::from_str::<P>(r#"{"data":42}"#)
-            .unwrap_err()
-            .to_string()
-            .contains("0x")
-    );
-    assert!(
-        serde_json::from_str::<C>(r#"{"data":42}"#)
-            .unwrap_err()
-            .to_string()
-            .contains("hex string")
-    );
-    assert!(
-        serde_json::from_str::<CP>(r#"{"data":42}"#)
             .unwrap_err()
             .to_string()
             .contains("0x")

@@ -163,6 +163,7 @@ pub fn check(input: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::InvalidEncoding;
 
     // Expected lowercase hex digits for nibbles 0..=15.
     const LOWER_EXPECTED: [u8; 16] = *b"0123456789abcdef";
@@ -265,7 +266,7 @@ mod tests {
         // SAFETY: pointers derived from valid arrays with correct lengths.
         assert_eq!(
             unsafe { decode(input.as_ptr(), out.as_mut_ptr(), out.len()) },
-            Err(super::InvalidEncoding)
+            Err(InvalidEncoding)
         );
     }
 
@@ -280,7 +281,7 @@ mod tests {
             // SAFETY: all inputs are 2 bytes, out is 1 byte.
             assert_eq!(
                 unsafe { decode(inp.as_ptr(), out.as_mut_ptr(), out.len()) },
-                Err(super::InvalidEncoding),
+                Err(InvalidEncoding),
                 "input {:?}",
                 inp
             );

@@ -36,8 +36,9 @@ use crate::platform::{self, Platform};
 use core::mem::MaybeUninit;
 
 /// Backend-level decode error (zero-size, no position info).
+#[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct InvalidEncoding;
+pub struct InvalidEncoding;
 
 /// Dispatch to the detected platform.
 ///
