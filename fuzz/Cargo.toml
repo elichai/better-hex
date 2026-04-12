@@ -48,3 +48,10 @@ path = "fuzz_targets/roundtrip.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "hex_str"
+path = "fuzz_targets/hex_str.rs"
+test = false
+doc = false
+bench = false

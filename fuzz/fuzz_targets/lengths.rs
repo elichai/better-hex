@@ -46,23 +46,6 @@ fuzz_target!(|input: Input| {
         }
     }
 
-    // decode_to_slice with potentially wrong output size (second path)
-    {
-        let mut hex = vec![0u8; correct_hex_len];
-        encode_to_slice(data, &mut hex).unwrap();
-
-        let mut buf = vec![0u8; out_len];
-        let result = decode_to_slice(&hex, &mut buf);
-        if out_len == data.len() {
-            result.expect("decode_to_slice failed with correct length");
-        } else {
-            assert!(
-                matches!(result, Err(Error::InvalidLength { .. })),
-                "decode_to_slice should fail with wrong length, got {result:?}"
-            );
-        }
-    }
-
     // decode::<[u8; 4]> with various input lengths
     {
         let hex_input: Vec<u8> = (0..out_len)
