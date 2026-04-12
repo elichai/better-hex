@@ -1,7 +1,7 @@
 #![no_main]
 
 use better_hex::bench_internals::{
-    ct_scalar, dispatched_ct_encode, dispatched_encode, scalar,
+    dispatched_encode, scalar,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -30,33 +30,18 @@ fuzz_target!(|data: &[u8]| {
     // scalar::encode (lower)
     {
         let mut buf = vec![core::mem::MaybeUninit::uninit(); out_len];
-        scalar::encode::<false>(data, &mut buf);
+        // SAFETY: `data` and `buf` are valid slices with matching lengths.
+        unsafe { scalar::encode::<false>(data.as_ptr(), buf.as_mut_ptr().cast(), data.len()) };
         let result: Vec<u8> = buf.into_iter().map(|b| unsafe { b.assume_init() }).collect();
         assert_eq!(result, expected_lower, "scalar lower mismatch");
-    }
-
-    // ct_scalar::encode (lower)
-    {
-        let mut buf = vec![core::mem::MaybeUninit::uninit(); out_len];
-        ct_scalar::encode::<false>(data, &mut buf);
-        let result: Vec<u8> = buf.into_iter().map(|b| unsafe { b.assume_init() }).collect();
-        assert_eq!(result, expected_lower, "ct_scalar lower mismatch");
     }
 
     // dispatched_encode (lower)
     {
         let mut buf = vec![core::mem::MaybeUninit::uninit(); out_len];
-        dispatched_encode::<false>(data, &mut buf);
+        dispatched_encode::<false>(data, &mut buf).unwrap();
         let result: Vec<u8> = buf.into_iter().map(|b| unsafe { b.assume_init() }).collect();
         assert_eq!(result, expected_lower, "dispatched lower mismatch");
-    }
-
-    // dispatched_ct_encode (lower)
-    {
-        let mut buf = vec![core::mem::MaybeUninit::uninit(); out_len];
-        dispatched_ct_encode::<false>(data, &mut buf);
-        let result: Vec<u8> = buf.into_iter().map(|b| unsafe { b.assume_init() }).collect();
-        assert_eq!(result, expected_lower, "dispatched_ct lower mismatch");
     }
 
     // uppercase: dispatched vs scalar must match naive_upper
@@ -66,8 +51,9 @@ fuzz_target!(|data: &[u8]| {
         let mut buf_scalar = vec![core::mem::MaybeUninit::uninit(); out_len];
         let mut buf_dispatched = vec![core::mem::MaybeUninit::uninit(); out_len];
 
-        scalar::encode::<true>(data, &mut buf_scalar);
-        dispatched_encode::<true>(data, &mut buf_dispatched);
+        // SAFETY: valid slices with matching lengths.
+        unsafe { scalar::encode::<true>(data.as_ptr(), buf_scalar.as_mut_ptr().cast(), data.len()) };
+        dispatched_encode::<true>(data, &mut buf_dispatched).unwrap();
 
         let scalar_upper: Vec<u8> = buf_scalar.into_iter().map(|b| unsafe { b.assume_init() }).collect();
         let dispatched_upper: Vec<u8> = buf_dispatched.into_iter().map(|b| unsafe { b.assume_init() }).collect();

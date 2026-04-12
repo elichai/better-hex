@@ -1,8 +1,7 @@
 #![no_main]
 
 use better_hex::bench_internals::{
-    ct_scalar, dispatched_check, dispatched_ct_check, dispatched_ct_decode, dispatched_decode,
-    scalar,
+    dispatched_check, dispatched_decode, scalar,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -40,30 +39,17 @@ fuzz_target!(|data: &[u8]| {
     //  scalar::decode
     {
         let mut buf = vec![core::mem::MaybeUninit::uninit(); out_len];
-        let scalar_result = scalar::decode(data, &mut buf);
-        match (&naive_result, &scalar_result) {
-            (Ok(expected), Ok(())) => {
+        // SAFETY: `data` and `buf` are valid slices, data.len() == out_len * 2.
+        let scalar_result =
+            unsafe { scalar::decode(data.as_ptr(), buf.as_mut_ptr().cast(), out_len) };
+        match (&naive_result, scalar_result.is_ok()) {
+            (Ok(expected), true) => {
                 let got: Vec<u8> = buf.into_iter().map(|b| unsafe { b.assume_init() }).collect();
                 assert_eq!(got, *expected, "scalar decode output mismatch");
             }
-            (Err(()), Err(_)) => {}
-            (Ok(_), Err(e)) => panic!("scalar decode: naive Ok but scalar Err({e:?})"),
-            (Err(()), Ok(())) => panic!("scalar decode: naive Err but scalar Ok"),
-        }
-    }
-
-    //  ct_scalar::decode
-    {
-        let mut buf = vec![core::mem::MaybeUninit::uninit(); out_len];
-        let ct_result = ct_scalar::decode(data, &mut buf);
-        match (&naive_result, &ct_result) {
-            (Ok(expected), Ok(())) => {
-                let got: Vec<u8> = buf.into_iter().map(|b| unsafe { b.assume_init() }).collect();
-                assert_eq!(got, *expected, "ct_scalar decode output mismatch");
-            }
-            (Err(()), Err(_)) => {}
-            (Ok(_), Err(e)) => panic!("ct_scalar decode: naive Ok but ct_scalar Err({e:?})"),
-            (Err(()), Ok(())) => panic!("ct_scalar decode: naive Err but ct_scalar Ok"),
+            (Err(()), false) => {}
+            (Ok(_), false) => panic!("scalar decode: naive Ok but scalar Err"),
+            (Err(()), true) => panic!("scalar decode: naive Err but scalar Ok"),
         }
     }
 
@@ -82,23 +68,6 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    //  dispatched_ct_decode
-    {
-        let mut buf = vec![core::mem::MaybeUninit::uninit(); out_len];
-        let ct_disp_result = dispatched_ct_decode(data, &mut buf);
-        match (&naive_result, &ct_disp_result) {
-            (Ok(expected), Ok(())) => {
-                let got: Vec<u8> = buf.into_iter().map(|b| unsafe { b.assume_init() }).collect();
-                assert_eq!(got, *expected, "dispatched_ct decode output mismatch");
-            }
-            (Err(()), Err(_)) => {}
-            (Ok(_), Err(e)) => {
-                panic!("dispatched_ct decode: naive Ok but dispatched_ct Err({e:?})")
-            }
-            (Err(()), Ok(())) => panic!("dispatched_ct decode: naive Err but dispatched_ct Ok"),
-        }
-    }
-
     //  check functions: all must agree with naive validity
     let naive_valid = naive_result.is_ok();
 
@@ -108,21 +77,9 @@ fuzz_target!(|data: &[u8]| {
         "scalar check disagrees: input={data:?}"
     );
 
-    let ct_scalar_valid = ct_scalar::check(data);
-    assert_eq!(
-        ct_scalar_valid, naive_valid,
-        "ct_scalar check disagrees: input={data:?}"
-    );
-
     let disp_valid = dispatched_check(data);
     assert_eq!(
         disp_valid, naive_valid,
         "dispatched check disagrees: input={data:?}"
-    );
-
-    let ct_disp_valid = dispatched_ct_check(data);
-    assert_eq!(
-        ct_disp_valid, naive_valid,
-        "dispatched_ct check disagrees: input={data:?}"
     );
 });

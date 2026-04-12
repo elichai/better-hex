@@ -1,8 +1,7 @@
 #![no_main]
 
 use better_hex::bench_internals::{
-    ct_scalar, dispatched_check, dispatched_ct_check, dispatched_ct_decode, dispatched_ct_encode,
-    dispatched_decode, dispatched_encode, scalar,
+    dispatched_check, dispatched_decode, dispatched_encode, scalar,
 };
 use core::mem::MaybeUninit;
 use libfuzzer_sys::fuzz_target;
@@ -72,25 +71,34 @@ fn check_decode(
     }
 }
 
+/// Wrap a raw-pointer encode backend for use with `check_encode`.
+fn scalar_encode<const UPPER: bool>(data: &[u8], out: &mut [MaybeUninit<u8>]) {
+    // SAFETY: `data` and `out` are valid slices, out.len() == data.len() * 2 by caller contract.
+    unsafe { scalar::encode::<UPPER>(data.as_ptr(), out.as_mut_ptr().cast(), data.len()) }
+}
+
+/// Wrap a raw-pointer decode backend for use with `check_decode`.
+fn scalar_decode(hex: &[u8], out: &mut [MaybeUninit<u8>]) -> Result<(), better_hex::Error> {
+    // SAFETY: `hex` and `out` are valid slices, hex.len() == out.len() * 2 by caller contract.
+    unsafe { scalar::decode(hex.as_ptr(), out.as_mut_ptr().cast(), out.len()) }
+        .map_err(|_| better_hex::Error::InvalidEncoding)
+}
+
 fuzz_target!(|data: &[u8]| {
     let expected_lower = naive_encode(data, false);
     let expected_upper = naive_encode(data, true);
 
     // Encode: all paths must match naive oracle
-    check_encode("scalar lower", data, &expected_lower, |d, o| scalar::encode::<false>(d, o));
-    check_encode("scalar upper", data, &expected_upper, |d, o| scalar::encode::<true>(d, o));
-    check_encode("ct_scalar lower", data, &expected_lower, |d, o| ct_scalar::encode::<false>(d, o));
-    check_encode("dispatched lower", data, &expected_lower, |d, o| dispatched_encode::<false>(d, o));
-    check_encode("dispatched upper", data, &expected_upper, |d, o| dispatched_encode::<true>(d, o));
-    check_encode("dispatched_ct lower", data, &expected_lower, |d, o| dispatched_ct_encode::<false>(d, o));
+    check_encode("scalar lower", data, &expected_lower, scalar_encode::<false>);
+    check_encode("scalar upper", data, &expected_upper, scalar_encode::<true>);
+    check_encode("dispatched lower", data, &expected_lower, |d, o| { dispatched_encode::<false>(d, o).unwrap() });
+    check_encode("dispatched upper", data, &expected_upper, |d, o| { dispatched_encode::<true>(d, o).unwrap() });
 
     // Check: test character validity on ALL inputs (including odd-length).
     // Backend check functions only validate characters, not length.
     let all_hex = data.iter().all(|b| b.is_ascii_hexdigit());
     assert_eq!(scalar::check(data), all_hex, "scalar check disagrees");
-    assert_eq!(ct_scalar::check(data), all_hex, "ct_scalar check disagrees");
     assert_eq!(dispatched_check(data), all_hex, "dispatched check disagrees");
-    assert_eq!(dispatched_ct_check(data), all_hex, "dispatched_ct check disagrees");
 
     // Decode: only on even-length inputs
     if data.len() % 2 != 0 {
@@ -99,10 +107,8 @@ fuzz_target!(|data: &[u8]| {
 
     let naive_result = naive_decode(data);
 
-    check_decode("scalar", data, &naive_result, scalar::decode);
-    check_decode("ct_scalar", data, &naive_result, ct_scalar::decode);
+    check_decode("scalar", data, &naive_result, scalar_decode);
     check_decode("dispatched", data, &naive_result, dispatched_decode);
-    check_decode("dispatched_ct", data, &naive_result, dispatched_ct_decode);
 
     // Roundtrip: encode then decode must recover original
     if !data.is_empty() {

@@ -1,7 +1,7 @@
 #![no_main]
 
-use better_hex::{ct, decode_to_slice, encode_to_slice, Error};
-use libfuzzer_sys::arbitrary::Arbitrary;
+use better_hex::{decode_to_slice, encode_to_slice, Error};
+use libfuzzer_sys::arbitrary::{self, Arbitrary};
 use libfuzzer_sys::fuzz_target;
 
 #[derive(Arbitrary, Debug)]
@@ -46,19 +46,19 @@ fuzz_target!(|input: Input| {
         }
     }
 
-    // ct::decode with potentially wrong output size
+    // decode_to_slice with potentially wrong output size (second path)
     {
         let mut hex = vec![0u8; correct_hex_len];
         encode_to_slice(data, &mut hex).unwrap();
 
         let mut buf = vec![0u8; out_len];
-        let result = ct::decode(&hex, &mut buf);
+        let result = decode_to_slice(&hex, &mut buf);
         if out_len == data.len() {
-            result.expect("ct::decode failed with correct length");
+            result.expect("decode_to_slice failed with correct length");
         } else {
             assert!(
                 matches!(result, Err(Error::InvalidLength { .. })),
-                "ct::decode should fail with wrong length, got {result:?}"
+                "decode_to_slice should fail with wrong length, got {result:?}"
             );
         }
     }
