@@ -38,7 +38,7 @@
 /// to reach `'A'`; lowercase needs `+39` (`0x27`) to reach `'a'`.
 #[inline(always)]
 #[allow(dead_code)]
-const fn encode_nibble<const UPPER: bool>(nibble: u8) -> u8 {
+pub(crate) const fn encode_nibble<const UPPER: bool>(nibble: u8) -> u8 {
     let mut ret = nibble as i16 + 0x30;
     let offset = if UPPER { 0x07i16 } else { 0x27i16 };
     // If ret > 0x39 ('9'), (0x39 - ret) is negative → its high byte is 0xFF.
@@ -61,7 +61,7 @@ const fn encode_nibble<const UPPER: bool>(nibble: u8) -> u8 {
 /// The initial `ret = -1` makes an invalid byte produce `≤ -1` (bit 8 set in
 /// i16), which callers detect by checking `ret >> 8` (non-zero ⇒ invalid).
 #[inline(always)]
-const fn decode_nibble(byte: u8) -> u16 {
+pub(crate) const fn decode_nibble(byte: u8) -> u16 {
     let b = byte as i16;
     let upper = b & !0x20; // 'a'-'f' → 'A'-'F', digits unchanged
     let mut ret: i16 = -1;

@@ -63,7 +63,7 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
         Self {
             inner: RawHexStr {
                 prefix: P::VALUE,
-                bytes: const_encode_bytes(input, HEX_CHARS_LOWER),
+                bytes: const_encode_bytes::<N, false>(input),
             },
         }
     }
@@ -73,7 +73,7 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
         Self {
             inner: RawHexStr {
                 prefix: P::VALUE,
-                bytes: const_encode_bytes(input, HEX_CHARS_UPPER),
+                bytes: const_encode_bytes::<N, true>(input),
             },
         }
     }
@@ -164,19 +164,15 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     }
 }
 
-const HEX_CHARS_LOWER: &[u8; 16] = b"0123456789abcdef";
-const HEX_CHARS_UPPER: &[u8; 16] = b"0123456789ABCDEF";
+use crate::backend::scalar::{decode_nibble, encode_nibble};
 
-/// Const-context encode helper. Fills `bytes` with hex for `input` using `table`.
-///
-/// Separate from `encode_with` because const fn cannot call backend (non-const)
-/// functions or trait methods. Each nibble is looked up in `table` directly.
-const fn const_encode_bytes<const N: usize>(input: &[u8; N], table: &[u8; 16]) -> [[u8; 2]; N] {
+/// Const-context encode helper using branchless nibble arithmetic (no LUT).
+const fn const_encode_bytes<const N: usize, const UPPER: bool>(input: &[u8; N]) -> [[u8; 2]; N] {
     let mut bytes = [[0u8; 2]; N];
     let mut i = 0;
     while i < N {
-        bytes[i][0] = table[(input[i] >> 4) as usize];
-        bytes[i][1] = table[(input[i] & 0x0f) as usize];
+        bytes[i][0] = encode_nibble::<UPPER>(input[i] >> 4);
+        bytes[i][1] = encode_nibble::<UPPER>(input[i] & 0x0f);
         i += 1;
     }
     bytes
@@ -260,7 +256,10 @@ impl<const N: usize, P: Prefix> FromStr for HexStr<N, P> {
     }
 }
 
-/// Decode hex at compile time.
+/// Decode hex at compile time using branchless arithmetic.
+///
+/// Uses error accumulation (no early return on invalid bytes) to remain
+/// constant-time w.r.t. input data values.
 ///
 /// Returns an error if the input length is not exactly `2 * N`, or if any
 /// byte is not a valid hex character.
@@ -278,50 +277,36 @@ pub const fn const_decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; 
         });
     }
     let mut out = [0u8; N];
+    let mut err: u16 = 0;
     let mut i = 0;
     while i < N {
-        let hi = const_decode_nibble(input[i * 2]);
-        let lo = const_decode_nibble(input[i * 2 + 1]);
-        if hi == u8::MAX {
-            return Err(Error::InvalidEncoding);
-        }
-        if lo == u8::MAX {
-            return Err(Error::InvalidEncoding);
-        }
-        out[i] = (hi << 4) | lo;
+        let hi = decode_nibble(input[i * 2]);
+        let lo = decode_nibble(input[i * 2 + 1]);
+        err |= hi >> 8;
+        err |= lo >> 8;
+        out[i] = ((hi << 4) | lo) as u8;
         i += 1;
     }
-    Ok(out)
+    if err != 0 {
+        Err(Error::InvalidEncoding)
+    } else {
+        Ok(out)
+    }
 }
 
-/// Check hex validity at compile time.
+/// Check hex validity at compile time using branchless arithmetic.
 ///
 /// Returns `true` if `input` has even length and every byte is a valid hex
-/// character (`[0-9a-fA-F]`).
+/// character (`[0-9a-fA-F]`). Processes all bytes without short-circuiting.
 pub const fn const_check(input: &[u8]) -> bool {
     if !input.len().is_multiple_of(2) {
         return false;
     }
+    let mut err: u16 = 0;
     let mut i = 0;
     while i < input.len() {
-        if const_decode_nibble(input[i]) == u8::MAX {
-            return false;
-        }
+        err |= decode_nibble(input[i]) >> 8;
         i += 1;
     }
-    true
-}
-
-/// Convert a single ASCII hex character to its 4-bit nibble value (0–15).
-///
-/// Returns `u8::MAX` for non-hex bytes. This is the const-fn equivalent of
-/// the 256-byte [`DECODE_LUT`](crate::backend::scalar) — uses `match`
-/// instead of a lookup table because it must be evaluable at compile time.
-const fn const_decode_nibble(byte: u8) -> u8 {
-    match byte {
-        b'0'..=b'9' => byte - b'0',
-        b'a'..=b'f' => byte - b'a' + 10,
-        b'A'..=b'F' => byte - b'A' + 10,
-        _ => u8::MAX,
-    }
+    err == 0
 }
