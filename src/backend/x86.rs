@@ -346,7 +346,10 @@ unsafe fn decode_ssse3_inner<const SHORT_CIRCUIT: bool>(
 
             if SHORT_CIRCUIT {
                 if mask != 0 {
-                    return scalar::decode(src, dst, byte_len);
+                    return scalar::decode(src.add(i), dst.add(o), byte_len - o).map_err(|e| match e {
+                        Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
+                        other => other,
+                    });
                 }
             } else {
                 err_accum |= mask;
@@ -497,7 +500,10 @@ unsafe fn decode_avx2_inner<const SHORT_CIRCUIT: bool>(
 
             if SHORT_CIRCUIT {
                 if mask != 0 {
-                    return scalar::decode(src, dst, byte_len);
+                    return scalar::decode(src.add(i), dst.add(o), byte_len - o).map_err(|e| match e {
+                        Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
+                        other => other,
+                    });
                 }
             } else {
                 err_accum |= mask;
@@ -928,7 +934,10 @@ unsafe fn decode_avx512_inner<const SHORT_CIRCUIT: bool>(
 
             if SHORT_CIRCUIT {
                 if combined_mask != 0 {
-                    return scalar::decode(src, dst, byte_len);
+                    return scalar::decode(src.add(i), dst.add(o), byte_len - o).map_err(|e| match e {
+                        Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
+                        other => other,
+                    });
                 }
             } else {
                 err_accum |= combined_mask;
