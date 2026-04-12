@@ -98,9 +98,9 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     /// # Safety
     ///
     /// Every byte in `hex` must be valid hex ASCII (`[0-9a-fA-F]`).
-    /// Violating this produces a `HexStr` whose `decode()` will return
-    /// garbage or error, and whose string representation contains non-hex
-    /// characters.
+    /// Violating this is **undefined behavior**: the type's string conversion
+    /// uses `from_utf8_unchecked`, so non-ASCII bytes would violate UTF-8
+    /// validity invariants.
     pub const unsafe fn from_hex_unchecked<const M: usize>(hex: [u8; M]) -> Self {
         const { assert!(M == N * 2, "hex input length must equal N * 2") };
         // SAFETY: The caller must uphold the invariant that all bytes are valid
@@ -232,16 +232,28 @@ impl<const N: usize, P: Prefix> FromStr for HexStr<N, P> {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let expected = N * 2;
+        let expected = Self::LEN; // P::LEN + N * 2
         if s.len() != expected {
             return Err(Error::InvalidLength { expected, got: s.len() });
         }
-        let input = s.as_bytes();
+        let s_bytes = s.as_bytes();
+        // Verify and strip the prefix (no-op for NoPrefix where P::LEN == 0).
+        let prefix = P::VALUE;
+        let prefix_bytes = IntoBytes::as_bytes(&prefix);
+        for i in 0..P::LEN {
+            if s_bytes[i] != prefix_bytes[i] {
+                return Err(Error::InvalidChar { byte: s_bytes[i], index: i });
+            }
+        }
+        let hex_part = &s_bytes[P::LEN..];
         // Decode to validate hex content — captures InvalidChar errors.
         let mut scratch: [MaybeUninit<u8>; N] = maybe_uninit::uninit_array();
-        backend::decode(input, &mut scratch)?;
+        backend::decode(hex_part, &mut scratch).map_err(|e| match e {
+            Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + P::LEN },
+            other => other,
+        })?;
         // Input is valid hex — reinterpret as [[u8; 2]; N] and construct.
-        let bytes: &[[u8; 2]; N] = FromBytes::ref_from_bytes(input).expect("length already checked above");
+        let bytes: &[[u8; 2]; N] = FromBytes::ref_from_bytes(hex_part).expect("length already checked above");
         Ok(Self {
             inner: RawHexStr {
                 prefix: P::VALUE,

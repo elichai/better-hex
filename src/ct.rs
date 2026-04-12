@@ -120,9 +120,11 @@ pub fn decode_to<T: FromHex>(input: impl AsRef<[u8]>) -> Result<T, T::Error> {
     T::from_hex(input)
 }
 
-/// Check if all bytes are valid hex characters (constant-time).
+/// Check if `input` is a valid hex string (constant-time).
 ///
-/// Processes all bytes even if an early one is invalid.
+/// Returns `true` iff `input` has even length and every byte is a valid hex
+/// character (`[0-9a-fA-F]`). Processes all bytes even if an early one is
+/// invalid (no timing leak on error position).
 pub fn check(input: &[u8]) -> bool {
-    backend::ct_check(input)
+    input.len().is_multiple_of(2) && backend::ct_check(input)
 }

@@ -142,10 +142,9 @@ proptest! {
 
     #[test]
     fn ct_check_matches_fast(input in proptest::collection::vec(any::<u8>(), 0..512)) {
-        // ct::check operates on raw bytes (no even-length requirement at backend level),
-        // while the public check() requires even length. Compare the backend-level results.
+        // ct::check and check() should agree: both require even length + valid hex chars.
         let ct = better_hex::ct::check(&input);
-        let fast = better_hex::ct::check(&input); // both go through backend
+        let fast = better_hex::check(&input);
         prop_assert_eq!(ct, fast);
     }
 

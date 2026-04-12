@@ -102,6 +102,10 @@ fn ct_error_paths() {
     assert!(better_hex::ct::check(b"DEADBEEF"));
     assert!(better_hex::ct::check(b""));
     assert!(!better_hex::ct::check(b"deadbeeG"));
+    // ct::check must reject odd-length input (consistent with non-CT check)
+    assert!(!better_hex::ct::check(b"abc"));
+    assert!(!better_hex::ct::check(b"a"));
+    assert!(!better_hex::ct::check(b"deadbee"));
 
     // CT encode/decode wrong-sized buffers
     let mut buf = [0u8; 3];
@@ -172,6 +176,47 @@ fn hex_str_type_properties() {
     assert_eq!(p_upper.as_str(), "0xCAFEBABE");
     assert_eq!(p_lower.decode(), input);
     assert_eq!(p_upper.decode(), input);
+}
+
+#[test]
+fn prefixed_hex_str_from_str_roundtrip() {
+    // PrefixedHexStr must round-trip through its own textual form.
+    let input = [0xca, 0xfe, 0xba, 0xbe];
+    let hex: PrefixedHexStr<4> = HexStr::encode_lower(&input);
+    let s = hex.as_str();
+    assert_eq!(s, "0xcafebabe");
+    let parsed: PrefixedHexStr<4> = s.parse().unwrap();
+    assert_eq!(parsed, hex);
+    assert_eq!(parsed.decode(), input);
+
+    // Uppercase roundtrip
+    let hex_upper: PrefixedHexStr<4> = HexStr::encode_upper(&input);
+    let parsed_upper: PrefixedHexStr<4> = hex_upper.as_str().parse().unwrap();
+    assert_eq!(parsed_upper.decode(), input);
+}
+
+#[test]
+fn prefixed_hex_str_from_str_errors() {
+    // Missing prefix (too short)
+    assert_eq!(
+        "cafebabe".parse::<PrefixedHexStr<4>>().unwrap_err(),
+        Error::InvalidLength { expected: 10, got: 8 }
+    );
+    // Wrong prefix
+    assert_eq!(
+        "1xcafebabe".parse::<PrefixedHexStr<4>>().unwrap_err(),
+        Error::InvalidChar { byte: b'1', index: 0 }
+    );
+    // Invalid hex after valid prefix
+    assert_eq!(
+        "0xcafebaGe".parse::<PrefixedHexStr<4>>().unwrap_err(),
+        Error::InvalidChar { byte: b'G', index: 8 }
+    );
+    // Bare hex without prefix but correct hex-only length
+    assert_eq!(
+        "deadbeef".parse::<PrefixedHexStr<4>>().unwrap_err(),
+        Error::InvalidLength { expected: 10, got: 8 }
+    );
 }
 
 #[test]

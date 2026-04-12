@@ -321,7 +321,7 @@ unsafe impl<const N: usize> Container for arrayvec::ArrayVec<u8, N> {
     fn new(min_capacity: usize) -> Result<Self, Error> {
         if min_capacity > N {
             return Err(Error::InvalidLength {
-                expected: N * 2,
+                expected: N,
                 got: min_capacity,
             });
         }
@@ -352,7 +352,7 @@ unsafe impl<const N: usize> Container for arrayvec::ArrayString<N> {
     fn new(min_capacity: usize) -> Result<Self, Error> {
         if min_capacity > N {
             return Err(Error::InvalidLength {
-                expected: N * 2,
+                expected: N,
                 got: min_capacity,
             });
         }
@@ -386,7 +386,7 @@ unsafe impl<const N: usize> Container for heapless::Vec<u8, N> {
     fn new(min_capacity: usize) -> Result<Self, Error> {
         if min_capacity > N {
             return Err(Error::InvalidLength {
-                expected: N * 2,
+                expected: N,
                 got: min_capacity,
             });
         }
@@ -416,7 +416,7 @@ unsafe impl<const N: usize> Container for heapless::String<N> {
     fn new(min_capacity: usize) -> Result<Self, Error> {
         if min_capacity > N {
             return Err(Error::InvalidLength {
-                expected: N * 2,
+                expected: N,
                 got: min_capacity,
             });
         }
