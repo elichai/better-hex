@@ -84,6 +84,67 @@ fn decode_error_paths() {
     }
 }
 
+/// Prove that decode processes **all** bytes, not just up to the first error.
+///
+/// Strategy: decode valid input to get a reference output. Then for each hex
+/// position, inject an invalid byte and decode again. Every output byte whose
+/// corresponding hex pair was still valid must match the reference — proving
+/// the decoder did not skip any work after encountering the invalid byte.
+#[test]
+fn decode_processes_all_bytes_proof() {
+    // Use a non-trivial input so the decoded bytes are not all zeros.
+    const N: usize = 32;
+    let input: [u8; N] = {
+        let mut buf = [0u8; N];
+        let mut i = 0;
+        while i < N {
+            buf[i] = (i as u8).wrapping_mul(0x9D).wrapping_add(0x37);
+            i += 1;
+        }
+        buf
+    };
+
+    // Encode to hex and decode to get the reference output.
+    let hex_str: better_hex::HexStr<N> = better_hex::HexStr::encode_lower(&input);
+    let hex_bytes = hex_str.as_ref() as &[u8];
+    let hex_len = hex_bytes.len(); // 64
+
+    let mut reference = [0u8; N];
+    better_hex::decode_to_slice(hex_bytes, &mut reference).expect("valid hex must decode");
+    assert_eq!(reference, input);
+
+    // For every hex position, inject an invalid byte and verify the output.
+    for inject_pos in 0..hex_len {
+        let mut bad_hex = [0u8; N * 2];
+        bad_hex.copy_from_slice(hex_bytes);
+        bad_hex[inject_pos] = b'Z'; // not a valid hex char
+
+        let mut output = [0xFFu8; N]; // fill with sentinel
+        let result = better_hex::decode_to_slice(&bad_hex, &mut output);
+        assert_eq!(
+            result.unwrap_err(),
+            Error::InvalidEncoding,
+            "expected InvalidEncoding at inject_pos={inject_pos}"
+        );
+
+        // The affected decoded byte is at inject_pos / 2.
+        let affected_byte = inject_pos / 2;
+
+        // Every output byte EXCEPT the affected one must match the reference.
+        for i in 0..N {
+            if i == affected_byte {
+                continue; // this byte's pair had the invalid char — skip it
+            }
+            assert_eq!(
+                output[i], reference[i],
+                "output mismatch at byte {i} when invalid char injected at hex pos {inject_pos}: \
+                 got 0x{:02x}, expected 0x{:02x} — decoder may have stopped early",
+                output[i], reference[i]
+            );
+        }
+    }
+}
+
 #[cfg(feature = "alloc")]
 #[test]
 fn from_hex_vec_odd_length() {

@@ -120,6 +120,78 @@ proptest! {
         prop_assert_eq!(displayed, encoded);
     }
 
+    // ── invalid-input decode ─────────────────────────────────────────────────
+
+    /// Arbitrary even-length byte slices: library and naive decoder must agree.
+    #[test]
+    fn decode_arbitrary_matches_naive(input in proptest::collection::vec(any::<u8>(), 0..512)
+                                         .prop_filter("even length", |v| v.len() % 2 == 0))
+    {
+        let lib_result = better_hex::decode::<Vec<u8>>(&input);
+        let naive_result = naive_decode(&input);
+        match (lib_result, naive_result) {
+            (Ok(lib), Some(naive)) => prop_assert_eq!(lib, naive),
+            (Err(_), None) => { /* both agree it's invalid */ }
+            (Ok(lib), None) => {
+                prop_assert!(false, "library accepted input that naive rejects: {:?} -> {:?}", &input, lib);
+            }
+            (Err(e), Some(naive)) => {
+                prop_assert!(false, "library rejected input that naive accepts: {:?} -> {:?}, err: {}", &input, naive, e);
+            }
+        }
+    }
+
+    /// For valid hex, inject an invalid byte at each position -> must get InvalidEncoding.
+    #[test]
+    fn decode_injected_invalid_byte(input in proptest::collection::vec(any::<u8>(), 1..64),
+                                    inject_offset in 0usize..128)
+    {
+        let hex: String = better_hex::encode(&input).unwrap();
+        let hex_bytes = hex.as_bytes();
+        if hex_bytes.is_empty() {
+            return Ok(());
+        }
+        let pos = inject_offset % hex_bytes.len();
+        let mut bad = hex_bytes.to_vec();
+        bad[pos] = b'Z'; // never a valid hex char
+        let result = better_hex::decode::<Vec<u8>>(&bad);
+        prop_assert!(result.is_err(), "decode should reject invalid byte at pos {}", pos);
+        prop_assert_eq!(result.unwrap_err(), better_hex::Error::InvalidEncoding);
+    }
+
+    /// HexStr::from_str with arbitrary strings.
+    #[test]
+    fn hex_str_from_str_arbitrary(s in "\\PC{0,20}") {
+        let result = s.parse::<better_hex::HexStr<8>>();
+        // Must either succeed with valid round-trip, or fail.
+        match result {
+            Ok(hex) => {
+                // If it parsed, the decoded bytes re-encoded must match.
+                let decoded = hex.decode();
+                let re_encoded: better_hex::HexStr<8> = better_hex::HexStr::encode_lower(&decoded);
+                // The input might have been uppercase, so compare case-insensitively.
+                prop_assert_eq!(hex.as_str().to_ascii_lowercase(), re_encoded.as_str().to_ascii_lowercase());
+            }
+            Err(_) => { /* rejection is fine */ }
+        }
+    }
+
+    /// PrefixedHexStr::from_str with arbitrary strings.
+    #[test]
+    fn prefixed_hex_str_from_str_arbitrary(s in "\\PC{0,24}") {
+        let result = s.parse::<better_hex::PrefixedHexStr<8>>();
+        match result {
+            Ok(hex) => {
+                // If it parsed, must start with "0x" and the hex body must round-trip.
+                prop_assert!(hex.as_str().starts_with("0x"), "parsed PrefixedHexStr missing 0x prefix");
+                let decoded = hex.decode();
+                let re_encoded: better_hex::PrefixedHexStr<8> = better_hex::HexStr::encode_lower(&decoded);
+                prop_assert_eq!(hex.as_str().to_ascii_lowercase(), re_encoded.as_str().to_ascii_lowercase());
+            }
+            Err(_) => { /* rejection is fine */ }
+        }
+    }
+
     // ── serde ────────────────────────────────────────────────────────────────
 
     #[test]
