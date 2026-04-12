@@ -74,8 +74,8 @@
 
 #![allow(clippy::doc_overindented_list_items)]
 
-use crate::backend::{ct_scalar, scalar};
-use crate::error::Error;
+use crate::backend::scalar;
+use super::InvalidEncoding;
 use core::arch::aarch64::*;
 
 /// NEON hex encoder — processes 32 input bytes (producing 64 hex chars) per
@@ -178,14 +178,11 @@ pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: 
     }
 }
 
-/// Inner NEON hex decoder, parameterised by `SHORT_CIRCUIT`.
+/// NEON hex decoder — processes all bytes without early exit (constant-time).
 ///
-/// - `SHORT_CIRCUIT = true` (fast path): on validation failure, returns early
-///   to `scalar::decode` from the failing chunk onward to produce the exact
-///   `InvalidChar` error with byte and index.
-/// - `SHORT_CIRCUIT = false` (CT path): accumulates error bits across all
-///   chunks, processes every byte, and returns `Error::InvalidEncoding` at the
-///   end if any invalid character was seen. Tail bytes use `ct_scalar::decode`.
+/// Accumulates error bits across all chunks and returns `Err(InvalidEncoding)`
+/// at the end if any invalid character was encountered. Does not reveal the
+/// position of the invalid character.
 ///
 /// See module-level documentation for the full algorithm description.
 ///
@@ -194,8 +191,7 @@ pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: 
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
-#[inline]
-unsafe fn decode_inner<const SHORT_CIRCUIT: bool>(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
     let hex_len = byte_len * 2;
     let simd_end = hex_len / 32 * 32;
     let mut i = 0usize;
@@ -228,20 +224,7 @@ unsafe fn decode_inner<const SHORT_CIRCUIT: bool>(src: *const u8, dst: *mut u8, 
         let combined_check = unsafe { vorrq_u8(check0, check1) };
         let chunk_err = unsafe { vmaxvq_u8(combined_check) } & 0x80;
 
-        if SHORT_CIRCUIT {
-            if chunk_err != 0 {
-                // SAFETY: `src.add(i)` valid for remaining hex,
-                // `dst.add(i / 2)` valid for remaining bytes.
-                return unsafe { scalar::decode_inner(src.add(i), dst.add(i / 2), byte_len - i / 2) }.map_err(
-                    |e| match e {
-                        Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
-                        other => other,
-                    },
-                );
-            }
-        } else {
-            err |= chunk_err;
-        }
+        err |= chunk_err;
 
         // Pack: deinterleave hi/lo nibbles, then combine.
         let deinterleaved = unsafe { vuzpq_u8(nib0, nib1) };
@@ -255,56 +238,17 @@ unsafe fn decode_inner<const SHORT_CIRCUIT: bool>(src: *const u8, dst: *mut u8, 
 
     if i < hex_len {
         let tail_byte_len = byte_len - i / 2;
-        if SHORT_CIRCUIT {
-            // SAFETY: `src.add(i)` valid for `tail_byte_len * 2` hex bytes,
-            // `dst.add(i / 2)` valid for `tail_byte_len` output bytes.
-            unsafe { scalar::decode_inner(src.add(i), dst.add(i / 2), tail_byte_len) }.map_err(|e| match e {
-                Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
-                other => other,
-            })?;
-        } else {
-            // SAFETY: same pointer validity as above.
-            if unsafe { ct_scalar::decode_inner(src.add(i), dst.add(i / 2), tail_byte_len) }.is_err() {
-                err |= 0x80;
-            }
+        // SAFETY: same pointer validity as above.
+        if unsafe { scalar::decode_inner(src.add(i), dst.add(i / 2), tail_byte_len) }.is_err() {
+            err |= 0x80;
         }
     }
 
-    if !SHORT_CIRCUIT && err != 0 {
-        return Err(Error::InvalidEncoding);
+    if err != 0 {
+        return Err(InvalidEncoding);
     }
 
     Ok(())
-}
-
-/// NEON hex decoder — fast path with early exit and exact error position.
-///
-/// On validation failure within a SIMD chunk, falls back to scalar decoding
-/// from the start of that chunk to produce the exact `InvalidChar` error with
-/// the correct byte and index.
-///
-/// # Safety
-///
-/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
-/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
-/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
-pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
-    unsafe { decode_inner::<true>(src, dst, byte_len) }
-}
-
-/// Constant-time NEON hex decoder — processes all bytes, no early exit.
-///
-/// Accumulates error bits across all chunks and returns `Error::InvalidEncoding`
-/// at the end if any invalid character was encountered. Does not reveal the
-/// position of the invalid character.
-///
-/// # Safety
-///
-/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
-/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
-/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
-pub unsafe fn ct_decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
-    unsafe { decode_inner::<false>(src, dst, byte_len) }
 }
 
 /// Decode a 16-byte NEON vector of hex ASCII characters into nibble values,
@@ -340,14 +284,9 @@ fn decode_nibbles_with_consts(
 /// `'a'`-`'f'`) per 16-byte chunk and OR-combines them. If all bytes are
 /// valid, every lane is 0xFF; we reduce with `vminvq_u8` to check.
 ///
-/// See module-level documentation for the full algorithm description.
-/// Inner NEON hex check, parameterised by `SHORT_CIRCUIT`.
-///
-/// - `SHORT_CIRCUIT = true`: returns false on the first invalid chunk.
-/// - `SHORT_CIRCUIT = false` (CT): accumulates validity across all chunks,
-///   checks at the end. Tail uses `ct_scalar::check`.
+/// Processes all chunks without early exit (constant-time).
 #[inline]
-fn check_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
+pub fn check(input: &[u8]) -> bool {
     let simd_end = input.len() / 16 * 16;
     let mut i = 0usize;
     let mut all_valid = true;
@@ -372,13 +311,7 @@ fn check_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
         let valid = unsafe { vorrq_u8(vorrq_u8(is_digit, is_upper), is_lower) };
         let min_val = unsafe { vminvq_u8(valid) };
 
-        if SHORT_CIRCUIT {
-            if min_val != 0xFF {
-                return false;
-            }
-        } else {
-            all_valid &= min_val == 0xFF;
-        }
+        all_valid &= min_val == 0xFF;
 
         i += 16;
     }
@@ -386,27 +319,11 @@ fn check_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
     // Tail
     if i < input.len() {
         let input_tail = unsafe { input.get_unchecked(i..) };
-        let tail_ok = if SHORT_CIRCUIT {
-            scalar::check(input_tail)
-        } else {
-            ct_scalar::check(input_tail)
-        };
+        let tail_ok = scalar::check(input_tail);
         all_valid &= tail_ok;
     }
 
     all_valid
-}
-
-/// Fast-path hex check (short-circuits on first invalid byte).
-#[inline]
-pub fn check(input: &[u8]) -> bool {
-    check_inner::<true>(input)
-}
-
-/// Constant-time hex check (processes all bytes, no early return).
-#[inline]
-pub fn ct_check(input: &[u8]) -> bool {
-    check_inner::<false>(input)
 }
 
 #[cfg(test)]
@@ -419,10 +336,8 @@ mod tests {
         exercise_backend(
             |input, output| unsafe { encode::<false>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
             |input, output| unsafe { encode::<true>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
-            |input, output| unsafe { decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) },
-            |input, output| unsafe { ct_decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) },
+            |input, output| unsafe { decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len()).map_err(|_| crate::error::Error::InvalidEncoding) },
             check,
-            ct_check,
         );
     }
 }

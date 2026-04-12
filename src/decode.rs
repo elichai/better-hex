@@ -25,7 +25,7 @@ pub fn decode<T: FromHex>(input: impl AsRef<[u8]>) -> Result<T, T::Error> {
 /// Decode hex `input` into a caller-provided `output` buffer.
 ///
 /// Returns [`Error::InvalidLength`] if `input.len() != output.len() * 2`.
-/// Returns [`Error::InvalidChar`] if any byte in `input` is not a valid hex character.
+/// Returns [`Error::InvalidEncoding`] if any byte in `input` is not a valid hex character.
 #[inline]
 pub fn decode_to_slice<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a [u8], Error> {
     // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`; the pointer cast

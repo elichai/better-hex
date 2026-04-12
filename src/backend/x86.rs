@@ -46,9 +46,8 @@ use core::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
-use crate::backend::ct_scalar;
 use crate::backend::scalar;
-use crate::error::Error;
+use super::InvalidEncoding;
 
 /// Hex-encode `input` into `output` using SSSE3 `pshufb` for the hot loop.
 ///
@@ -298,10 +297,9 @@ unsafe fn decode_chunk_128(
 /// Hex-decode `input` into `output` using SSSE3.
 ///
 /// Processes 32 hex chars (two `__m128i` loads → 16 output bytes) per
-/// iteration. When `SHORT_CIRCUIT` is true, falls back to scalar on the first
-/// invalid chunk for precise error reporting. When `SHORT_CIRCUIT` is false,
-/// processes the entire input without branching on validity (constant-time),
-/// then returns an error if any invalid byte was detected.
+/// iteration. Accumulates error bits across all chunks without branching
+/// on validity (constant-time), then returns an error if any invalid byte
+/// was detected.
 ///
 /// # Safety
 ///
@@ -311,11 +309,11 @@ unsafe fn decode_chunk_128(
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[inline]
 #[target_feature(enable = "ssse3")]
-unsafe fn decode_ssse3_inner<const SHORT_CIRCUIT: bool>(
+unsafe fn decode_ssse3_inner(
     src: *const u8,
     dst: *mut u8,
     byte_len: usize,
-) -> Result<(), Error> {
+) -> Result<(), InvalidEncoding> {
     let hex_len = byte_len * 2;
 
     // SAFETY: all intrinsics below require SSSE3, guaranteed by #[target_feature].
@@ -344,16 +342,7 @@ unsafe fn decode_ssse3_inner<const SHORT_CIRCUIT: bool>(
             let combined_check = _mm_or_si128(check0, check1);
             let mask = _mm_movemask_epi8(combined_check);
 
-            if SHORT_CIRCUIT {
-                if mask != 0 {
-                    return scalar::decode(src.add(i), dst.add(o), byte_len - o).map_err(|e| match e {
-                        Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
-                        other => other,
-                    });
-                }
-            } else {
-                err_accum |= mask;
-            }
+            err_accum |= mask;
 
             _mm_storel_epi64(dst.add(o).cast(), decoded0);
             _mm_storel_epi64(dst.add(o + 8).cast(), decoded1);
@@ -364,20 +353,13 @@ unsafe fn decode_ssse3_inner<const SHORT_CIRCUIT: bool>(
 
         if i < hex_len {
             let tail_byte_len = byte_len - o;
-            if SHORT_CIRCUIT {
-                scalar::decode(src.add(i), dst.add(o), tail_byte_len).map_err(|e| match e {
-                    Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
-                    other => other,
-                })?;
-            } else {
-                if ct_scalar::decode(src.add(i), dst.add(o), tail_byte_len).is_err() {
-                    err_accum |= 1;
-                }
+            if scalar::decode(src.add(i), dst.add(o), tail_byte_len).is_err() {
+                err_accum |= 1;
             }
         }
 
-        if !SHORT_CIRCUIT && err_accum != 0 {
-            return Err(Error::InvalidEncoding);
+        if err_accum != 0 {
+            return Err(InvalidEncoding);
         }
 
         Ok(())
@@ -386,24 +368,8 @@ unsafe fn decode_ssse3_inner<const SHORT_CIRCUIT: bool>(
 
 /// Hex-decode `input` into `output` using SSSE3.
 ///
-/// On validation failure, falls back to scalar for precise error position.
-///
-/// # Safety
-///
-/// - The CPU must support SSSE3.
-/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
-/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
-/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
-#[target_feature(enable = "ssse3")]
-pub(crate) unsafe fn decode_ssse3(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
-    // SAFETY: caller guarantees SSSE3 and pointer validity.
-    unsafe { decode_ssse3_inner::<true>(src, dst, byte_len) }
-}
-
-/// Constant-time hex-decode `input` into `output` using SSSE3.
-///
 /// Processes all chunks without short-circuiting on invalid input.
-/// Returns `Err(Error::InvalidEncoding)` if any byte was invalid.
+/// Returns `Err(InvalidEncoding)` if any byte was invalid.
 ///
 /// # Safety
 ///
@@ -412,9 +378,9 @@ pub(crate) unsafe fn decode_ssse3(src: *const u8, dst: *mut u8, byte_len: usize)
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[target_feature(enable = "ssse3")]
-pub(crate) unsafe fn ct_decode_ssse3(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+pub(crate) unsafe fn decode_ssse3(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
     // SAFETY: caller guarantees SSSE3 and pointer validity.
-    unsafe { decode_ssse3_inner::<false>(src, dst, byte_len) }
+    unsafe { decode_ssse3_inner(src, dst, byte_len) }
 }
 
 /// Decode a single 256-bit register (32 hex chars → 16 output bytes) using
@@ -455,9 +421,8 @@ unsafe fn decode_chunk_256(
 /// Hex-decode `input` into `output` using AVX2.
 ///
 /// Processes 64 hex chars (two `__m256i` loads → 32 output bytes) per
-/// iteration. When `SHORT_CIRCUIT` is true, falls back to scalar on the first
-/// invalid chunk. When `SHORT_CIRCUIT` is false, processes all chunks without
-/// branching on validity (constant-time).
+/// iteration. Accumulates error bits across all chunks without branching
+/// on validity (constant-time).
 ///
 /// # Safety
 ///
@@ -467,11 +432,11 @@ unsafe fn decode_chunk_256(
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[inline]
 #[target_feature(enable = "avx2")]
-unsafe fn decode_avx2_inner<const SHORT_CIRCUIT: bool>(
+unsafe fn decode_avx2_inner(
     src: *const u8,
     dst: *mut u8,
     byte_len: usize,
-) -> Result<(), Error> {
+) -> Result<(), InvalidEncoding> {
     let hex_len = byte_len * 2;
 
     // SAFETY: all intrinsics below require AVX2 (implies SSSE3),
@@ -498,16 +463,7 @@ unsafe fn decode_avx2_inner<const SHORT_CIRCUIT: bool>(
             let combined_check = _mm256_or_si256(check0, check1);
             let mask = _mm256_movemask_epi8(combined_check);
 
-            if SHORT_CIRCUIT {
-                if mask != 0 {
-                    return scalar::decode(src.add(i), dst.add(o), byte_len - o).map_err(|e| match e {
-                        Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
-                        other => other,
-                    });
-                }
-            } else {
-                err_accum |= mask;
-            }
+            err_accum |= mask;
 
             // Store low 16 bytes of each decoded __m256i.
             _mm_storeu_si128(dst.add(o).cast(), _mm256_castsi256_si128(decoded0));
@@ -520,20 +476,13 @@ unsafe fn decode_avx2_inner<const SHORT_CIRCUIT: bool>(
         // Tail: fall through to SSSE3, then scalar.
         if i < hex_len {
             let tail_byte_len = byte_len - o;
-            if SHORT_CIRCUIT {
-                decode_ssse3_inner::<true>(src.add(i), dst.add(o), tail_byte_len).map_err(|e| match e {
-                    Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
-                    other => other,
-                })?;
-            } else {
-                if decode_ssse3_inner::<false>(src.add(i), dst.add(o), tail_byte_len).is_err() {
-                    err_accum |= 1;
-                }
+            if decode_ssse3_inner(src.add(i), dst.add(o), tail_byte_len).is_err() {
+                err_accum |= 1;
             }
         }
 
-        if !SHORT_CIRCUIT && err_accum != 0 {
-            return Err(Error::InvalidEncoding);
+        if err_accum != 0 {
+            return Err(InvalidEncoding);
         }
 
         Ok(())
@@ -542,26 +491,9 @@ unsafe fn decode_avx2_inner<const SHORT_CIRCUIT: bool>(
 
 /// Hex-decode `input` into `output` using AVX2.
 ///
-/// Falls through to [`decode_ssse3`] for the tail. On validation failure,
-/// falls back to scalar for precise error position.
-///
-/// # Safety
-///
-/// - The CPU must support AVX2.
-/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
-/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
-/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
-#[target_feature(enable = "avx2")]
-pub(crate) unsafe fn decode_avx2(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
-    // SAFETY: caller guarantees AVX2 and pointer validity.
-    unsafe { decode_avx2_inner::<true>(src, dst, byte_len) }
-}
-
-/// Constant-time hex-decode `input` into `output` using AVX2.
-///
 /// Processes all chunks without short-circuiting on invalid input.
-/// Falls through to [`ct_decode_ssse3`] for the tail.
-/// Returns `Err(Error::InvalidEncoding)` if any byte was invalid.
+/// Falls through to [`decode_ssse3`] for the tail.
+/// Returns `Err(InvalidEncoding)` if any byte was invalid.
 ///
 /// # Safety
 ///
@@ -570,9 +502,9 @@ pub(crate) unsafe fn decode_avx2(src: *const u8, dst: *mut u8, byte_len: usize) 
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn ct_decode_avx2(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+pub(crate) unsafe fn decode_avx2(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
     // SAFETY: caller guarantees AVX2 and pointer validity.
-    unsafe { decode_avx2_inner::<false>(src, dst, byte_len) }
+    unsafe { decode_avx2_inner(src, dst, byte_len) }
 }
 
 /// Check whether every byte in `input` is a valid hex ASCII character,
@@ -583,16 +515,14 @@ pub(crate) unsafe fn ct_decode_avx2(src: *const u8, dst: *mut u8, byte_len: usiz
 /// checks that `pmovmskb == 0` (all MSBs clear ⇒ all chars valid).
 /// Falls back to scalar for the sub-16-byte tail.
 ///
-/// When `SHORT_CIRCUIT` is true, returns `false` immediately on the first
-/// invalid chunk. When `SHORT_CIRCUIT` is false, accumulates validity across
-/// all chunks without early exit (constant-time).
+/// Accumulates validity across all chunks without early exit (constant-time).
 ///
 /// # Safety
 ///
 /// Caller must ensure the CPU supports SSSE3.
 #[inline]
 #[target_feature(enable = "ssse3")]
-unsafe fn check_ssse3_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
+unsafe fn check_ssse3_inner(input: &[u8]) -> bool {
     // SAFETY: all intrinsics below require SSSE3, guaranteed by #[target_feature].
     unsafe {
         let delta_check = decode_delta_check_128();
@@ -610,24 +540,14 @@ unsafe fn check_ssse3_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
             let hash_key = _mm_and_si128(_mm_srli_epi16(vm1, 4), mask_hi);
             let check = _mm_add_epi8(vm1, _mm_shuffle_epi8(delta_check, hash_key));
 
-            if SHORT_CIRCUIT {
-                if _mm_movemask_epi8(check) != 0 {
-                    return false;
-                }
-            } else {
-                all_valid &= _mm_movemask_epi8(check) == 0;
-            }
+            all_valid &= _mm_movemask_epi8(check) == 0;
 
             i += 16;
         }
 
         // Tail.
         let input_tail = input.get_unchecked(i..);
-        let tail_valid = if SHORT_CIRCUIT {
-            scalar::check(input_tail)
-        } else {
-            ct_scalar::check(input_tail)
-        };
+        let tail_valid = scalar::check(input_tail);
 
         all_valid & tail_valid
     }
@@ -636,7 +556,7 @@ unsafe fn check_ssse3_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
 /// Check whether every byte in `input` is a valid hex ASCII character,
 /// using SSSE3 SIMD.
 ///
-/// Returns `false` immediately upon encountering the first invalid chunk.
+/// Processes all chunks without short-circuiting on invalid input.
 ///
 /// # Safety
 ///
@@ -645,22 +565,7 @@ unsafe fn check_ssse3_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
 #[target_feature(enable = "ssse3")]
 pub(crate) unsafe fn check_ssse3(input: &[u8]) -> bool {
     // SAFETY: caller guarantees SSSE3.
-    unsafe { check_ssse3_inner::<true>(input) }
-}
-
-/// Constant-time check whether every byte in `input` is a valid hex ASCII
-/// character, using SSSE3 SIMD.
-///
-/// Processes all chunks without short-circuiting on invalid input.
-///
-/// # Safety
-///
-/// Caller must ensure the CPU supports SSSE3.
-#[inline]
-#[target_feature(enable = "ssse3")]
-pub(crate) unsafe fn ct_check_ssse3(input: &[u8]) -> bool {
-    // SAFETY: caller guarantees SSSE3.
-    unsafe { check_ssse3_inner::<false>(input) }
+    unsafe { check_ssse3_inner(input) }
 }
 
 /// Check whether every byte in `input` is a valid hex ASCII character,
@@ -670,18 +575,16 @@ pub(crate) unsafe fn ct_check_ssse3(input: &[u8]) -> bool {
 /// each 32-byte chunk, broadcasts the 128-bit delta_check table to 256 bits
 /// and computes `vm1 + shuffle(delta_check, hash_key)`, checking that
 /// `_mm256_movemask_epi8 == 0` (all MSBs clear ⇒ all chars valid).
-/// Falls back to `check_ssse3` / `ct_check_ssse3` for the sub-32-byte tail.
+/// Falls back to `check_ssse3` for the sub-32-byte tail.
 ///
-/// When `SHORT_CIRCUIT` is true, returns `false` immediately on the first
-/// invalid chunk. When `SHORT_CIRCUIT` is false, accumulates validity across
-/// all chunks without early exit (constant-time).
+/// Accumulates validity across all chunks without early exit (constant-time).
 ///
 /// # Safety
 ///
 /// Caller must ensure the CPU supports AVX2.
 #[inline]
 #[target_feature(enable = "avx2")]
-unsafe fn check_avx2_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
+unsafe fn check_avx2_inner(input: &[u8]) -> bool {
     // SAFETY: all intrinsics below require AVX2, guaranteed by #[target_feature].
     unsafe {
         let delta_check = _mm256_broadcastsi128_si256(decode_delta_check_128());
@@ -700,50 +603,21 @@ unsafe fn check_avx2_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
             let check = _mm256_add_epi8(vm1, _mm256_shuffle_epi8(delta_check, hash_key));
 
             let mask = _mm256_movemask_epi8(check);
-            if SHORT_CIRCUIT {
-                if mask != 0 {
-                    return false;
-                }
-            } else {
-                err_accum |= mask;
-            }
+            err_accum |= mask;
 
             i += 32;
         }
 
         // Tail: fall through to SSSE3/scalar.
         let input_tail = input.get_unchecked(i..);
-        let tail_valid = if SHORT_CIRCUIT {
-            check_ssse3_inner::<true>(input_tail)
-        } else {
-            check_ssse3_inner::<false>(input_tail)
-        };
+        let tail_valid = check_ssse3_inner(input_tail);
 
-        if SHORT_CIRCUIT {
-            tail_valid
-        } else {
-            (err_accum == 0) & tail_valid
-        }
+        (err_accum == 0) & tail_valid
     }
 }
 
 /// Check whether every byte in `input` is a valid hex ASCII character,
 /// using AVX2 SIMD.
-///
-/// Returns `false` immediately upon encountering the first invalid chunk.
-///
-/// # Safety
-///
-/// Caller must ensure the CPU supports AVX2.
-#[inline]
-#[target_feature(enable = "avx2")]
-pub(crate) unsafe fn check_avx2(input: &[u8]) -> bool {
-    // SAFETY: caller guarantees AVX2.
-    unsafe { check_avx2_inner::<true>(input) }
-}
-
-/// Constant-time check whether every byte in `input` is a valid hex ASCII
-/// character, using AVX2 SIMD.
 ///
 /// Processes all chunks without short-circuiting on invalid input.
 ///
@@ -752,9 +626,9 @@ pub(crate) unsafe fn check_avx2(input: &[u8]) -> bool {
 /// Caller must ensure the CPU supports AVX2.
 #[inline]
 #[target_feature(enable = "avx2")]
-pub(crate) unsafe fn ct_check_avx2(input: &[u8]) -> bool {
+pub(crate) unsafe fn check_avx2(input: &[u8]) -> bool {
     // SAFETY: caller guarantees AVX2.
-    unsafe { check_avx2_inner::<false>(input) }
+    unsafe { check_avx2_inner(input) }
 }
 
 /// Hex-encode `input` into `output` using AVX-512BW for the hot loop.
@@ -885,9 +759,8 @@ unsafe fn decode_chunk_512(
 /// Hex-decode `input` into `output` using AVX-512BW.
 ///
 /// Processes 128 hex chars (two `__m512i` loads → 64 output bytes) per
-/// iteration. When `SHORT_CIRCUIT` is true, falls back to scalar on the first
-/// invalid chunk. When `SHORT_CIRCUIT` is false, processes all chunks without
-/// branching on validity (constant-time).
+/// iteration. Accumulates error bits across all chunks without branching
+/// on validity (constant-time).
 ///
 /// # Safety
 ///
@@ -897,11 +770,11 @@ unsafe fn decode_chunk_512(
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[inline]
 #[target_feature(enable = "avx512bw")]
-unsafe fn decode_avx512_inner<const SHORT_CIRCUIT: bool>(
+unsafe fn decode_avx512_inner(
     src: *const u8,
     dst: *mut u8,
     byte_len: usize,
-) -> Result<(), Error> {
+) -> Result<(), InvalidEncoding> {
     let hex_len = byte_len * 2;
 
     // SAFETY: all intrinsics below require AVX-512BW (implies AVX-512F),
@@ -929,19 +802,9 @@ unsafe fn decode_avx512_inner<const SHORT_CIRCUIT: bool>(
             let (decoded1, mask1) =
                 decode_chunk_512(chunk1, delta_check, delta_rebase, one, mask_hi, weights, perm_idx);
 
-            // Fuse: OR masks, then a single branch.
+            // Fuse: OR masks.
             let combined_mask = mask0 | mask1;
-
-            if SHORT_CIRCUIT {
-                if combined_mask != 0 {
-                    return scalar::decode(src.add(i), dst.add(o), byte_len - o).map_err(|e| match e {
-                        Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
-                        other => other,
-                    });
-                }
-            } else {
-                err_accum |= combined_mask;
-            }
+            err_accum |= combined_mask;
 
             // Store low 32 bytes of each decoded __m512i.
             _mm256_storeu_si256(dst.add(o).cast(), _mm512_castsi512_si256(decoded0));
@@ -954,20 +817,13 @@ unsafe fn decode_avx512_inner<const SHORT_CIRCUIT: bool>(
         // Tail: fall through to AVX2, then SSSE3, then scalar.
         if i < hex_len {
             let tail_byte_len = byte_len - o;
-            if SHORT_CIRCUIT {
-                decode_avx2_inner::<true>(src.add(i), dst.add(o), tail_byte_len).map_err(|e| match e {
-                    Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + i },
-                    other => other,
-                })?;
-            } else {
-                if decode_avx2_inner::<false>(src.add(i), dst.add(o), tail_byte_len).is_err() {
-                    err_accum |= 1;
-                }
+            if decode_avx2_inner(src.add(i), dst.add(o), tail_byte_len).is_err() {
+                err_accum |= 1;
             }
         }
 
-        if !SHORT_CIRCUIT && err_accum != 0 {
-            return Err(Error::InvalidEncoding);
+        if err_accum != 0 {
+            return Err(InvalidEncoding);
         }
 
         Ok(())
@@ -976,26 +832,9 @@ unsafe fn decode_avx512_inner<const SHORT_CIRCUIT: bool>(
 
 /// Hex-decode `input` into `output` using AVX-512BW.
 ///
-/// Falls through to [`decode_avx2`] for the tail. On validation failure,
-/// falls back to scalar for precise error position.
-///
-/// # Safety
-///
-/// - The CPU must support AVX-512BW.
-/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
-/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
-/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
-#[target_feature(enable = "avx512bw")]
-pub(crate) unsafe fn decode_avx512(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
-    // SAFETY: caller guarantees AVX-512BW and pointer validity.
-    unsafe { decode_avx512_inner::<true>(src, dst, byte_len) }
-}
-
-/// Constant-time hex-decode `input` into `output` using AVX-512BW.
-///
 /// Processes all chunks without short-circuiting on invalid input.
-/// Falls through to [`ct_decode_avx2`] for the tail.
-/// Returns `Err(Error::InvalidEncoding)` if any byte was invalid.
+/// Falls through to [`decode_avx2`] for the tail.
+/// Returns `Err(InvalidEncoding)` if any byte was invalid.
 ///
 /// # Safety
 ///
@@ -1004,9 +843,9 @@ pub(crate) unsafe fn decode_avx512(src: *const u8, dst: *mut u8, byte_len: usize
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[target_feature(enable = "avx512bw")]
-pub(crate) unsafe fn ct_decode_avx512(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+pub(crate) unsafe fn decode_avx512(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
     // SAFETY: caller guarantees AVX-512BW and pointer validity.
-    unsafe { decode_avx512_inner::<false>(src, dst, byte_len) }
+    unsafe { decode_avx512_inner(src, dst, byte_len) }
 }
 
 /// Check whether every byte in `input` is a valid hex ASCII character,
@@ -1017,16 +856,14 @@ pub(crate) unsafe fn ct_decode_avx512(src: *const u8, dst: *mut u8, byte_len: us
 /// `_mm512_movepi8_mask == 0` (all MSBs clear ⇒ all chars valid).
 /// Falls back to AVX2/SSSE3/scalar for any remaining tail.
 ///
-/// When `SHORT_CIRCUIT` is true, returns `false` immediately on the first
-/// invalid chunk. When `SHORT_CIRCUIT` is false, accumulates validity across
-/// all chunks without early exit (constant-time).
+/// Accumulates validity across all chunks without early exit (constant-time).
 ///
 /// # Safety
 ///
 /// Caller must ensure the CPU supports AVX-512BW.
 #[inline]
 #[target_feature(enable = "avx512bw")]
-unsafe fn check_avx512_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
+unsafe fn check_avx512_inner(input: &[u8]) -> bool {
     // SAFETY: all intrinsics below require AVX-512BW, guaranteed by #[target_feature].
     unsafe {
         let delta_check = _mm512_broadcast_i32x4(decode_delta_check_128());
@@ -1044,24 +881,14 @@ unsafe fn check_avx512_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
             let hash_key = _mm512_and_si512(_mm512_srli_epi16(vm1, 4), mask_hi);
             let check = _mm512_add_epi8(vm1, _mm512_shuffle_epi8(delta_check, hash_key));
 
-            if SHORT_CIRCUIT {
-                if _mm512_movepi8_mask(check) != 0 {
-                    return false;
-                }
-            } else {
-                all_valid &= _mm512_movepi8_mask(check) == 0;
-            }
+            all_valid &= _mm512_movepi8_mask(check) == 0;
 
             i += 64;
         }
 
         // Tail: fall through to AVX2/SSSE3/scalar.
         let input_tail = input.get_unchecked(i..);
-        let tail_valid = if SHORT_CIRCUIT {
-            check_avx2_inner::<true>(input_tail)
-        } else {
-            check_avx2_inner::<false>(input_tail)
-        };
+        let tail_valid = check_avx2_inner(input_tail);
 
         all_valid & tail_valid
     }
@@ -1070,7 +897,7 @@ unsafe fn check_avx512_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
 /// Check whether every byte in `input` is a valid hex ASCII character,
 /// using AVX-512BW SIMD.
 ///
-/// Returns `false` immediately upon encountering the first invalid chunk.
+/// Processes all chunks without short-circuiting on invalid input.
 ///
 /// # Safety
 ///
@@ -1079,22 +906,7 @@ unsafe fn check_avx512_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
 #[target_feature(enable = "avx512bw")]
 pub(crate) unsafe fn check_avx512(input: &[u8]) -> bool {
     // SAFETY: caller guarantees AVX-512BW.
-    unsafe { check_avx512_inner::<true>(input) }
-}
-
-/// Constant-time check whether every byte in `input` is a valid hex ASCII
-/// character, using AVX-512BW SIMD.
-///
-/// Processes all chunks without short-circuiting on invalid input.
-///
-/// # Safety
-///
-/// Caller must ensure the CPU supports AVX-512BW.
-#[inline]
-#[target_feature(enable = "avx512bw")]
-pub(crate) unsafe fn ct_check_avx512(input: &[u8]) -> bool {
-    // SAFETY: caller guarantees AVX-512BW.
-    unsafe { check_avx512_inner::<false>(input) }
+    unsafe { check_avx512_inner(input) }
 }
 
 #[cfg(test)]
@@ -1117,10 +929,8 @@ mod tests {
         exercise_backend(
             |input, output| unsafe { encode_ssse3::<false>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
             |input, output| unsafe { encode_ssse3::<true>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
-            |input, output| unsafe { decode_ssse3(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) },
-            |input, output| unsafe { ct_decode_ssse3(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) },
+            |input, output| unsafe { decode_ssse3(input.as_ptr(), output.as_mut_ptr().cast(), output.len()).map_err(|_| crate::error::Error::InvalidEncoding) },
             |input| unsafe { check_ssse3(input) },
-            |input| unsafe { ct_check_ssse3(input) },
         );
     }
 
@@ -1135,10 +945,8 @@ mod tests {
         exercise_backend(
             |input, output| unsafe { encode_avx2::<false>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
             |input, output| unsafe { encode_avx2::<true>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
-            |input, output| unsafe { decode_avx2(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) },
-            |input, output| unsafe { ct_decode_avx2(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) },
+            |input, output| unsafe { decode_avx2(input.as_ptr(), output.as_mut_ptr().cast(), output.len()).map_err(|_| crate::error::Error::InvalidEncoding) },
             |input| unsafe { check_avx2(input) },
-            |input| unsafe { ct_check_avx2(input) },
         );
     }
 
@@ -1153,10 +961,8 @@ mod tests {
         exercise_backend(
             |input, output| unsafe { encode_avx512::<false>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
             |input, output| unsafe { encode_avx512::<true>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
-            |input, output| unsafe { decode_avx512(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) },
-            |input, output| unsafe { ct_decode_avx512(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) },
+            |input, output| unsafe { decode_avx512(input.as_ptr(), output.as_mut_ptr().cast(), output.len()).map_err(|_| crate::error::Error::InvalidEncoding) },
             |input| unsafe { check_avx512(input) },
-            |input| unsafe { ct_check_avx512(input) },
         );
     }
 }

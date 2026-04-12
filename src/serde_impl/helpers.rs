@@ -62,11 +62,11 @@ impl fmt::Display for CtHexDisplayAdapter<'_> {
             let hex_buf = &mut buf[..hex_len];
             // Length invariant: hex_buf.len() == chunk.len() * 2.
             if self.upper {
-                backend::ct_encode::<true>(chunk, hex_buf).expect("buf is correctly sized");
+                backend::encode::<true>(chunk, hex_buf).expect("buf is correctly sized");
             } else {
-                backend::ct_encode::<false>(chunk, hex_buf).expect("buf is correctly sized");
+                backend::encode::<false>(chunk, hex_buf).expect("buf is correctly sized");
             }
-            // SAFETY: ct_encode wrote `hex_len` bytes of valid hex ASCII (= valid UTF-8).
+            // SAFETY: encode wrote `hex_len` bytes of valid hex ASCII (= valid UTF-8).
             let s = unsafe {
                 let init = maybe_uninit::assume_init_slice(hex_buf);
                 core::str::from_utf8_unchecked(init)
@@ -130,7 +130,7 @@ impl FromHexHelper for alloc::vec::Vec<u8> {
     }
 
     fn from_hex_ct<E: de::Error>(hex: &str) -> Result<Self, E> {
-        crate::ct::decode_to(hex.as_bytes()).map_err(|e| de::Error::custom(FmtError(e)))
+        crate::decode(hex).map_err(|e| de::Error::custom(FmtError(e)))
     }
 }
 
@@ -140,7 +140,7 @@ impl<const N: usize> FromHexHelper for [u8; N] {
     }
 
     fn from_hex_ct<E: de::Error>(hex: &str) -> Result<Self, E> {
-        crate::ct::decode_to(hex.as_bytes()).map_err(|e| de::Error::custom(FmtError(e)))
+        crate::decode(hex).map_err(|e| de::Error::custom(FmtError(e)))
     }
 }
 

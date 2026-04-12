@@ -16,7 +16,7 @@
 //! two parallel paths (digit and alpha) produce candidate nibble values,
 //! merged via `u8x16_min`. Validation detects out-of-range nibbles via
 //! saturating addition. On failure, the scalar backend is invoked on the
-//! remaining input to produce a precise `InvalidChar` error. Nibbles are
+//! remaining input to produce a precise error. Nibbles are
 //! packed by deinterleaving (shuffle to separate even/odd positions), then
 //! shifting and ORing.
 //!
@@ -25,9 +25,8 @@
 //! Three range checks (`0-9`, `a-f`, `A-F`) are ORed together and reduced
 //! with `u8x16_all_true`.
 
-use crate::backend::ct_scalar;
 use crate::backend::scalar;
-use crate::error::Error;
+use super::InvalidEncoding;
 use core::arch::wasm32::*;
 
 /// Lower-case hex lookup table: nibble value 0..15 → ASCII `'0'..'f'`.
@@ -86,22 +85,17 @@ pub(crate) unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byt
     unsafe { scalar::encode_inner::<UPPER>(src.add(done), dst.add(done * 2), byte_len - done) };
 }
 
-/// Inner decode implementation generic over short-circuit mode.
+/// Decode hex-encoded `input` into `output`, using SIMD128 for 32-byte chunks.
 ///
-/// When `SHORT_CIRCUIT = true` (fast path): bails out to `scalar::decode` on
-/// the first invalid chunk, returning a precise `InvalidChar` error.
-///
-/// When `SHORT_CIRCUIT = false` (constant-time path): accumulates all error
-/// bits across every chunk without branching on validity, then delegates the
-/// tail to `ct_scalar::decode`.
+/// Processes all chunks without short-circuiting on invalid input (constant-time),
+/// accumulating errors across the entire input before returning.
 ///
 /// # Safety
 ///
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
-#[inline]
-unsafe fn decode_inner<const SHORT_CIRCUIT: bool>(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
+pub(crate) unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
     let hex_len = byte_len * 2;
     let mut err_accum: u16 = 0;
 
@@ -115,49 +109,13 @@ unsafe fn decode_inner<const SHORT_CIRCUIT: bool>(src: *const u8, dst: *mut u8, 
         let nib0 = unsafe { v128_load(src.add(hex_off).cast()) };
         let nib1 = unsafe { v128_load(src.add(hex_off + 16).cast()) };
 
-        //  Mula–Langdale nibble decode (Algorithm #3)
-        //
-        // Digit path:  for '0'..'9' → 0..9
-        //   add 0xC6 (== -0x3A as u8, wrapping), saturating-sub 6, sub 0xF0
-        //   This maps '0' (0x30) → 0x30+0xC6=0xF6, sat_sub 6 → 0xF0, sub 0xF0 → 0
-        //   and '9' (0x39) → 0x39+0xC6=0xFF, sat_sub 6 → 0xF9, sub 0xF0 → 9
-        //   Non-digit bytes land < 0xF0 after sat_sub, giving large values after sub.
-        //
-        // Alpha path:  for 'A'..'F' / 'a'..'f' → 10..15
-        //   Mask to uppercase (AND 0xDF), sub 'A', saturating-add 10.
-        //   'A' → 0, +10 → 10.  'F' → 5, +10 → 15.
-        //   Bytes far from 'A' overflow past 255 in sat_add, clamping to 255.
-        //
-        // Merge: min(digit, alpha) picks whichever path produced a valid small nibble.
-
         let (nibbles0, ok0) = decode_nibbles(nib0);
         let (nibbles1, ok1) = decode_nibbles(nib1);
 
-        if SHORT_CIRCUIT {
-            if ok0 != 0 || ok1 != 0 {
-                // Fall back to scalar on the remaining input to get precise error info.
-                // SAFETY: `src.add(hex_off)` valid for remaining hex bytes,
-                // `dst.add(byte_off)` valid for remaining output bytes.
-                return unsafe { scalar::decode_inner(src.add(hex_off), dst.add(byte_off), byte_len - byte_off) }
-                    .map_err(|e| match e {
-                        Error::InvalidChar { byte, index } => Error::InvalidChar {
-                            byte,
-                            index: index + hex_off,
-                        },
-                        other => other,
-                    });
-            }
-        } else {
-            err_accum |= ok0 | ok1;
-        }
+        err_accum |= ok0 | ok1;
 
         // Pack nibbles: deinterleave even (hi) and odd (lo) positions from the
         // two 16-byte nibble vectors, then combine with shift + OR.
-        //
-        // nib0 contains nibbles for hex chars at positions 0..15,
-        // nib1 contains nibbles for hex chars at positions 16..31.
-        // Even positions (0,2,4,...) are the high nibbles of each output byte,
-        // odd positions (1,3,5,...) are the low nibbles.
         let hi = u8x16_shuffle::<0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30>(nibbles0, nibbles1);
         let lo = u8x16_shuffle::<1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31>(nibbles0, nibbles1);
         let packed = v128_or(u8x16_shl(hi, 4), lo);
@@ -168,64 +126,24 @@ unsafe fn decode_inner<const SHORT_CIRCUIT: bool>(src: *const u8, dst: *mut u8, 
         }
     }
 
-    // Tail: delegate remaining bytes to scalar (or ct_scalar for CT path).
+    // Tail: delegate remaining bytes to scalar.
     let consumed_hex = chunks * 32;
     let consumed_bytes = chunks * 16;
     if consumed_hex < hex_len {
         let tail_byte_len = byte_len - consumed_bytes;
-        if SHORT_CIRCUIT {
-            // SAFETY: tail pointers valid for remaining hex/byte counts.
-            unsafe { scalar::decode_inner(src.add(consumed_hex), dst.add(consumed_bytes), tail_byte_len) }.map_err(
-                |e| match e {
-                    Error::InvalidChar { byte, index } => Error::InvalidChar {
-                        byte,
-                        index: index + consumed_hex,
-                    },
-                    other => other,
-                },
-            )?;
-        } else {
-            // SAFETY: same pointer validity as above.
-            if unsafe { ct_scalar::decode_inner(src.add(consumed_hex), dst.add(consumed_bytes), tail_byte_len) }
-                .is_err()
-            {
-                err_accum |= 1;
-            }
+        // SAFETY: same pointer validity as above.
+        if unsafe { scalar::decode_inner(src.add(consumed_hex), dst.add(consumed_bytes), tail_byte_len) }
+            .is_err()
+        {
+            err_accum |= 1;
         }
     }
 
-    if !SHORT_CIRCUIT && err_accum != 0 {
-        return Err(Error::InvalidEncoding);
+    if err_accum != 0 {
+        return Err(InvalidEncoding);
     }
 
     Ok(())
-}
-
-/// Decode hex-encoded `input` into `output`, using SIMD128 for 32-byte chunks.
-///
-/// Returns `Ok(())` on success. On the first invalid hex character, returns
-/// `Err(InvalidChar { byte, index })`.
-///
-/// # Safety
-///
-/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
-/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
-/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
-pub(crate) unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
-    unsafe { decode_inner::<true>(src, dst, byte_len) }
-}
-
-/// Constant-time variant of [`decode`]: processes all chunks without
-/// short-circuiting on invalid input, accumulating errors across the entire
-/// input before returning.
-///
-/// # Safety
-///
-/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
-/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
-/// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
-pub(crate) unsafe fn ct_decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), Error> {
-    unsafe { decode_inner::<false>(src, dst, byte_len) }
 }
 
 /// Decode 16 hex-ASCII bytes in `v` into nibble values, returning the nibble
@@ -257,15 +175,13 @@ fn decode_nibbles(v: v128) -> (v128, u16) {
     (nibbles, err_bits)
 }
 
-/// Inner check implementation generic over short-circuit mode.
+/// Check if every byte in `input` is a valid hex ASCII character, using SIMD128
+/// for 16-byte chunks.
 ///
-/// When `SHORT_CIRCUIT = true` (fast path): returns `false` immediately on the
-/// first invalid chunk.
-///
-/// When `SHORT_CIRCUIT = false` (constant-time path): ANDs all validity flags
-/// together without branching, examining every chunk regardless.
+/// Processes all chunks without short-circuiting (constant-time).
+/// Returns `true` iff all bytes are in `[0-9a-fA-F]`.
 #[inline]
-fn check_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
+pub(crate) fn check(input: &[u8]) -> bool {
     let mut all_valid = true;
 
     let chunks = input.len() / 16;
@@ -276,49 +192,18 @@ fn check_inner<const SHORT_CIRCUIT: bool>(input: &[u8]) -> bool {
         let v = unsafe { v128_load(src.as_ptr().cast()) };
 
         // Range check: three sub-ranges ORed together.
-        //   '0' (0x30) ..= '9' (0x39)
-        //   'A' (0x41) ..= 'F' (0x46)
-        //   'a' (0x61) ..= 'f' (0x66)
         let is_digit = v128_and(u8x16_ge(v, u8x16_splat(b'0')), u8x16_le(v, u8x16_splat(b'9')));
         let is_upper = v128_and(u8x16_ge(v, u8x16_splat(b'A')), u8x16_le(v, u8x16_splat(b'F')));
         let is_lower = v128_and(u8x16_ge(v, u8x16_splat(b'a')), u8x16_le(v, u8x16_splat(b'f')));
 
         let is_hex = v128_or(v128_or(is_digit, is_upper), is_lower);
 
-        // `u8x16_all_true` returns true if every lane is non-zero.
-        if SHORT_CIRCUIT {
-            if !u8x16_all_true(is_hex) {
-                return false;
-            }
-        } else {
-            all_valid &= u8x16_all_true(is_hex);
-        }
+        all_valid &= u8x16_all_true(is_hex);
     }
 
-    // Tail: delegate remaining bytes to scalar (or ct_scalar for CT path).
+    // Tail: delegate remaining bytes to scalar.
     let done = chunks * 16;
-    if SHORT_CIRCUIT {
-        all_valid && scalar::check(&input[done..])
-    } else {
-        ct_scalar::check(&input[done..]) && all_valid
-    }
-}
-
-/// Check if every byte in `input` is a valid hex ASCII character, using SIMD128
-/// for 16-byte chunks.
-///
-/// Returns `true` iff all bytes are in `[0-9a-fA-F]`.
-#[inline]
-pub(crate) fn check(input: &[u8]) -> bool {
-    check_inner::<true>(input)
-}
-
-/// Constant-time variant of [`check`]: examines all chunks without
-/// short-circuiting, so execution time does not depend on where (or whether)
-/// invalid bytes appear.
-#[inline]
-pub(crate) fn ct_check(input: &[u8]) -> bool {
-    check_inner::<false>(input)
+    scalar::check(&input[done..]) && all_valid
 }
 
 #[cfg(test)]
@@ -331,10 +216,8 @@ mod tests {
         exercise_backend(
             |input, output| unsafe { encode::<false>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
             |input, output| unsafe { encode::<true>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
-            |input, output| unsafe { decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) },
-            |input, output| unsafe { ct_decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len()) },
+            |input, output| unsafe { decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len()).map_err(|_| crate::error::Error::InvalidEncoding) },
             check,
-            ct_check,
         );
     }
 }

@@ -19,7 +19,6 @@
 //! The inner backend functions work with `MaybeUninit<u8>` output buffers
 //! to avoid unnecessary zeroing.
 
-pub mod ct_scalar;
 pub mod scalar;
 
 // Conditionally compile SIMD submodules.
@@ -35,6 +34,10 @@ pub mod wasm;
 use crate::error::Error;
 use crate::platform::{self, Platform};
 use core::mem::MaybeUninit;
+
+/// Backend-level decode error (zero-size, no position info).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct InvalidEncoding;
 
 /// Dispatch to the detected platform.
 ///
@@ -100,9 +103,8 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) -
 
 /// Decode hex `input` into `output`.
 ///
-/// Returns `Ok(())` on success, `Err(InvalidChar { .. })` on the first
-/// invalid hex character, or `Err(InvalidLength)` if the buffer sizes
-/// are wrong.
+/// Returns `Ok(())` on success, `Err(InvalidEncoding)` on invalid hex,
+/// or `Err(InvalidLength)` if the buffer sizes are wrong.
 #[inline]
 pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     if input.len() != output.len() * 2 {
@@ -124,75 +126,7 @@ pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error>
         avx2: unsafe { x86::decode_avx2(src, dst, byte_len) },
         avx512: unsafe { x86::decode_avx512(src, dst, byte_len) },
         wasm: unsafe { wasm::decode(src, dst, byte_len) },
-    )
-}
-
-/// Constant-time encode. SIMD encode is already CT (register LUT, no
-/// memory-indexed lookups). Only the scalar fallback differs: `ct_scalar`
-/// uses branchless arithmetic instead of a lookup table.
-///
-/// Returns `Err(InvalidLength)` if `output.len() != input.len() * 2`.
-#[inline]
-pub fn ct_encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
-    if output.len() != input.len() * 2 {
-        return Err(Error::InvalidLength {
-            expected: input.len() * 2,
-            got: output.len(),
-        });
-    }
-    let byte_len = input.len();
-    let src = input.as_ptr();
-    let dst = output.as_mut_ptr().cast::<u8>();
-    // SAFETY: same as `encode` — valid, non-overlapping slice-derived pointers.
-    dispatch!(
-        scalar: unsafe { ct_scalar::encode::<UPPER>(src, dst, byte_len) },
-        neon: unsafe { neon::encode::<UPPER>(src, dst, byte_len) },
-        ssse3: unsafe { x86::encode_ssse3::<UPPER>(src, dst, byte_len) },
-        avx2: unsafe { x86::encode_avx2::<UPPER>(src, dst, byte_len) },
-        avx512: unsafe { x86::encode_avx512::<UPPER>(src, dst, byte_len) },
-        wasm: unsafe { wasm::encode::<UPPER>(src, dst, byte_len) },
-    );
-    Ok(())
-}
-
-/// Constant-time decode. Uses CT SIMD variants (no early return, error
-/// accumulation) with `ct_scalar` as the scalar fallback.
-/// Returns `Error::InvalidEncoding` (not `InvalidChar`) on failure, or
-/// `Err(InvalidLength)` if the buffer sizes are wrong.
-#[inline]
-pub fn ct_decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
-    if input.len() != output.len() * 2 {
-        return Err(Error::InvalidLength {
-            expected: output.len() * 2,
-            got: input.len(),
-        });
-    }
-    let byte_len = output.len();
-    let src = input.as_ptr();
-    let dst = output.as_mut_ptr().cast::<u8>();
-    // SAFETY: same as `decode` — valid, non-overlapping slice-derived pointers.
-    dispatch!(
-        scalar: unsafe { ct_scalar::decode(src, dst, byte_len) },
-        neon: unsafe { neon::ct_decode(src, dst, byte_len) },
-        ssse3: unsafe { x86::ct_decode_ssse3(src, dst, byte_len) },
-        avx2: unsafe { x86::ct_decode_avx2(src, dst, byte_len) },
-        avx512: unsafe { x86::ct_decode_avx512(src, dst, byte_len) },
-        wasm: unsafe { wasm::ct_decode(src, dst, byte_len) },
-    )
-}
-
-/// Constant-time check. Uses CT SIMD variants (no early return) with
-/// `ct_scalar` as the scalar fallback.
-#[inline]
-pub fn ct_check(input: &[u8]) -> bool {
-    dispatch!(
-        scalar: ct_scalar::check(input),
-        neon: neon::ct_check(input),
-        ssse3: unsafe { x86::ct_check_ssse3(input) },
-        avx2: unsafe { x86::ct_check_avx2(input) },
-        avx512: unsafe { x86::ct_check_avx512(input) },
-        wasm: wasm::ct_check(input),
-    )
+    ).map_err(|InvalidEncoding| Error::InvalidEncoding)
 }
 
 /// Check if every byte in `input` is a valid hex ASCII character.
@@ -233,20 +167,16 @@ pub(crate) mod test_support {
 
     /// Exercise a SIMD backend's encode/decode/check against the scalar oracle
     /// for every size in 0..=512.
-    pub(crate) fn exercise_backend<EL, EU, D, CD, C, CC>(
+    pub(crate) fn exercise_backend<EL, EU, D, C>(
         encode_lower: EL,
         encode_upper: EU,
         decode: D,
-        ct_decode: CD,
         check: C,
-        ct_check: CC,
     ) where
         EL: Fn(&[u8], &mut [MaybeUninit<u8>]),
         EU: Fn(&[u8], &mut [MaybeUninit<u8>]),
         D: Fn(&[u8], &mut [MaybeUninit<u8>]) -> Result<(), Error>,
-        CD: Fn(&[u8], &mut [MaybeUninit<u8>]) -> Result<(), Error>,
         C: Fn(&[u8]) -> bool,
-        CC: Fn(&[u8]) -> bool,
     {
         for size in 0..=MAX_SIZE {
             let input = make_input(size);
@@ -266,22 +196,14 @@ pub(crate) mod test_support {
             let upper: alloc::vec::Vec<u8> = upper_out.iter().map(|m| unsafe { m.assume_init() }).collect();
             assert_eq!(upper, expected_upper, "upper encode mismatch at size {size}");
 
-            // Decode (fast path)
+            // Decode
             let mut decoded = alloc::vec![MaybeUninit::uninit(); size];
             decode(&expected_lower, &mut decoded).unwrap_or_else(|e| panic!("decode failed at size {size}: {e}"));
             let dec: alloc::vec::Vec<u8> = decoded.iter().map(|m| unsafe { m.assume_init() }).collect();
             assert_eq!(dec, input, "decode mismatch at size {size}");
 
-            // Decode (CT path)
-            let mut ct_decoded = alloc::vec![MaybeUninit::uninit(); size];
-            ct_decode(&expected_lower, &mut ct_decoded)
-                .unwrap_or_else(|e| panic!("ct decode failed at size {size}: {e}"));
-            let ct_dec: alloc::vec::Vec<u8> = ct_decoded.iter().map(|m| unsafe { m.assume_init() }).collect();
-            assert_eq!(ct_dec, input, "ct decode mismatch at size {size}");
-
-            // Check (both paths)
+            // Check
             assert!(check(&expected_lower), "check rejected valid hex at size {size}");
-            assert!(ct_check(&expected_lower), "ct_check rejected valid hex at size {size}");
 
             // Invalid input: inject bad byte and verify error
             if hex_len >= 4 {
@@ -292,22 +214,11 @@ pub(crate) mod test_support {
                 let mut inv_out = alloc::vec![MaybeUninit::uninit(); size];
                 assert_eq!(
                     decode(&invalid, &mut inv_out),
-                    Err(Error::InvalidChar {
-                        byte: b'G',
-                        index: bad_index
-                    }),
+                    Err(Error::InvalidEncoding),
                     "decode wrong error at size {size}"
                 );
 
-                let mut inv_ct_out = alloc::vec![MaybeUninit::uninit(); size];
-                assert_eq!(
-                    ct_decode(&invalid, &mut inv_ct_out),
-                    Err(Error::InvalidEncoding),
-                    "ct_decode wrong error at size {size}"
-                );
-
                 assert!(!check(&invalid), "check accepted invalid hex at size {size}");
-                assert!(!ct_check(&invalid), "ct_check accepted invalid hex at size {size}");
             }
         }
     }
@@ -322,7 +233,7 @@ mod boundary_tests {
     use alloc::vec::Vec;
     use core::mem::MaybeUninit;
 
-    use super::{check, ct_check, ct_decode, ct_encode, decode, encode};
+    use super::{check, decode, encode};
     use crate::error::Error;
 
     /// SIMD chunk boundary sizes: just below, at, and just above the
@@ -352,13 +263,7 @@ mod boundary_tests {
             let decoded: Vec<u8> = out.iter().map(|m| unsafe { m.assume_init() }).collect();
             assert_eq!(decoded, input, "decode mismatch at size {size}");
 
-            let mut ct_out = vec![MaybeUninit::uninit(); size];
-            ct_decode(&hex, &mut ct_out).unwrap_or_else(|e| panic!("ct_decode failed at size {size}: {e}"));
-            let ct_decoded: Vec<u8> = ct_out.iter().map(|m| unsafe { m.assume_init() }).collect();
-            assert_eq!(ct_decoded, input, "ct_decode mismatch at size {size}");
-
             assert!(check(&hex), "check rejected valid hex at size {size}");
-            assert!(ct_check(&hex), "ct_check rejected valid hex at size {size}");
 
             // Inject invalid byte at every position.
             for pos in 0..hex_len {
@@ -368,20 +273,9 @@ mod boundary_tests {
                 let mut d_out = vec![MaybeUninit::uninit(); size];
                 let res = decode(&bad, &mut d_out);
                 assert!(res.is_err(), "decode accepted invalid byte at pos {pos} (size {size})");
-                if let Err(Error::InvalidChar { byte, index }) = res {
-                    assert_eq!(byte, b'Z', "decode wrong byte at pos {pos} (size {size})");
-                    assert_eq!(index, pos, "decode wrong index at pos {pos} (size {size})");
-                }
-
-                let mut ct_d_out = vec![MaybeUninit::uninit(); size];
-                assert_eq!(
-                    ct_decode(&bad, &mut ct_d_out),
-                    Err(Error::InvalidEncoding),
-                    "ct_decode accepted invalid byte at pos {pos} (size {size})"
-                );
+                assert_eq!(res, Err(Error::InvalidEncoding), "decode wrong error at pos {pos} (size {size})");
 
                 assert!(!check(&bad), "check accepted invalid byte at pos {pos} (size {size})");
-                assert!(!ct_check(&bad), "ct_check accepted invalid byte at pos {pos} (size {size})");
             }
         }
     }
@@ -409,15 +303,6 @@ mod boundary_tests {
             decode(&upper_hex, &mut dec2).unwrap_or_else(|e| panic!("roundtrip(upper) failed at {size}: {e}"));
             let result2: Vec<u8> = dec2.iter().map(|m| unsafe { m.assume_init() }).collect();
             assert_eq!(result2, input, "upper roundtrip mismatch at size {size}");
-
-            // CT encode + CT decode roundtrip
-            let mut ct_hex = vec![MaybeUninit::uninit(); hex_len];
-            ct_encode::<false>(&input, &mut ct_hex).expect("ct_encode failed");
-            let ct_hex_bytes: Vec<u8> = ct_hex.iter().map(|m| unsafe { m.assume_init() }).collect();
-            let mut ct_dec = vec![MaybeUninit::uninit(); size];
-            ct_decode(&ct_hex_bytes, &mut ct_dec).unwrap_or_else(|e| panic!("ct roundtrip failed at {size}: {e}"));
-            let ct_result: Vec<u8> = ct_dec.iter().map(|m| unsafe { m.assume_init() }).collect();
-            assert_eq!(ct_result, input, "ct roundtrip mismatch at size {size}");
         }
     }
 
@@ -440,20 +325,9 @@ mod boundary_tests {
             let mut d_out = vec![MaybeUninit::uninit(); DECODED_LEN];
             let res = decode(&bad, &mut d_out);
             assert!(res.is_err(), "decode missed invalid byte at pos {pos}");
-            if let Err(Error::InvalidChar { byte, index }) = res {
-                assert_eq!(byte, b'Z', "wrong byte at pos {pos}");
-                assert_eq!(index, pos, "wrong index at pos {pos}");
-            }
-
-            let mut ct_out = vec![MaybeUninit::uninit(); DECODED_LEN];
-            assert_eq!(
-                ct_decode(&bad, &mut ct_out),
-                Err(Error::InvalidEncoding),
-                "ct_decode missed invalid byte at pos {pos}"
-            );
+            assert_eq!(res, Err(Error::InvalidEncoding), "decode wrong error at pos {pos}");
 
             assert!(!check(&bad), "check missed invalid byte at pos {pos}");
-            assert!(!ct_check(&bad), "ct_check missed invalid byte at pos {pos}");
         }
     }
 }

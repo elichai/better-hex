@@ -242,16 +242,13 @@ impl<const N: usize, P: Prefix> FromStr for HexStr<N, P> {
         let prefix_bytes = IntoBytes::as_bytes(&prefix);
         for i in 0..P::LEN {
             if s_bytes[i] != prefix_bytes[i] {
-                return Err(Error::InvalidChar { byte: s_bytes[i], index: i });
+                return Err(Error::InvalidEncoding);
             }
         }
         let hex_part = &s_bytes[P::LEN..];
-        // Decode to validate hex content — captures InvalidChar errors.
+        // Decode to validate hex content.
         let mut scratch: [MaybeUninit<u8>; N] = maybe_uninit::uninit_array();
-        backend::decode(hex_part, &mut scratch).map_err(|e| match e {
-            Error::InvalidChar { byte, index } => Error::InvalidChar { byte, index: index + P::LEN },
-            other => other,
-        })?;
+        backend::decode(hex_part, &mut scratch)?;
         // Input is valid hex — reinterpret as [[u8; 2]; N] and construct.
         let bytes: &[[u8; 2]; N] = FromBytes::ref_from_bytes(hex_part).expect("length already checked above");
         Ok(Self {
@@ -286,16 +283,10 @@ pub const fn const_decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; 
         let hi = const_decode_nibble(input[i * 2]);
         let lo = const_decode_nibble(input[i * 2 + 1]);
         if hi == u8::MAX {
-            return Err(Error::InvalidChar {
-                byte: input[i * 2],
-                index: i * 2,
-            });
+            return Err(Error::InvalidEncoding);
         }
         if lo == u8::MAX {
-            return Err(Error::InvalidChar {
-                byte: input[i * 2 + 1],
-                index: i * 2 + 1,
-            });
+            return Err(Error::InvalidEncoding);
         }
         out[i] = (hi << 4) | lo;
         i += 1;

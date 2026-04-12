@@ -1,14 +1,14 @@
 #![no_std]
 #![warn(missing_docs)]
-//! Fast hex encoding/decoding with SIMD, `const fn`, and constant-time support.
+//! Fast hex encoding/decoding with SIMD and `const fn` support.
 //!
 //! # Features
 //!
 //! - **SIMD** — x86 (SSSE3/AVX2/AVX-512BW), AArch64 (NEON), WASM (SIMD128)
 //! - **`const fn`** — compile-time encode, decode, and validation
 //! - **Stack strings** — [`HexStr<N>`][HexStr] with zero heap allocation
-//! - **Constant-time** — branchless scalar and SIMD paths in [`ct`]
 //! - **Extensible** — [`HexTarget`] trait for custom output types
+//! - All operations are constant-time w.r.t. input data values
 //!
 //! # Acknowledgments
 //!
@@ -35,7 +35,7 @@
 //! - Wojciech Muła & Daniel Langdale — SIMD nibble-decode (min-of-two-paths)
 //!   used in the NEON and WASM decode backends
 //! - Steve "Sc00bz" Thomas, ConstTimeEncoding —
-//!   branchless arithmetic for the `ct_scalar` backend:
+//!   branchless arithmetic for the scalar backend:
 //!   <https://tobtu.com/dectobase16ct.php>
 
 #[cfg(any(feature = "alloc", test))]
@@ -45,7 +45,6 @@ extern crate alloc;
 extern crate std;
 
 mod backend;
-pub mod ct;
 mod decode;
 mod display;
 mod encode;
@@ -80,7 +79,7 @@ pub type PrefixedHexStr<const N: usize> = HexStr<N, WithPrefix>;
 /// Backend internals for benchmarks and fuzz targets.
 #[doc(hidden)]
 pub mod bench_internals {
-    pub use crate::backend::{ct_scalar, scalar};
+    pub use crate::backend::scalar;
 
     #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
     pub use crate::backend::neon;
@@ -92,7 +91,6 @@ pub mod bench_internals {
     pub use crate::backend::wasm;
 
     pub use crate::backend::{
-        check as dispatched_check, ct_check as dispatched_ct_check, ct_decode as dispatched_ct_decode,
-        ct_encode as dispatched_ct_encode, decode as dispatched_decode, encode as dispatched_encode,
+        check as dispatched_check, decode as dispatched_decode, encode as dispatched_encode,
     };
 }
