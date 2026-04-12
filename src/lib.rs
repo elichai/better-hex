@@ -77,6 +77,10 @@ pub use traits::{FromHex, HexTarget, ToHex};
 pub type PrefixedHexStr<const N: usize> = HexStr<N, WithPrefix>;
 
 /// Backend internals for benchmarks and fuzz targets.
+///
+/// Not part of the public API — semver-exempt. Only available when
+/// the `_bench_internals` feature is enabled.
+#[cfg(feature = "_bench_internals")]
 #[doc(hidden)]
 pub mod bench_internals {
     pub use crate::backend::scalar;

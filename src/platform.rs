@@ -107,29 +107,33 @@ mod runtime {
         // avx512bw at compile time is handled in detect() directly.
         // Lower compile-time tiers (avx2, ssse3) still need runtime probes
         // because a higher tier might be available on the actual CPU.
+        // Check bottom-up so each tier's presence confirms all lower tiers.
+        // AVX2 requires SSSE3; AVX-512BW requires AVX2 (and thus SSSE3).
+        // By checking SSSE3 first we never select a higher tier without
+        // having verified its prerequisites.
         cfg_if::cfg_if! {
             if #[cfg(feature = "std")] {
-                if std::is_x86_feature_detected!("avx512bw") {
-                    Platform::Avx512bw
-                } else if std::is_x86_feature_detected!("avx2") {
-                    Platform::Avx2
-                } else if std::is_x86_feature_detected!("ssse3") {
-                    Platform::Ssse3
-                } else {
+                if !std::is_x86_feature_detected!("ssse3") {
                     Platform::Scalar
+                } else if !std::is_x86_feature_detected!("avx2") {
+                    Platform::Ssse3
+                } else if !std::is_x86_feature_detected!("avx512bw") {
+                    Platform::Avx2
+                } else {
+                    Platform::Avx512bw
                 }
             } else {
-                cpufeatures::new!(cpuid_avx512bw, "avx512bw");
-                cpufeatures::new!(cpuid_avx2, "avx2");
                 cpufeatures::new!(cpuid_ssse3, "ssse3");
-                if cpuid_avx512bw::init().get() {
-                    Platform::Avx512bw
-                } else if cpuid_avx2::init().get() {
-                    Platform::Avx2
-                } else if cpuid_ssse3::init().get() {
-                    Platform::Ssse3
-                } else {
+                cpufeatures::new!(cpuid_avx2, "avx2");
+                cpufeatures::new!(cpuid_avx512bw, "avx512bw");
+                if !cpuid_ssse3::init().get() {
                     Platform::Scalar
+                } else if !cpuid_avx2::init().get() {
+                    Platform::Ssse3
+                } else if !cpuid_avx512bw::init().get() {
+                    Platform::Avx2
+                } else {
+                    Platform::Avx512bw
                 }
             }
         }
