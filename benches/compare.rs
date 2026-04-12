@@ -107,15 +107,16 @@ fn bench_decode_alloc(c: &mut Criterion) {
             b.iter(|| const_hex::decode(black_box(bufs.next())));
         });
 
-        // faster_hex::hex_decode takes (src: &[u8], dst: &mut [u8]) — no alloc variant.
-        // We allocate outside the loop and decode into that pre-zeroed buffer.
+        // faster_hex has no allocating decode API, so we allocate inside the loop
+        // to match better_hex's Vec allocation overhead (this is "decode_alloc").
         #[cfg(feature = "_bench_faster_hex")]
-        {
-            let mut dst = vec![0u8; size];
-            group.bench_function(BenchmarkId::new("faster_hex", size), |b| {
-                b.iter(|| faster_hex::hex_decode(black_box(bufs.next()), black_box(dst.as_mut_slice())));
+        group.bench_function(BenchmarkId::new("faster_hex", size), |b| {
+            b.iter(|| {
+                let mut dst = vec![0u8; size];
+                faster_hex::hex_decode(black_box(bufs.next()), black_box(&mut dst)).unwrap();
+                dst
             });
-        }
+        });
 
         // hex::decode accepts AsRef<[u8]>.
         #[cfg(feature = "_bench_hex")]

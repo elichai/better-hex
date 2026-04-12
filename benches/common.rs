@@ -32,13 +32,19 @@ impl Buffers {
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(SEED);
         let count = (MAX_ALLOC / (size * 2)).max(2);
         let buffers = (0..count)
-            .map(|_| {
+            .enumerate()
+            .map(|(idx, _)| {
                 let mut buf = vec![0u8; size];
                 rng.fill_bytes(&mut buf);
-                better_hex::encode::<String>(&buf)
-                    .unwrap()
-                    .into_bytes()
-                    .into_boxed_slice()
+                // Alternate lower/upper to benchmark mixed-case decode.
+                if idx % 2 == 0 {
+                    better_hex::encode::<String>(&buf)
+                } else {
+                    better_hex::encode_upper::<String>(&buf)
+                }
+                .unwrap()
+                .into_bytes()
+                .into_boxed_slice()
             })
             .collect();
         Self { buffers, index: 0 }
