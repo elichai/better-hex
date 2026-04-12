@@ -24,7 +24,7 @@
 //!
 //! # Validation
 //!
-//! `check` re-uses `ct_decode_nibble` and ORs the high bits of every result,
+//! `check` re-uses `decode_nibble` and ORs the high bits of every result,
 //! returning `false` iff any high bit was ever set.
 
 
@@ -38,7 +38,7 @@
 /// to reach `'A'`; lowercase needs `+39` (`0x27`) to reach `'a'`.
 #[inline(always)]
 #[allow(dead_code)]
-const fn ct_encode_nibble<const UPPER: bool>(nibble: u8) -> u8 {
+const fn encode_nibble<const UPPER: bool>(nibble: u8) -> u8 {
     let mut ret = nibble as i16 + 0x30;
     let offset = if UPPER { 0x07i16 } else { 0x27i16 };
     // If ret > 0x39 ('9'), (0x39 - ret) is negative → its high byte is 0xFF.
@@ -61,7 +61,7 @@ const fn ct_encode_nibble<const UPPER: bool>(nibble: u8) -> u8 {
 /// The initial `ret = -1` makes an invalid byte produce `≤ -1` (bit 8 set in
 /// i16), which callers detect by checking `ret >> 8` (non-zero ⇒ invalid).
 #[inline(always)]
-const fn ct_decode_nibble(byte: u8) -> u16 {
+const fn decode_nibble(byte: u8) -> u16 {
     let b = byte as i16;
     let upper = b & !0x20; // 'a'-'f' → 'A'-'F', digits unchanged
     let mut ret: i16 = -1;
@@ -89,8 +89,8 @@ pub unsafe fn encode_inner<const UPPER: bool>(src: *const u8, dst: *mut u8, byte
         // SAFETY: `i < byte_len` so `src.add(i)` is in bounds for reads
         // and `dst.add(i * 2 + {0,1})` is in bounds for writes.
         let byte = unsafe { src.add(i).read() };
-        unsafe { dst.add(i * 2).write(ct_encode_nibble::<UPPER>(byte >> 4)) };
-        unsafe { dst.add(i * 2 + 1).write(ct_encode_nibble::<UPPER>(byte & 0x0F)) };
+        unsafe { dst.add(i * 2).write(encode_nibble::<UPPER>(byte >> 4)) };
+        unsafe { dst.add(i * 2 + 1).write(encode_nibble::<UPPER>(byte & 0x0F)) };
     }
 }
 
@@ -128,8 +128,8 @@ pub unsafe fn decode_inner(src: *const u8, dst: *mut u8, byte_len: usize) -> Res
     for i in 0..byte_len {
         // SAFETY: `i < byte_len` so `src.add(i * 2 + {0,1})` is in bounds
         // for reads and `dst.add(i)` is in bounds for writes.
-        let hi = ct_decode_nibble(unsafe { src.add(i * 2).read() });
-        let lo = ct_decode_nibble(unsafe { src.add(i * 2 + 1).read() });
+        let hi = decode_nibble(unsafe { src.add(i * 2).read() });
+        let lo = decode_nibble(unsafe { src.add(i * 2 + 1).read() });
         err |= hi >> 8;
         err |= lo >> 8;
         unsafe { dst.add(i).write(((hi << 4) | lo) as u8) };
@@ -155,7 +155,7 @@ pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<()
 pub fn check(input: &[u8]) -> bool {
     let mut err: u16 = 0;
     for &byte in input {
-        err |= ct_decode_nibble(byte) >> 8;
+        err |= decode_nibble(byte) >> 8;
     }
     err == 0
 }
@@ -174,7 +174,7 @@ mod tests {
     fn encode_nibble_lower_all_values() {
         for nibble in 0u8..=15 {
             assert_eq!(
-                ct_encode_nibble::<false>(nibble),
+                encode_nibble::<false>(nibble),
                 LOWER_EXPECTED[nibble as usize],
                 "lower nibble {nibble}"
             );
@@ -185,7 +185,7 @@ mod tests {
     fn encode_nibble_upper_all_values() {
         for nibble in 0u8..=15 {
             assert_eq!(
-                ct_encode_nibble::<true>(nibble),
+                encode_nibble::<true>(nibble),
                 UPPER_EXPECTED[nibble as usize],
                 "upper nibble {nibble}"
             );
@@ -196,17 +196,17 @@ mod tests {
     fn decode_nibble_valid_bytes() {
         // '0'..'9' → 0..9
         for (i, b) in (b'0'..=b'9').enumerate() {
-            let val = ct_decode_nibble(b);
+            let val = decode_nibble(b);
             assert_eq!(val, i as u16, "digit byte 0x{b:02x}");
         }
         // 'a'..'f' → 10..15
         for (i, b) in (b'a'..=b'f').enumerate() {
-            let val = ct_decode_nibble(b);
+            let val = decode_nibble(b);
             assert_eq!(val, (10 + i) as u16, "lower byte 0x{b:02x}");
         }
         // 'A'..'F' → 10..15
         for (i, b) in (b'A'..=b'F').enumerate() {
-            let val = ct_decode_nibble(b);
+            let val = decode_nibble(b);
             assert_eq!(val, (10 + i) as u16, "upper byte 0x{b:02x}");
         }
     }
@@ -216,7 +216,7 @@ mod tests {
         // Every byte not in [0-9a-fA-F] must have bit 8 set.
         for byte in 0u8..=255 {
             let valid = byte.is_ascii_hexdigit();
-            let val = ct_decode_nibble(byte);
+            let val = decode_nibble(byte);
             if valid {
                 // Valid bytes produce a value in 0..=15 with no high bits set.
                 assert!(val <= 15, "valid byte 0x{byte:02x} produced out-of-range nibble {val}");

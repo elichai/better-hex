@@ -38,14 +38,8 @@ fn bench_serde(c: &mut Criterion) {
     use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize)]
-    struct FastHex {
+    struct HexWrap {
         #[serde(with = "better_hex::serde")]
-        data: Vec<u8>,
-    }
-
-    #[derive(Serialize, Deserialize)]
-    struct CtHex {
-        #[serde(with = "better_hex::serde::ct")]
         data: Vec<u8>,
     }
 
@@ -55,42 +49,21 @@ fn bench_serde(c: &mut Criterion) {
         let mut bufs = common::Buffers::new(size);
         group.throughput(Throughput::Bytes(size as u64));
 
-        // Serialize fast
-        group.bench_function(BenchmarkId::new("serialize_fast", size), |b| {
+        group.bench_function(BenchmarkId::new("serialize", size), |b| {
             b.iter(|| {
-                let val = FastHex {
+                let val = HexWrap {
                     data: bufs.next().to_vec(),
                 };
                 serde_json::to_string(black_box(&val)).unwrap()
             });
         });
 
-        // Serialize CT
-        group.bench_function(BenchmarkId::new("serialize_ct", size), |b| {
-            b.iter(|| {
-                let val = CtHex {
-                    data: bufs.next().to_vec(),
-                };
-                serde_json::to_string(black_box(&val)).unwrap()
-            });
-        });
-
-        // Deserialize fast
-        let fast_json = serde_json::to_string(&FastHex {
+        let json = serde_json::to_string(&HexWrap {
             data: bufs.next().to_vec(),
         })
         .unwrap();
-        group.bench_function(BenchmarkId::new("deserialize_fast", size), |b| {
-            b.iter(|| serde_json::from_str::<FastHex>(black_box(&fast_json)).unwrap());
-        });
-
-        // Deserialize CT
-        let ct_json = serde_json::to_string(&CtHex {
-            data: bufs.next().to_vec(),
-        })
-        .unwrap();
-        group.bench_function(BenchmarkId::new("deserialize_ct", size), |b| {
-            b.iter(|| serde_json::from_str::<CtHex>(black_box(&ct_json)).unwrap());
+        group.bench_function(BenchmarkId::new("deserialize", size), |b| {
+            b.iter(|| serde_json::from_str::<HexWrap>(black_box(&json)).unwrap());
         });
     }
 
