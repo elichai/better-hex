@@ -94,7 +94,5 @@ pub mod bench_internals {
     #[cfg(all(not(feature = "disable-simd"), target_arch = "wasm32", target_feature = "simd128"))]
     pub use crate::backend::wasm;
 
-    pub use crate::backend::{
-        check as dispatched_check, decode as dispatched_decode, encode as dispatched_encode,
-    };
+    pub use crate::backend::{check as dispatched_check, decode as dispatched_decode, encode as dispatched_encode};
 }

@@ -127,7 +127,8 @@ pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error>
         avx2: unsafe { x86::decode_avx2(src, dst, byte_len) },
         avx512: unsafe { x86::decode_avx512(src, dst, byte_len) },
         wasm: unsafe { wasm::decode(src, dst, byte_len) },
-    ).map_err(|InvalidEncoding| Error::InvalidEncoding)
+    )
+    .map_err(|InvalidEncoding| Error::InvalidEncoding)
 }
 
 /// Check if every byte in `input` is a valid hex ASCII character.
@@ -168,12 +169,8 @@ pub(crate) mod test_support {
 
     /// Exercise a SIMD backend's encode/decode/check against the scalar oracle
     /// for every size in 0..=512.
-    pub(crate) fn exercise_backend<EL, EU, D, C>(
-        encode_lower: EL,
-        encode_upper: EU,
-        decode: D,
-        check: C,
-    ) where
+    pub(crate) fn exercise_backend<EL, EU, D, C>(encode_lower: EL, encode_upper: EU, decode: D, check: C)
+    where
         EL: Fn(&[u8], &mut [MaybeUninit<u8>]),
         EU: Fn(&[u8], &mut [MaybeUninit<u8>]),
         D: Fn(&[u8], &mut [MaybeUninit<u8>]) -> Result<(), Error>,
@@ -274,7 +271,11 @@ mod boundary_tests {
                 let mut d_out = vec![MaybeUninit::uninit(); size];
                 let res = decode(&bad, &mut d_out);
                 assert!(res.is_err(), "decode accepted invalid byte at pos {pos} (size {size})");
-                assert_eq!(res, Err(Error::InvalidEncoding), "decode wrong error at pos {pos} (size {size})");
+                assert_eq!(
+                    res,
+                    Err(Error::InvalidEncoding),
+                    "decode wrong error at pos {pos} (size {size})"
+                );
 
                 assert!(!check(&bad), "check accepted invalid byte at pos {pos} (size {size})");
             }

@@ -188,10 +188,7 @@ fn hex_str_type_properties() {
     // FromStr
     let parsed: HexStr<4> = "deadbeef".parse().unwrap();
     assert_eq!(parsed.decode(), [0xde, 0xad, 0xbe, 0xef]);
-    assert!(matches!(
-        "deadbeeG".parse::<HexStr<4>>(),
-        Err(Error::InvalidEncoding)
-    ));
+    assert!(matches!("deadbeeG".parse::<HexStr<4>>(), Err(Error::InvalidEncoding)));
     assert!(matches!(
         "deadbe".parse::<HexStr<4>>(),
         Err(Error::InvalidLength { .. })

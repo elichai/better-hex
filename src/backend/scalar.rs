@@ -27,7 +27,6 @@
 //! `check` re-uses `decode_nibble` and ORs the high bits of every result,
 //! returning `false` iff any high bit was ever set.
 
-
 /// Branchless nibble-to-ASCII encoder (no LUT).
 ///
 /// Maps `nibble ∈ 0..=15` to the corresponding hex ASCII byte.

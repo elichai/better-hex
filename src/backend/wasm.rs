@@ -25,8 +25,8 @@
 //! Three range checks (`0-9`, `a-f`, `A-F`) are ORed together and reduced
 //! with `u8x16_all_true`.
 
-use crate::backend::scalar;
 use super::InvalidEncoding;
+use crate::backend::scalar;
 use core::arch::wasm32::*;
 
 /// Lower-case hex lookup table: nibble value 0..15 → ASCII `'0'..'f'`.
@@ -132,9 +132,7 @@ pub(crate) unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Re
     if consumed_hex < hex_len {
         let tail_byte_len = byte_len - consumed_bytes;
         // SAFETY: same pointer validity as above.
-        if unsafe { scalar::decode_inner(src.add(consumed_hex), dst.add(consumed_bytes), tail_byte_len) }
-            .is_err()
-        {
+        if unsafe { scalar::decode_inner(src.add(consumed_hex), dst.add(consumed_bytes), tail_byte_len) }.is_err() {
             err_accum |= 1;
         }
     }
@@ -216,7 +214,10 @@ mod tests {
         exercise_backend(
             |input, output| unsafe { encode::<false>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
             |input, output| unsafe { encode::<true>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
-            |input, output| unsafe { decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len()).map_err(|_| crate::error::Error::InvalidEncoding) },
+            |input, output| unsafe {
+                decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len())
+                    .map_err(|_| crate::error::Error::InvalidEncoding)
+            },
             check,
         );
     }

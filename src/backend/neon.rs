@@ -74,8 +74,8 @@
 
 #![allow(clippy::doc_overindented_list_items)]
 
-use crate::backend::scalar;
 use super::InvalidEncoding;
+use crate::backend::scalar;
 use core::arch::aarch64::*;
 
 /// NEON hex encoder — processes 32 input bytes (producing 64 hex chars) per
@@ -336,7 +336,10 @@ mod tests {
         exercise_backend(
             |input, output| unsafe { encode::<false>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
             |input, output| unsafe { encode::<true>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
-            |input, output| unsafe { decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len()).map_err(|_| crate::error::Error::InvalidEncoding) },
+            |input, output| unsafe {
+                decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len())
+                    .map_err(|_| crate::error::Error::InvalidEncoding)
+            },
             check,
         );
     }

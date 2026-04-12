@@ -46,8 +46,8 @@ use core::arch::x86::*;
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
-use crate::backend::scalar;
 use super::InvalidEncoding;
+use crate::backend::scalar;
 
 /// Hex-encode `input` into `output` using SSSE3 `pshufb` for the hot loop.
 ///
@@ -309,11 +309,7 @@ unsafe fn decode_chunk_128(
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[inline]
 #[target_feature(enable = "ssse3")]
-unsafe fn decode_ssse3_inner(
-    src: *const u8,
-    dst: *mut u8,
-    byte_len: usize,
-) -> Result<(), InvalidEncoding> {
+unsafe fn decode_ssse3_inner(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
     let hex_len = byte_len * 2;
 
     // SAFETY: all intrinsics below require SSSE3, guaranteed by #[target_feature].
@@ -432,11 +428,7 @@ unsafe fn decode_chunk_256(
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[inline]
 #[target_feature(enable = "avx2")]
-unsafe fn decode_avx2_inner(
-    src: *const u8,
-    dst: *mut u8,
-    byte_len: usize,
-) -> Result<(), InvalidEncoding> {
+unsafe fn decode_avx2_inner(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
     let hex_len = byte_len * 2;
 
     // SAFETY: all intrinsics below require AVX2 (implies SSSE3),
@@ -770,11 +762,7 @@ unsafe fn decode_chunk_512(
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[inline]
 #[target_feature(enable = "avx512bw")]
-unsafe fn decode_avx512_inner(
-    src: *const u8,
-    dst: *mut u8,
-    byte_len: usize,
-) -> Result<(), InvalidEncoding> {
+unsafe fn decode_avx512_inner(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
     let hex_len = byte_len * 2;
 
     // SAFETY: all intrinsics below require AVX-512BW (implies AVX-512F),
@@ -929,7 +917,10 @@ mod tests {
         exercise_backend(
             |input, output| unsafe { encode_ssse3::<false>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
             |input, output| unsafe { encode_ssse3::<true>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
-            |input, output| unsafe { decode_ssse3(input.as_ptr(), output.as_mut_ptr().cast(), output.len()).map_err(|_| crate::error::Error::InvalidEncoding) },
+            |input, output| unsafe {
+                decode_ssse3(input.as_ptr(), output.as_mut_ptr().cast(), output.len())
+                    .map_err(|_| crate::error::Error::InvalidEncoding)
+            },
             |input| unsafe { check_ssse3(input) },
         );
     }
@@ -945,7 +936,10 @@ mod tests {
         exercise_backend(
             |input, output| unsafe { encode_avx2::<false>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
             |input, output| unsafe { encode_avx2::<true>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
-            |input, output| unsafe { decode_avx2(input.as_ptr(), output.as_mut_ptr().cast(), output.len()).map_err(|_| crate::error::Error::InvalidEncoding) },
+            |input, output| unsafe {
+                decode_avx2(input.as_ptr(), output.as_mut_ptr().cast(), output.len())
+                    .map_err(|_| crate::error::Error::InvalidEncoding)
+            },
             |input| unsafe { check_avx2(input) },
         );
     }
@@ -961,7 +955,10 @@ mod tests {
         exercise_backend(
             |input, output| unsafe { encode_avx512::<false>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
             |input, output| unsafe { encode_avx512::<true>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
-            |input, output| unsafe { decode_avx512(input.as_ptr(), output.as_mut_ptr().cast(), output.len()).map_err(|_| crate::error::Error::InvalidEncoding) },
+            |input, output| unsafe {
+                decode_avx512(input.as_ptr(), output.as_mut_ptr().cast(), output.len())
+                    .map_err(|_| crate::error::Error::InvalidEncoding)
+            },
             |input| unsafe { check_avx512(input) },
         );
     }

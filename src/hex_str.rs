@@ -287,11 +287,7 @@ pub const fn const_decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; 
         out[i] = ((hi << 4) | lo) as u8;
         i += 1;
     }
-    if err != 0 {
-        Err(Error::InvalidEncoding)
-    } else {
-        Ok(out)
-    }
+    if err != 0 { Err(Error::InvalidEncoding) } else { Ok(out) }
 }
 
 /// Check hex validity at compile time using branchless arithmetic.

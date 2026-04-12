@@ -32,10 +32,10 @@ fn bench_decode(c: &mut Criterion) {
             b.iter(|| {
                 let input = black_box(bufs.next());
                 let out = black_box(&mut output);
-                assert!(unsafe {
-                    better_hex::bench_internals::neon::decode(input.as_ptr(), out.as_mut_ptr(), out.len())
-                }
-                .is_ok());
+                assert!(
+                    unsafe { better_hex::bench_internals::neon::decode(input.as_ptr(), out.as_mut_ptr(), out.len()) }
+                        .is_ok()
+                );
             })
         });
 
