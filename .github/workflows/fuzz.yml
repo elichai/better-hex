@@ -19,6 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         target:
+          - oracle
           - encode_oracle
           - decode_oracle
           - roundtrip

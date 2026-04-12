@@ -27,3 +27,24 @@ path = "fuzz_targets/lengths.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "encode_oracle"
+path = "fuzz_targets/encode_oracle.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decode_oracle"
+path = "fuzz_targets/decode_oracle.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "roundtrip"
+path = "fuzz_targets/roundtrip.rs"
+test = false
+doc = false
+bench = false

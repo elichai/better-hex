@@ -84,23 +84,25 @@ fuzz_target!(|data: &[u8]| {
     check_encode("dispatched upper", data, &expected_upper, |d, o| dispatched_encode::<true>(d, o));
     check_encode("dispatched_ct lower", data, &expected_lower, |d, o| dispatched_ct_encode::<false>(d, o));
 
-    // Decode + check: only on even-length inputs
+    // Check: test character validity on ALL inputs (including odd-length).
+    // Backend check functions only validate characters, not length.
+    let all_hex = data.iter().all(|b| b.is_ascii_hexdigit());
+    assert_eq!(scalar::check(data), all_hex, "scalar check disagrees");
+    assert_eq!(ct_scalar::check(data), all_hex, "ct_scalar check disagrees");
+    assert_eq!(dispatched_check(data), all_hex, "dispatched check disagrees");
+    assert_eq!(dispatched_ct_check(data), all_hex, "dispatched_ct check disagrees");
+
+    // Decode: only on even-length inputs
     if data.len() % 2 != 0 {
         return;
     }
 
     let naive_result = naive_decode(data);
-    let naive_valid = naive_result.is_some();
 
     check_decode("scalar", data, &naive_result, scalar::decode);
     check_decode("ct_scalar", data, &naive_result, ct_scalar::decode);
     check_decode("dispatched", data, &naive_result, dispatched_decode);
     check_decode("dispatched_ct", data, &naive_result, dispatched_ct_decode);
-
-    assert_eq!(scalar::check(data), naive_valid, "scalar check disagrees");
-    assert_eq!(ct_scalar::check(data), naive_valid, "ct_scalar check disagrees");
-    assert_eq!(dispatched_check(data), naive_valid, "dispatched check disagrees");
-    assert_eq!(dispatched_ct_check(data), naive_valid, "dispatched_ct check disagrees");
 
     // Roundtrip: encode then decode must recover original
     if !data.is_empty() {
