@@ -73,22 +73,31 @@ mod runtime {
 
     type CachedPlatform = Option<Platform>;
 
-    static CACHED: AtomicU8 = AtomicU8::new(unsafe { core::mem::transmute::<CachedPlatform, u8>(None) });
+    const fn cached_platform_to_u8(p: CachedPlatform) -> u8 {
+        // SAFETY: `CachedPlatform` is `Option<Platform>`, and `Platform` is `#[repr(u8)]` with valid discriminants.
+        // This will fail compilation if `Option<Platform>` ever has a non-`u8` representation
+        unsafe { core::mem::transmute::<CachedPlatform, u8>(p) }
+    }
+    // SAFETY: Requires that `v` is only ever written by `cached_platform_to_u8` with valid `CachedPlatform` values
+    const unsafe fn u8_to_cached_platform(v: u8) -> CachedPlatform {
+        // SAFETY: `v` is only ever written by `cached_platform_to_u8` with valid `CachedPlatform` values.
+        // This will fail compilation if `Option<Platform>` ever has a non-`u8` representation
+        unsafe { core::mem::transmute::<u8, CachedPlatform>(v) }
+    }
+
+    static CACHED: AtomicU8 = AtomicU8::new(cached_platform_to_u8(None));
 
     /// Cached runtime CPUID detection. First call probes and caches;
     /// subsequent calls are a single relaxed atomic load.
     #[inline(always)]
     pub(super) fn detect() -> Platform {
         // SAFETY: `CACHED` is initialized to `None` and only ever written by `detect_impl()` with a valid `Platform` discriminant.
-        let p = unsafe { core::mem::transmute::<u8, CachedPlatform>(CACHED.load(Ordering::Relaxed)) };
+        let p = unsafe { u8_to_cached_platform(CACHED.load(Ordering::Relaxed)) };
         if let Some(p) = p {
             return p;
         }
         let p = detect_impl();
-        CACHED.store(
-            unsafe { core::mem::transmute::<CachedPlatform, u8>(Some(p)) },
-            Ordering::Relaxed,
-        );
+        CACHED.store(cached_platform_to_u8(Some(p)), Ordering::Relaxed);
         p
     }
 
