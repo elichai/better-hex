@@ -2,7 +2,7 @@
 //!
 //! All public functions in `better_hex::serde` and its submodules are thin
 //! wrappers around the generic helpers defined here, parameterised on case
-//! (upper/lower), prefix (with/without `"0x"`), and timing behaviour (fast/CT).
+//! (upper/lower) and prefix (with/without `"0x"`).
 
 use crate::{error::Error, maybe_uninit};
 use core::fmt;
@@ -11,6 +11,8 @@ use serde::{Deserializer, Serializer, de};
 // ── serialization ────────────────────────────────────────────────────────────
 
 /// Display adapter that formats `data` as hex when passed to `collect_str`.
+///
+/// Encodes through a 256-byte stack buffer in 128-input-byte chunks.
 ///
 /// `collect_str` on well-known serializers (serde_json, serde_yaml, …) writes
 /// directly into the serializer's output buffer without a heap allocation.
@@ -23,29 +25,6 @@ struct HexDisplayAdapter<'a> {
 }
 
 impl fmt::Display for HexDisplayAdapter<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.prefix {
-            f.write_str("0x")?;
-        }
-        if self.upper {
-            crate::display::write_hex_to::<true, 128, _>(self.data, f)
-        } else {
-            crate::display::write_hex_to::<false, 128, _>(self.data, f)
-        }
-    }
-}
-
-/// Display adapter that uses the constant-time encode path.
-///
-/// Encodes through a 256-byte stack buffer in 128-input-byte chunks, with no
-/// data-dependent branches or memory lookup tables.
-struct CtHexDisplayAdapter<'a> {
-    data: &'a [u8],
-    upper: bool,
-    prefix: bool,
-}
-
-impl fmt::Display for CtHexDisplayAdapter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use crate::backend;
         use core::mem::MaybeUninit;
@@ -77,30 +56,6 @@ impl fmt::Display for CtHexDisplayAdapter<'_> {
     }
 }
 
-/// Serialize `bytes` as hex using the fast (variable-time) SIMD path.
-pub(crate) fn serialize_fast<S>(bytes: &[u8], serializer: S, upper: bool, prefix: bool) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.collect_str(&HexDisplayAdapter {
-        data: bytes,
-        upper,
-        prefix,
-    })
-}
-
-/// Serialize `bytes` as hex using the constant-time path.
-pub(crate) fn serialize_ct<S>(bytes: &[u8], serializer: S, upper: bool, prefix: bool) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.collect_str(&CtHexDisplayAdapter {
-        data: bytes,
-        upper,
-        prefix,
-    })
-}
-
 // ── deserialization — sealed dispatch trait ───────────────────────────────────
 
 mod sealed {
@@ -117,36 +72,26 @@ mod sealed {
 /// It is an implementation detail; users interact with it only implicitly
 /// via `#[serde(with = "better_hex::serde")]`.
 pub trait FromHexHelper: Sized + sealed::Sealed {
-    /// Decode a (possibly prefix-stripped) hex str into `Self`, fast path.
-    fn from_hex_fast<E: de::Error>(hex: &str) -> Result<Self, E>;
-    /// Decode a (possibly prefix-stripped) hex str into `Self`, CT path.
-    fn from_hex_ct<E: de::Error>(hex: &str) -> Result<Self, E>;
+    /// Decode a (possibly prefix-stripped) hex str into `Self`.
+    fn from_hex<E: de::Error>(hex: &str) -> Result<Self, E>;
 }
 
 #[cfg(feature = "alloc")]
 impl FromHexHelper for alloc::vec::Vec<u8> {
-    fn from_hex_fast<E: de::Error>(hex: &str) -> Result<Self, E> {
-        crate::decode(hex).map_err(|e| de::Error::custom(FmtError(e)))
-    }
-
-    fn from_hex_ct<E: de::Error>(hex: &str) -> Result<Self, E> {
+    fn from_hex<E: de::Error>(hex: &str) -> Result<Self, E> {
         crate::decode(hex).map_err(|e| de::Error::custom(FmtError(e)))
     }
 }
 
 impl<const N: usize> FromHexHelper for [u8; N] {
-    fn from_hex_fast<E: de::Error>(hex: &str) -> Result<Self, E> {
-        crate::decode(hex).map_err(|e| de::Error::custom(FmtError(e)))
-    }
-
-    fn from_hex_ct<E: de::Error>(hex: &str) -> Result<Self, E> {
+    fn from_hex<E: de::Error>(hex: &str) -> Result<Self, E> {
         crate::decode(hex).map_err(|e| de::Error::custom(FmtError(e)))
     }
 }
 
-// ── visitors ─────────────────────────────────────────────────────────────────
+// ── visitor ─────────────────────────────────────────────────────────────────
 
-/// Serde visitor that deserializes a hex string using the fast path.
+/// Serde visitor that deserializes a hex string.
 pub(crate) struct HexVisitor<T> {
     pub prefix: bool,
     pub _marker: core::marker::PhantomData<T>,
@@ -165,36 +110,13 @@ impl<'de, T: FromHexHelper> de::Visitor<'de> for HexVisitor<T> {
 
     fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
         let hex = strip_prefix(v, self.prefix).map_err(de::Error::custom)?;
-        T::from_hex_fast(hex)
-    }
-}
-
-/// Serde visitor that deserializes a hex string using the CT path.
-pub(crate) struct CtHexVisitor<T> {
-    pub prefix: bool,
-    pub _marker: core::marker::PhantomData<T>,
-}
-
-impl<'de, T: FromHexHelper> de::Visitor<'de> for CtHexVisitor<T> {
-    type Value = T;
-
-    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.prefix {
-            f.write_str("a \"0x\"-prefixed hex string (constant-time)")
-        } else {
-            f.write_str("a hex string (constant-time)")
-        }
-    }
-
-    fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
-        let hex = strip_prefix(v, self.prefix).map_err(de::Error::custom)?;
-        T::from_hex_ct(hex)
+        T::from_hex(hex)
     }
 }
 
 // ── public-facing generic entry points ───────────────────────────────────────
 
-/// Serialize `bytes` as hex (fast path).
+/// Serialize `bytes` as hex.
 #[inline]
 pub(crate) fn do_serialize<S: Serializer>(
     bytes: &[u8],
@@ -202,39 +124,20 @@ pub(crate) fn do_serialize<S: Serializer>(
     upper: bool,
     prefix: bool,
 ) -> Result<S::Ok, S::Error> {
-    serialize_fast(bytes, serializer, upper, prefix)
+    serializer.collect_str(&HexDisplayAdapter {
+        data: bytes,
+        upper,
+        prefix,
+    })
 }
 
-/// Deserialize hex into `T` (fast path).
+/// Deserialize hex into `T`.
 #[inline]
 pub(crate) fn do_deserialize<'de, D: Deserializer<'de>, T: FromHexHelper>(
     deserializer: D,
     prefix: bool,
 ) -> Result<T, D::Error> {
     deserializer.deserialize_str(HexVisitor::<T> {
-        prefix,
-        _marker: core::marker::PhantomData,
-    })
-}
-
-/// Serialize `bytes` as hex (CT path).
-#[inline]
-pub(crate) fn do_ct_serialize<S: Serializer>(
-    bytes: &[u8],
-    serializer: S,
-    upper: bool,
-    prefix: bool,
-) -> Result<S::Ok, S::Error> {
-    serialize_ct(bytes, serializer, upper, prefix)
-}
-
-/// Deserialize hex into `T` (CT path).
-#[inline]
-pub(crate) fn do_ct_deserialize<'de, D: Deserializer<'de>, T: FromHexHelper>(
-    deserializer: D,
-    prefix: bool,
-) -> Result<T, D::Error> {
-    deserializer.deserialize_str(CtHexVisitor::<T> {
         prefix,
         _marker: core::marker::PhantomData,
     })
