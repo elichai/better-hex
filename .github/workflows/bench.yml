@@ -31,6 +31,7 @@ jobs:
         run: |
           cargo bench --locked --features _bench_internals,serde \
             --bench encode --bench decode --bench check \
+            --bench display --bench traits \
             -- --output-format bencher \
             | tee bench_output.txt
 

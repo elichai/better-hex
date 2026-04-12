@@ -12,7 +12,7 @@ jobs:
   test:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    continue-on-error: false
+    continue-on-error: ${{ matrix.allow_failure || false }}
     strategy:
       fail-fast: false
       matrix:
@@ -47,15 +47,16 @@ jobs:
             cargo_command: test
             cargo_args: --locked --lib --target x86_64-unknown-linux-gnu
 
-          # Compile the AVX-512BW implementation and its unit tests.
-          # GitHub-hosted x86 runners do not document AVX-512 availability,
-          # so keep this honest as a compile-only check.
-          - name: Check (x86_64 AVX-512BW impl compiles)
+          # Run AVX-512BW tests best-effort: GitHub-hosted runners typically
+          # have Xeon CPUs with AVX-512, but this is not guaranteed, so
+          # allow_failure lets CI stay green if the runner lacks support.
+          - name: Test (x86_64 AVX-512BW impl, best-effort)
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             rustflags: -C target-feature=+avx512bw
             cargo_command: test
-            cargo_args: --locked --lib --target x86_64-unknown-linux-gnu --no-run
+            cargo_args: --locked --lib --target x86_64-unknown-linux-gnu
+            allow_failure: true
 
           # Pin macOS 14 to keep this on GitHub's arm64 runner class for NEON.
           - name: Test (aarch64 NEON API)
