@@ -11,14 +11,45 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-permissions:
-  contents: write
-  pull-requests: write
-
 jobs:
-  benchmark:
-    name: Performance check
+  # PR benchmarks: read-only, no publishing. Ensures benchmarks compile
+  # and runs them, but does not store results or comment.
+  benchmark-pr:
+    name: Performance check (PR)
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
+
+      - name: Run benchmarks
+        run: |
+          cargo bench --locked --features _bench_internals,serde \
+            --bench encode --bench decode --bench check \
+            --bench display --bench traits \
+            -- --output-format bencher \
+            | tee bench_output.txt
+
+  # Push benchmarks: write permissions for storing results and commenting.
+  # Only runs on trusted code (merged to main).
+  benchmark-push:
+    name: Performance check (push)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
 
@@ -28,7 +59,7 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: true
 
       - name: Run benchmarks
         run: |
@@ -44,9 +75,8 @@ jobs:
           name: better-hex Benchmarks
           tool: cargo
           output-file-path: bench_output.txt
-          auto-push: ${{ github.ref == 'refs/heads/main' }}
+          auto-push: true
           comment-on-alert: true
-          # Alert if performance regresses by more than 15%
           alert-threshold: '115%'
           fail-on-alert: false
           github-token: ${{ secrets.GITHUB_TOKEN }}

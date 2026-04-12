@@ -233,18 +233,23 @@ impl<const N: usize, P: Prefix> FromStr for HexStr<N, P> {
             return Err(Error::InvalidLength { expected, got: s.len() });
         }
         let s_bytes = s.as_bytes();
-        // Verify and strip the prefix (no-op for NoPrefix where P::LEN == 0).
+        // Verify prefix using constant-time comparison (no early return on
+        // mismatch). For NoPrefix where P::LEN == 0 this loop is elided.
         let prefix = P::VALUE;
         let prefix_bytes = IntoBytes::as_bytes(&prefix);
+        let mut prefix_err: u8 = 0;
         for i in 0..P::LEN {
-            if s_bytes[i] != prefix_bytes[i] {
-                return Err(Error::InvalidEncoding);
-            }
+            prefix_err |= s_bytes[i] ^ prefix_bytes[i];
         }
         let hex_part = &s_bytes[P::LEN..];
-        // Decode to validate hex content.
+        // Decode to validate hex content — processes all bytes (CT).
         let mut scratch: [MaybeUninit<u8>; N] = maybe_uninit::uninit_array();
-        backend::decode(hex_part, &mut scratch)?;
+        let decode_result = backend::decode(hex_part, &mut scratch);
+        // Report errors after both prefix and hex validation complete.
+        if prefix_err != 0 {
+            return Err(Error::InvalidEncoding);
+        }
+        decode_result?;
         // Input is valid hex — reinterpret as [[u8; 2]; N] and construct.
         let bytes: &[[u8; 2]; N] = FromBytes::ref_from_bytes(hex_part).expect("length already checked above");
         Ok(Self {

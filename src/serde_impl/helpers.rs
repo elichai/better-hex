@@ -146,11 +146,23 @@ pub(crate) fn do_deserialize<'de, D: Deserializer<'de>, T: FromHexHelper>(
 // ── utilities ─────────────────────────────────────────────────────────────────
 
 /// Strip a `"0x"` prefix when `prefix` is `true`.
+///
+/// Prefix check uses constant-time comparison (XOR accumulation) to avoid
+/// leaking prefix content via timing.
 fn strip_prefix(s: &str, prefix: bool) -> Result<&str, &'static str> {
-    if prefix {
-        s.strip_prefix("0x").ok_or("expected \"0x\" prefix in hex string")
+    if !prefix {
+        return Ok(s);
+    }
+    let bytes = s.as_bytes();
+    if bytes.len() < 2 {
+        return Err("expected \"0x\" prefix in hex string");
+    }
+    // Constant-time prefix comparison.
+    let err = (bytes[0] ^ b'0') | (bytes[1] ^ b'x');
+    if err != 0 {
+        Err("expected \"0x\" prefix in hex string")
     } else {
-        Ok(s)
+        Ok(&s[2..])
     }
 }
 
