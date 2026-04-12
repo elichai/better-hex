@@ -1,7 +1,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 
 #[cfg(feature = "_bench_internals")]
-use better_hex::bench_internals::{ct_scalar, dispatched_ct_encode, dispatched_encode, scalar};
+use better_hex::bench_internals::{dispatched_encode, scalar};
 #[cfg(feature = "_bench_internals")]
 use criterion::{BenchmarkId, Throughput};
 #[cfg(feature = "_bench_internals")]
@@ -35,16 +35,6 @@ fn bench_encode(c: &mut Criterion) {
             b.iter(|| call(scalar::encode::<false>, black_box(bufs.next()), black_box(&mut output)))
         });
 
-        group.bench_function(BenchmarkId::new("ct_scalar", size), |b| {
-            b.iter(|| {
-                call(
-                    ct_scalar::encode::<false>,
-                    black_box(bufs.next()),
-                    black_box(&mut output),
-                )
-            })
-        });
-
         #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
         group.bench_function(BenchmarkId::new("neon", size), |b| {
             b.iter(|| {
@@ -59,11 +49,6 @@ fn bench_encode(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("dispatched", size), |b| {
             let out_mu = unsafe { &mut *(output.as_mut_slice() as *mut [u8] as *mut [core::mem::MaybeUninit<u8>]) };
             b.iter(|| dispatched_encode::<false>(black_box(bufs.next()), black_box(out_mu)).unwrap())
-        });
-
-        group.bench_function(BenchmarkId::new("dispatched_ct", size), |b| {
-            let out_mu = unsafe { &mut *(output.as_mut_slice() as *mut [u8] as *mut [core::mem::MaybeUninit<u8>]) };
-            b.iter(|| dispatched_ct_encode::<false>(black_box(bufs.next()), black_box(out_mu)).unwrap())
         });
     }
 

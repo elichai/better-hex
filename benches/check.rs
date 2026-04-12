@@ -1,5 +1,5 @@
 #[cfg(feature = "_bench_internals")]
-use better_hex::bench_internals::{ct_scalar, dispatched_check, dispatched_ct_check, scalar};
+use better_hex::bench_internals::{dispatched_check, scalar};
 #[cfg(feature = "_bench_internals")]
 use criterion::{BenchmarkId, Throughput};
 use criterion::{Criterion, criterion_group, criterion_main};
@@ -23,26 +23,13 @@ fn bench_check(c: &mut Criterion) {
             b.iter(|| scalar::check(black_box(bufs.next())))
         });
 
-        group.bench_function(BenchmarkId::new("ct_scalar", size), |b| {
-            b.iter(|| ct_scalar::check(black_box(bufs.next())))
-        });
-
         #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
         group.bench_function(BenchmarkId::new("neon", size), |b| {
             b.iter(|| better_hex::bench_internals::neon::check(black_box(bufs.next())))
         });
 
-        #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
-        group.bench_function(BenchmarkId::new("neon_ct", size), |b| {
-            b.iter(|| better_hex::bench_internals::neon::ct_check(black_box(bufs.next())))
-        });
-
         group.bench_function(BenchmarkId::new("dispatched", size), |b| {
             b.iter(|| dispatched_check(black_box(bufs.next())))
-        });
-
-        group.bench_function(BenchmarkId::new("dispatched_ct", size), |b| {
-            b.iter(|| dispatched_ct_check(black_box(bufs.next())))
         });
     }
 
