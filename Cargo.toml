@@ -19,6 +19,7 @@ _bench_base16ct = []
 _bench_const_hex = []
 _bench_faster_hex = []
 _bench_hex = []
+ct-test = []
 
 [dependencies]
 zerocopy = { version = "0.8", features = ["derive"] }

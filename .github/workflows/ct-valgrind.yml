@@ -1,0 +1,47 @@
+# Constant-time verification via Valgrind memcheck.
+#
+# Marks input data as "uninitialized", then runs encode/decode/check.
+# Any data-dependent branch or memory access triggers a Valgrind error.
+#
+# NOTE: This only covers the x86 scalar and SIMD paths (whatever the
+# GitHub Actions runner supports). NEON and WASM are not tested here.
+name: CT Verification (Valgrind)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ct-valgrind:
+    name: Constant-time verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build CT tests
+        run: cargo test --features ct-test --test ct_valgrind --no-run
+
+      - name: Run under Valgrind
+        run: |
+          TEST_BIN=$(find target/debug/deps -name 'ct_valgrind-*' -executable -type f)
+          echo "Running: $TEST_BIN"
+          valgrind --tool=memcheck \
+            --error-exitcode=1 \
+            --leak-check=no \
+            --errors-for-leak-kinds=none \
+            $TEST_BIN
