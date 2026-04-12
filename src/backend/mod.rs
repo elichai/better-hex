@@ -312,3 +312,158 @@ pub(crate) mod test_support {
         }
     }
 }
+
+/// SIMD chunk boundary tests — ensures no invalid byte is missed at
+/// the transitions between SIMD chunks and scalar tail processing.
+#[cfg(test)]
+mod boundary_tests {
+    extern crate alloc;
+    use alloc::vec;
+    use alloc::vec::Vec;
+    use core::mem::MaybeUninit;
+
+    use super::{check, ct_check, ct_decode, ct_encode, decode, encode};
+    use crate::error::Error;
+
+    /// SIMD chunk boundary sizes: just below, at, and just above the
+    /// 16-byte (SSSE3/NEON), 32-byte (AVX2), 64-byte, and 128-byte marks.
+    const BOUNDARY_SIZES: [usize; 12] = [15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129];
+
+    fn make_bytes(size: usize) -> Vec<u8> {
+        (0..size).map(|i| (i as u8).wrapping_mul(0x9D)).collect()
+    }
+
+    fn encode_hex(input: &[u8]) -> Vec<u8> {
+        let mut out = vec![MaybeUninit::uninit(); input.len() * 2];
+        encode::<false>(input, &mut out).expect("encode failed");
+        out.iter().map(|m| unsafe { m.assume_init() }).collect()
+    }
+
+    #[test]
+    fn decode_invalid_byte_at_every_position_boundary_sizes() {
+        for &size in &BOUNDARY_SIZES {
+            let input = make_bytes(size);
+            let hex = encode_hex(&input);
+            let hex_len = hex.len();
+
+            // Baseline: valid hex decodes correctly.
+            let mut out = vec![MaybeUninit::uninit(); size];
+            decode(&hex, &mut out).unwrap_or_else(|e| panic!("decode failed at size {size}: {e}"));
+            let decoded: Vec<u8> = out.iter().map(|m| unsafe { m.assume_init() }).collect();
+            assert_eq!(decoded, input, "decode mismatch at size {size}");
+
+            let mut ct_out = vec![MaybeUninit::uninit(); size];
+            ct_decode(&hex, &mut ct_out).unwrap_or_else(|e| panic!("ct_decode failed at size {size}: {e}"));
+            let ct_decoded: Vec<u8> = ct_out.iter().map(|m| unsafe { m.assume_init() }).collect();
+            assert_eq!(ct_decoded, input, "ct_decode mismatch at size {size}");
+
+            assert!(check(&hex), "check rejected valid hex at size {size}");
+            assert!(ct_check(&hex), "ct_check rejected valid hex at size {size}");
+
+            // Inject invalid byte at every position.
+            for pos in 0..hex_len {
+                let mut bad = hex.clone();
+                bad[pos] = b'Z';
+
+                let mut d_out = vec![MaybeUninit::uninit(); size];
+                let res = decode(&bad, &mut d_out);
+                assert!(res.is_err(), "decode accepted invalid byte at pos {pos} (size {size})");
+                if let Err(Error::InvalidChar { byte, index }) = res {
+                    assert_eq!(byte, b'Z', "decode wrong byte at pos {pos} (size {size})");
+                    assert_eq!(index, pos, "decode wrong index at pos {pos} (size {size})");
+                }
+
+                let mut ct_d_out = vec![MaybeUninit::uninit(); size];
+                assert_eq!(
+                    ct_decode(&bad, &mut ct_d_out),
+                    Err(Error::InvalidEncoding),
+                    "ct_decode accepted invalid byte at pos {pos} (size {size})"
+                );
+
+                assert!(!check(&bad), "check accepted invalid byte at pos {pos} (size {size})");
+                assert!(!ct_check(&bad), "ct_check accepted invalid byte at pos {pos} (size {size})");
+            }
+        }
+    }
+
+    #[test]
+    fn encode_decode_roundtrip_boundary_sizes() {
+        for &size in &BOUNDARY_SIZES {
+            let input = make_bytes(size);
+            let hex_len = size * 2;
+
+            // Lower-case roundtrip
+            let mut lower = vec![MaybeUninit::uninit(); hex_len];
+            encode::<false>(&input, &mut lower).expect("encode lower failed");
+            let lower_hex: Vec<u8> = lower.iter().map(|m| unsafe { m.assume_init() }).collect();
+            let mut dec = vec![MaybeUninit::uninit(); size];
+            decode(&lower_hex, &mut dec).unwrap_or_else(|e| panic!("roundtrip(lower) failed at {size}: {e}"));
+            let result: Vec<u8> = dec.iter().map(|m| unsafe { m.assume_init() }).collect();
+            assert_eq!(result, input, "lower roundtrip mismatch at size {size}");
+
+            // Upper-case roundtrip
+            let mut upper = vec![MaybeUninit::uninit(); hex_len];
+            encode::<true>(&input, &mut upper).expect("encode upper failed");
+            let upper_hex: Vec<u8> = upper.iter().map(|m| unsafe { m.assume_init() }).collect();
+            let mut dec2 = vec![MaybeUninit::uninit(); size];
+            decode(&upper_hex, &mut dec2).unwrap_or_else(|e| panic!("roundtrip(upper) failed at {size}: {e}"));
+            let result2: Vec<u8> = dec2.iter().map(|m| unsafe { m.assume_init() }).collect();
+            assert_eq!(result2, input, "upper roundtrip mismatch at size {size}");
+
+            // CT encode + CT decode roundtrip
+            let mut ct_hex = vec![MaybeUninit::uninit(); hex_len];
+            ct_encode::<false>(&input, &mut ct_hex).expect("ct_encode failed");
+            let ct_hex_bytes: Vec<u8> = ct_hex.iter().map(|m| unsafe { m.assume_init() }).collect();
+            let mut ct_dec = vec![MaybeUninit::uninit(); size];
+            ct_decode(&ct_hex_bytes, &mut ct_dec).unwrap_or_else(|e| panic!("ct roundtrip failed at {size}: {e}"));
+            let ct_result: Vec<u8> = ct_dec.iter().map(|m| unsafe { m.assume_init() }).collect();
+            assert_eq!(ct_result, input, "ct roundtrip mismatch at size {size}");
+        }
+    }
+
+    #[test]
+    fn decode_invalid_at_chunk_boundary_positions() {
+        // 64 decoded bytes → 128 hex chars, covers all SIMD chunk boundaries.
+        const DECODED_LEN: usize = 64;
+        const HEX_LEN: usize = DECODED_LEN * 2;
+
+        let input = make_bytes(DECODED_LEN);
+        let hex = encode_hex(&input);
+        assert_eq!(hex.len(), HEX_LEN);
+
+        // Critical positions where SIMD chunks transition.
+        let critical_positions: &[usize] = &[
+            0, 1,           // very start
+            14, 15, 16, 17, // 16-byte hex boundary
+            30, 31, 32, 33, // end of first SSSE3 chunk
+            46, 47, 48, 49, // third 16-byte mark
+            62, 63, 64, 65, // AVX2 chunk boundary
+            94, 95, 96, 97, // sixth 16-byte mark
+            HEX_LEN - 2,   // near end
+            HEX_LEN - 1,   // very end
+        ];
+
+        for &pos in critical_positions {
+            let mut bad = hex.clone();
+            bad[pos] = b'Z';
+
+            let mut d_out = vec![MaybeUninit::uninit(); DECODED_LEN];
+            let res = decode(&bad, &mut d_out);
+            assert!(res.is_err(), "decode missed invalid byte at critical pos {pos}");
+            if let Err(Error::InvalidChar { byte, index }) = res {
+                assert_eq!(byte, b'Z', "wrong byte at pos {pos}");
+                assert_eq!(index, pos, "wrong index at pos {pos}");
+            }
+
+            let mut ct_out = vec![MaybeUninit::uninit(); DECODED_LEN];
+            assert_eq!(
+                ct_decode(&bad, &mut ct_out),
+                Err(Error::InvalidEncoding),
+                "ct_decode missed invalid byte at critical pos {pos}"
+            );
+
+            assert!(!check(&bad), "check missed invalid byte at critical pos {pos}");
+            assert!(!ct_check(&bad), "ct_check missed invalid byte at critical pos {pos}");
+        }
+    }
+}
