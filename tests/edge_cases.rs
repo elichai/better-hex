@@ -295,15 +295,31 @@ fn display_chunk_boundary() {
 #[cfg(feature = "heapless")]
 #[test]
 fn heapless_capacity_overflow() {
-    assert!(better_hex::encode::<heapless::String<4>>(&[0xab, 0xcd, 0xef]).is_err());
-    assert!(better_hex::decode::<heapless::Vec<u8, 2>>(b"aabbcc").is_err());
+    // encode: 3 bytes → 6 hex chars, but capacity is 4
+    assert_eq!(
+        better_hex::encode::<heapless::String<4>>(&[0xab, 0xcd, 0xef]).unwrap_err(),
+        Error::InvalidLength { expected: 4, got: 6 }
+    );
+    // decode: "aabbcc" → 3 bytes, but capacity is 2
+    assert_eq!(
+        better_hex::decode::<heapless::Vec<u8, 2>>(b"aabbcc").unwrap_err(),
+        Error::InvalidLength { expected: 2, got: 3 }
+    );
 }
 
 #[cfg(feature = "arrayvec")]
 #[test]
 fn arrayvec_capacity_overflow() {
-    assert!(better_hex::encode::<arrayvec::ArrayString<4>>(&[0xab, 0xcd, 0xef]).is_err());
-    assert!(better_hex::decode::<arrayvec::ArrayVec<u8, 2>>(b"aabbcc").is_err());
+    // encode: 3 bytes → 6 hex chars, but capacity is 4
+    assert_eq!(
+        better_hex::encode::<arrayvec::ArrayString<4>>(&[0xab, 0xcd, 0xef]).unwrap_err(),
+        Error::InvalidLength { expected: 4, got: 6 }
+    );
+    // decode: "aabbcc" → 3 bytes, but capacity is 2
+    assert_eq!(
+        better_hex::decode::<arrayvec::ArrayVec<u8, 2>>(b"aabbcc").unwrap_err(),
+        Error::InvalidLength { expected: 2, got: 3 }
+    );
 }
 
 #[cfg(feature = "heapless")]
