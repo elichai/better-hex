@@ -1,17 +1,21 @@
 # better-hex
 
-Fast hex encoding/decoding with SIMD, `const fn`, and constant-time support.
+Fast, constant-time hex encoding and decoding with SIMD and `const fn`.
 
 `no_std` compatible. MIT OR Apache-2.0.
 
 ## Features
 
+- **Constant-time** — all operations are constant-time w.r.t. input data values:
+  - No lookup tables in memory (branchless arithmetic or register-only SIMD LUTs)
+  - No data-dependent branches
+  - Error accumulation without early return
+  - Note: NOT constant-time w.r.t. input *length*, only w.r.t. data values
 - **SIMD acceleration** — x86 (SSSE3 / AVX2 / AVX-512BW), AArch64 (NEON), WASM (SIMD128)
 - **Compile-time** — `const fn` encode, decode, and validation via `const_fn`
 - **Stack hex strings** — `HexStr<N>` / `PrefixedHexStr<N>` with zero overhead (no heap)
-- **Constant-time mode** — branchless scalar and SIMD CT paths for cryptographic use
 - **Extensible output** — `HexTarget` trait covers `String`, `heapless::String`, `arrayvec::ArrayString`, and downstream types
-- **Serde** — fast and constant-time serialize/deserialize helpers (optional feature)
+- **Serde** — constant-time serialize/deserialize helpers (optional feature)
 
 ## Quick start
 
@@ -31,10 +35,6 @@ const HEX: HexStr<5> = HexStr::const_encode_lower(b"hello");
 // Decode
 let bytes: Vec<u8> = better_hex::decode(b"68656c6c6f")?;
 let arr: [u8; 5] = better_hex::decode(b"68656c6c6f")?;
-
-// Constant-time (for secret data)
-better_hex::ct::encode_lower(secret, &mut buf)?;
-better_hex::ct::decode(secret_hex, &mut out)?;
 ```
 
 ## Acknowledgments
@@ -62,7 +62,7 @@ crates and research. Licenses are noted; all are permissive.
 
 - **[base16ct](https://github.com/RustCrypto/formats/tree/master/base16ct)** (RustCrypto) —
   constant-time scalar encode/decode arithmetic (the branchless nibble
-  encoding and the three-range branchless decode used in `ct_scalar.rs`);
+  encoding and the three-range branchless decode used in `scalar.rs`);
   CT encode/decode API design —
   **MIT OR Apache-2.0**
   (Copyright © 2014 Steve "Sc00bz" Thomas; © 2022–2025 The RustCrypto Project Developers)
@@ -90,7 +90,7 @@ crates and research. Licenses are noted; all are permissive.
 
 - **Daniel Lemire** — "Parsing short hexadecimal strings efficiently" (2019) —
   Branchless scalar nibble classification using signed-overflow range masks
-  (influences the `ct_decode_nibble` function in `ct_scalar.rs`).
+  (influences the `ct_decode_nibble` function in `scalar.rs`).
   <https://lemire.me/blog/2019/04/17/parsing-short-hexadecimal-strings-efficiently/>
 
 - **Wojciech Muła & Daniel Langdale** — SIMD nibble-decode algorithm —
@@ -102,5 +102,5 @@ crates and research. Licenses are noted; all are permissive.
   Original constant-time branchless hex arithmetic (encode: sign-bit mask
   for letter/digit selection; decode: three overlapping range-masked sums
   with error accumulation). Ported into Rust by the RustCrypto project in
-  `base16ct` and adapted here in `src/backend/ct_scalar.rs`.
+  `base16ct` and adapted here in `src/backend/scalar.rs`.
   <https://tobtu.com/dectobase16ct.php>

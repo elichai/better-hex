@@ -1,14 +1,14 @@
 #![no_std]
 #![warn(missing_docs)]
-//! Fast hex encoding/decoding with SIMD and `const fn` support.
+//! Fast, constant-time hex encoding and decoding with SIMD and `const fn`.
 //!
 //! # Features
 //!
+//! - **Constant-time** — all operations use branchless arithmetic w.r.t. input data values
 //! - **SIMD** — x86 (SSSE3/AVX2/AVX-512BW), AArch64 (NEON), WASM (SIMD128)
 //! - **`const fn`** — compile-time encode, decode, and validation
 //! - **Stack strings** — [`HexStr<N>`][HexStr] with zero heap allocation
 //! - **Extensible** — [`HexTarget`] trait for custom output types
-//! - All operations are constant-time w.r.t. input data values
 //!
 //! # Acknowledgments
 //!
