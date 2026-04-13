@@ -44,7 +44,7 @@ const HEX_UPPER: [u8; 16] = *b"0123456789ABCDEF";
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
 /// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
-pub(crate) unsafe fn encode<const UPPER: bool>(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) {
+pub unsafe fn encode<const UPPER: bool>(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) {
     let table = if UPPER { &HEX_UPPER } else { &HEX_LOWER };
 
     // Load the 16-byte hex LUT into a SIMD register.
@@ -95,7 +95,7 @@ pub(crate) unsafe fn encode<const UPPER: bool>(mut src: *const u8, mut dst: *mut
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
-pub(crate) unsafe fn decode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> Result<(), InvalidEncoding> {
+pub unsafe fn decode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> Result<(), InvalidEncoding> {
     let mut err_accum: u16 = 0;
 
     // WASM SIMD128: 16 output bytes per iteration (32 hex chars).
@@ -173,7 +173,7 @@ fn decode_nibbles(v: v128) -> (v128, u16) {
 ///
 /// Processes all chunks without short-circuiting (constant-time).
 /// Returns `true` iff all bytes are in `[0-9a-fA-F]`.
-pub(crate) fn check(mut input: &[u8]) -> bool {
+pub fn check(mut input: &[u8]) -> bool {
     let mut all_valid = true;
 
     while input.len() >= 16 {

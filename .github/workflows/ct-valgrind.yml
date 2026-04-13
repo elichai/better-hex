@@ -25,23 +25,24 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Valgrind
-        run: sudo apt-get update && sudo apt-get install -y valgrind
+      - name: Install Valgrind and libclang
+        run: sudo apt-get update && sudo apt-get install -y valgrind libclang-dev
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Build CT tests
-        run: cargo test --features ct-test --test ct_valgrind --no-run
+      - name: Build CT tests (release, for accurate codegen)
+        run: cargo test --features ct-test --test ct_valgrind --release --no-run
 
       - name: Run under Valgrind
         run: |
-          TEST_BIN=$(find target/debug/deps -name 'ct_valgrind-*' -executable -type f)
+          TEST_BIN=$(find target/release/deps -name 'ct_valgrind-*' -executable -type f)
           echo "Running: $TEST_BIN"
           valgrind --tool=memcheck \
             --error-exitcode=1 \
             --leak-check=no \
             --errors-for-leak-kinds=none \
+            --suppressions=tests/ct_valgrind.supp \
             $TEST_BIN
