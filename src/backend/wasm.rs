@@ -147,7 +147,7 @@ pub(crate) unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Re
 /// Decode 16 hex-ASCII bytes in `v` into nibble values, returning the nibble
 /// vector and a bitmask (`u16`) where a non-zero value indicates at least one
 /// invalid hex byte (`u8x16_bitmask` of the out-of-range check).
-#[inline]
+#[inline(always)]
 fn decode_nibbles(v: v128) -> (v128, u16) {
     // Digit path: '0'..'9' → 0..9
     let digit = u8x16_sub(
@@ -178,7 +178,6 @@ fn decode_nibbles(v: v128) -> (v128, u16) {
 ///
 /// Processes all chunks without short-circuiting (constant-time).
 /// Returns `true` iff all bytes are in `[0-9a-fA-F]`.
-#[inline]
 pub(crate) fn check(input: &[u8]) -> bool {
     let mut all_valid = true;
 
@@ -201,7 +200,7 @@ pub(crate) fn check(input: &[u8]) -> bool {
 
     // Tail: delegate remaining bytes to scalar.
     let done = chunks * 16;
-    scalar::check(&input[done..]) && all_valid
+    scalar::check(&input[done..]) & all_valid
 }
 
 #[cfg(test)]

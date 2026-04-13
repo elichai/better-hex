@@ -285,7 +285,6 @@ fn decode_nibbles_with_consts(
 /// valid, every lane is 0xFF; we reduce with `vminvq_u8` to check.
 ///
 /// Processes all chunks without early exit (constant-time).
-#[inline]
 pub fn check(input: &[u8]) -> bool {
     let simd_end = input.len() / 16 * 16;
     let mut i = 0usize;

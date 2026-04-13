@@ -120,7 +120,7 @@ pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: 
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
-#[inline]
+#[inline(always)]
 pub unsafe fn decode_inner(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), super::InvalidEncoding> {
     let mut err: u16 = 0;
 

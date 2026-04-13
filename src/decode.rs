@@ -46,6 +46,7 @@ pub fn decode_to_slice<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a [u8
 }
 
 /// Check if `input` is a valid hex string (even length and all hex chars).
+#[inline]
 pub fn check(input: &[u8]) -> bool {
     input.len().is_multiple_of(2) && backend::check(input)
 }
