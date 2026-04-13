@@ -14,10 +14,6 @@ use std::hint::black_box;
 #[cfg(feature = "alloc")]
 mod common;
 
-// ---------------------------------------------------------------------------
-// Group: encode_alloc
-// ---------------------------------------------------------------------------
-
 #[cfg(feature = "alloc")]
 fn bench_encode_alloc(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_alloc");
@@ -49,10 +45,6 @@ fn bench_encode_alloc(c: &mut Criterion) {
     group.finish();
 }
 
-// ---------------------------------------------------------------------------
-// Group: encode_to_slice
-// ---------------------------------------------------------------------------
-
 #[cfg(feature = "alloc")]
 fn bench_encode_to_slice(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_to_slice");
@@ -64,7 +56,6 @@ fn bench_encode_to_slice(c: &mut Criterion) {
 
         group.bench_function(BenchmarkId::new("better_hex", size), |b| {
             b.iter(|| {
-                // Discard the &mut str return to avoid a lifetime escape in FnMut.
                 better_hex::encode_to_slice(black_box(bufs.next()), black_box(dst.as_mut_slice())).unwrap();
             });
         });
@@ -98,10 +89,6 @@ fn bench_encode_to_slice(c: &mut Criterion) {
 
     group.finish();
 }
-
-// ---------------------------------------------------------------------------
-// Group: decode_alloc
-// ---------------------------------------------------------------------------
 
 #[cfg(feature = "alloc")]
 fn bench_decode_alloc(c: &mut Criterion) {
@@ -142,10 +129,6 @@ fn bench_decode_alloc(c: &mut Criterion) {
     group.finish();
 }
 
-// ---------------------------------------------------------------------------
-// Group: decode_to_slice
-// ---------------------------------------------------------------------------
-
 #[cfg(feature = "alloc")]
 fn bench_decode_to_slice(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode_to_slice");
@@ -184,10 +167,6 @@ fn bench_decode_to_slice(c: &mut Criterion) {
     group.finish();
 }
 
-// ---------------------------------------------------------------------------
-// Group: check
-// ---------------------------------------------------------------------------
-
 #[cfg(feature = "alloc")]
 fn bench_check(c: &mut Criterion) {
     let mut group = c.benchmark_group("check");
@@ -212,70 +191,76 @@ fn bench_check(c: &mut Criterion) {
     group.finish();
 }
 
-// ---------------------------------------------------------------------------
-// Group: display_format
-// ---------------------------------------------------------------------------
-
 #[cfg(feature = "alloc")]
 fn bench_display_format(c: &mut Criterion) {
+    use std::fmt::Write;
     let mut group = c.benchmark_group("display_format");
 
     for &size in common::BENCH_SIZES {
         let mut bufs = common::Buffers::new(size);
         group.throughput(Throughput::Bytes(size as u64));
 
+        // Write into a pre-allocated String to measure Display impl, not allocation.
+        let mut out = String::with_capacity(size * 2 + 16);
         group.bench_function(BenchmarkId::new("better_hex", size), |b| {
-            b.iter(|| format!("{}", better_hex::display(black_box(bufs.next()))));
+            b.iter(|| {
+                out.clear();
+                write!(out, "{}", better_hex::display(black_box(bufs.next()))).unwrap();
+                black_box(&out);
+            });
         });
 
-        // Use const_hex::display so both sides go through format! + Display,
-        // making this an apples-to-apples comparison of display overhead.
         #[cfg(feature = "_bench_const_hex")]
         group.bench_function(BenchmarkId::new("const_hex", size), |b| {
-            b.iter(|| format!("{}", const_hex::display(black_box(bufs.next()))));
+            b.iter(|| {
+                out.clear();
+                write!(out, "{}", const_hex::display(black_box(bufs.next()))).unwrap();
+                black_box(&out);
+            });
         });
     }
 
     group.finish();
 }
 
-// ---------------------------------------------------------------------------
-// Group: serde_serialize / serde_deserialize
-// ---------------------------------------------------------------------------
-
 #[cfg(all(feature = "alloc", feature = "serde"))]
 mod serde_bench {
     use serde::{Deserialize, Serialize};
+    use std::borrow::Cow;
 
     #[derive(Serialize, Deserialize)]
-    pub struct BetterHexWrap {
+    pub struct BetterHexWrap<'a> {
         #[serde(with = "better_hex::serde")]
-        pub data: Vec<u8>,
+        pub data: Cow<'a, [u8]>,
     }
 
     #[cfg(feature = "_bench_const_hex")]
     #[derive(Serialize, Deserialize)]
-    pub struct ConstHexWrap {
+    pub struct ConstHexWrap<'a> {
         #[serde(with = "const_hex::serde")]
-        pub data: Vec<u8>,
+        pub data: Cow<'a, [u8]>,
     }
 }
 
 #[cfg(all(feature = "alloc", feature = "serde"))]
 fn bench_serde_serialize(c: &mut Criterion) {
     use serde_bench::BetterHexWrap;
+    use std::borrow::Cow;
 
     let mut group = c.benchmark_group("serde_serialize");
     for &size in common::BENCH_SIZES {
         let mut bufs = common::Buffers::new(size);
         group.throughput(Throughput::Bytes(size as u64));
 
+        // Write into a pre-allocated Vec to measure serialization, not allocation.
+        let mut out = Vec::with_capacity(size * 2 + 32);
         group.bench_function(BenchmarkId::new("better_hex", size), |b| {
             b.iter(|| {
+                out.clear();
                 let val = BetterHexWrap {
-                    data: bufs.next().to_vec(),
+                    data: Cow::Borrowed(black_box(bufs.next())),
                 };
-                serde_json::to_string(black_box(&val)).unwrap()
+                serde_json::to_writer(black_box(&mut out), &val).unwrap();
             });
         });
 
@@ -284,10 +269,11 @@ fn bench_serde_serialize(c: &mut Criterion) {
             use serde_bench::ConstHexWrap;
             group.bench_function(BenchmarkId::new("const_hex", size), |b| {
                 b.iter(|| {
+                    out.clear();
                     let val = ConstHexWrap {
-                        data: bufs.next().to_vec(),
+                        data: Cow::Borrowed(black_box(bufs.next())),
                     };
-                    serde_json::to_string(black_box(&val)).unwrap()
+                    serde_json::to_writer(black_box(&mut out), &val).unwrap();
                 });
             });
         }
@@ -302,37 +288,41 @@ fn bench_serde_deserialize(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("serde_deserialize");
     for &size in common::BENCH_SIZES {
-        let mut bufs = common::Buffers::new(size);
+        let mut bufs = common::Buffers::new_hex(size);
+        let hex_len = size * 2;
         group.throughput(Throughput::Bytes(size as u64));
 
-        // Pre-build JSON strings outside the measurement loop.
-        let bh_json = serde_json::to_string(&BetterHexWrap {
-            data: bufs.next().to_vec(),
-        })
-        .unwrap();
+        // Pre-allocate a JSON template: {"data":"<hex>"}
+        // The hex portion is at a fixed offset and always the same length,
+        // so we can just overwrite it each iteration.
+        let prefix = b"{\"data\":\"";
+        let suffix = b"\"}";
+        let mut json_buf = [prefix, &vec![b'0'; hex_len][..], suffix].concat();
+        let hex_start = prefix.len();
+        let hex_end = hex_start + hex_len;
+
         group.bench_function(BenchmarkId::new("better_hex", size), |b| {
-            b.iter(|| serde_json::from_str::<BetterHexWrap>(black_box(&bh_json)).unwrap());
+            b.iter(|| {
+                json_buf[hex_start..hex_end].copy_from_slice(bufs.next());
+                // SAFETY: json_buf is valid UTF-8 (JSON with hex ASCII content).
+                serde_json::from_slice::<BetterHexWrap>(black_box(&json_buf)).unwrap()
+            });
         });
 
         #[cfg(feature = "_bench_const_hex")]
         {
             use serde_bench::ConstHexWrap;
-            let ch_json = serde_json::to_string(&ConstHexWrap {
-                data: bufs.next().to_vec(),
-            })
-            .unwrap();
             group.bench_function(BenchmarkId::new("const_hex", size), |b| {
-                b.iter(|| serde_json::from_str::<ConstHexWrap>(black_box(&ch_json)).unwrap());
+                b.iter(|| {
+                    json_buf[hex_start..hex_end].copy_from_slice(bufs.next());
+                    serde_json::from_slice::<ConstHexWrap>(black_box(&json_buf)).unwrap()
+                });
             });
         }
     }
 
     group.finish();
 }
-
-// ---------------------------------------------------------------------------
-// criterion_group / criterion_main
-// ---------------------------------------------------------------------------
 
 #[cfg(all(feature = "alloc", feature = "serde"))]
 criterion_group!(

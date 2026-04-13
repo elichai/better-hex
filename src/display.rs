@@ -10,7 +10,7 @@ use core::mem::MaybeUninit;
 
 /// Default hex buffer size for fmt-based encoding (in hex output bytes).
 /// Each iteration processes `BUF / 2` input bytes.
-const DEFAULT_BUF: usize = 256;
+pub(crate) const DEFAULT_BUF: usize = 256;
 
 /// Returns a value that implements `Display`, `LowerHex`, and `UpperHex`
 /// for the given byte data.

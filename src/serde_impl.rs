@@ -62,7 +62,7 @@ impl<const UPPER: bool, const PREFIX: bool> fmt::Display for HexDisplayAdapter<'
         if PREFIX {
             f.write_str("0x")?;
         }
-        crate::display::write_hex_to::<UPPER, 256, _>(self.data, f)
+        crate::display::write_hex_to::<UPPER, { crate::display::DEFAULT_BUF }, _>(self.data, f)
     }
 }
 
