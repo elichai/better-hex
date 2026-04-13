@@ -27,11 +27,6 @@ fn bench_encode(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(not(feature = "alloc"))]
-fn bench_encode(_c: &mut Criterion) {
-    panic!("Re-run with --features alloc");
-}
-
 // Serde benchmarks — only with serde feature
 #[cfg(all(feature = "alloc", feature = "serde"))]
 fn bench_serde(c: &mut Criterion) {
@@ -70,10 +65,8 @@ fn bench_serde(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(all(feature = "alloc", feature = "serde"))]
+#[cfg(feature = "serde")]
 criterion_group!(benches, bench_encode, bench_serde);
-#[cfg(all(feature = "alloc", not(feature = "serde")))]
-criterion_group!(benches, bench_encode);
-#[cfg(not(feature = "alloc"))]
+#[cfg(not(feature = "serde"))]
 criterion_group!(benches, bench_encode);
 criterion_main!(benches);

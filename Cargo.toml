@@ -51,23 +51,29 @@ proptest = "1"
 [[bench]]
 name = "encode"
 harness = false
+required-features = ["_bench_internals"]
 
 [[bench]]
 name = "decode"
 harness = false
+required-features = ["_bench_internals"]
 
 [[bench]]
 name = "check"
 harness = false
+required-features = ["_bench_internals"]
 
 [[bench]]
 name = "display"
 harness = false
+required-features = ["alloc"]
 
 [[bench]]
 name = "traits"
 harness = false
+required-features = ["alloc"]
 
 [[bench]]
 name = "compare"
 harness = false
+required-features = ["alloc"]

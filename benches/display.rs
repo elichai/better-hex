@@ -40,10 +40,5 @@ fn bench_display(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(not(feature = "alloc"))]
-fn bench_display(_c: &mut Criterion) {
-    panic!("Re-run with --features alloc");
-}
-
 criterion_group!(benches, bench_display);
 criterion_main!(benches);

@@ -36,10 +36,5 @@ fn bench_check(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(not(feature = "_bench_internals"))]
-fn bench_check(_c: &mut Criterion) {
-    panic!("Re-run with --features _bench_internals");
-}
-
 criterion_group!(benches, bench_check);
 criterion_main!(benches);

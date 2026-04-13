@@ -324,7 +324,7 @@ fn bench_serde_deserialize(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(all(feature = "alloc", feature = "serde"))]
+#[cfg(feature = "serde")]
 criterion_group!(
     benches,
     bench_encode_alloc,
@@ -337,7 +337,7 @@ criterion_group!(
     bench_serde_deserialize,
 );
 
-#[cfg(all(feature = "alloc", not(feature = "serde")))]
+#[cfg(not(feature = "serde"))]
 criterion_group!(
     benches,
     bench_encode_alloc,
@@ -347,13 +347,5 @@ criterion_group!(
     bench_check,
     bench_display_format,
 );
-
-#[cfg(not(feature = "alloc"))]
-fn bench_compare_requires_alloc(_c: &mut Criterion) {
-    panic!("Re-run with --features alloc");
-}
-
-#[cfg(not(feature = "alloc"))]
-criterion_group!(benches, bench_compare_requires_alloc);
 
 criterion_main!(benches);

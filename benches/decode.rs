@@ -48,10 +48,5 @@ fn bench_decode(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(not(feature = "_bench_internals"))]
-fn bench_decode(_c: &mut Criterion) {
-    panic!("Re-run with --features _bench_internals");
-}
-
 criterion_group!(benches, bench_decode);
 criterion_main!(benches);
