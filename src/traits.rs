@@ -54,7 +54,7 @@ pub trait ToHex {
 /// ```
 pub trait FromHex: Sized {
     /// The error type returned on decode failure.
-    type Error;
+    type Error: core::fmt::Display;
 
     /// Decode a hex string into `Self`.
     fn from_hex(hex: impl AsRef<[u8]>) -> Result<Self, Self::Error>;
