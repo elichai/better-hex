@@ -44,7 +44,7 @@ const HEX_UPPER: [u8; 16] = *b"0123456789ABCDEF";
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
 /// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
-pub(crate) unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
+pub(crate) unsafe fn encode<const UPPER: bool>(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) {
     let table = if UPPER { &HEX_UPPER } else { &HEX_LOWER };
 
     // Load the 16-byte hex LUT into a SIMD register.
@@ -52,11 +52,10 @@ pub(crate) unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byt
     let lut = unsafe { v128_load(table.as_ptr().cast()) };
     let mask_lo = u8x16_splat(0x0F);
 
-    let chunks = byte_len / 16;
-    for i in 0..chunks {
-        // SAFETY: `i * 16 + 16 <= byte_len` so src read and dst write are in bounds.
+    while byte_len >= 16 {
+        // SAFETY: `byte_len >= 16` so src read and dst write are in bounds.
         unsafe {
-            let chunk = v128_load(src.add(i * 16).cast());
+            let chunk = v128_load(src.cast());
 
             // Split each byte into high and low nibbles.
             let lo_nibbles = v128_and(chunk, mask_lo);
@@ -72,17 +71,18 @@ pub(crate) unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byt
             let out1 =
                 u8x16_shuffle::<8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31>(hi_ascii, lo_ascii);
 
-            let out_ptr = dst.add(i * 32);
-            v128_store(out_ptr.cast(), out0);
-            v128_store(out_ptr.add(16).cast(), out1);
+            v128_store(dst.cast(), out0);
+            v128_store(dst.add(16).cast(), out1);
         }
+
+        src = src.add(16);
+        dst = dst.add(32);
+        byte_len -= 16;
     }
 
     // Tail: delegate remaining bytes to scalar.
-    let done = chunks * 16;
-    // SAFETY: `src.add(done)` valid for `byte_len - done` reads,
-    // `dst.add(done * 2)` valid for `(byte_len - done) * 2` writes.
-    unsafe { scalar::encode_inner::<UPPER>(src.add(done), dst.add(done * 2), byte_len - done) };
+    // SAFETY: `src` valid for `byte_len` reads, `dst` valid for `byte_len * 2` writes.
+    unsafe { scalar::encode_inner::<UPPER>(src, dst, byte_len) };
 }
 
 /// Decode hex-encoded `input` into `output`, using SIMD128 for 32-byte chunks.
@@ -95,19 +95,16 @@ pub(crate) unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byt
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
-pub(crate) unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
-    let hex_len = byte_len * 2;
+pub(crate) unsafe fn decode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> Result<(), InvalidEncoding> {
     let mut err_accum: u16 = 0;
 
-    let chunks = hex_len / 32;
-    for i in 0..chunks {
-        let hex_off = i * 32;
-        let byte_off = i * 16;
-
+    // WASM SIMD128: 16 output bytes per iteration (32 hex chars).
+    while byte_len >= 16 {
         // Load two 16-byte halves of the 32-byte hex input.
-        // SAFETY: `hex_off + 32 <= hex_len` and `byte_off + 16 <= byte_len`.
-        let nib0 = unsafe { v128_load(src.add(hex_off).cast()) };
-        let nib1 = unsafe { v128_load(src.add(hex_off + 16).cast()) };
+        // SAFETY: `byte_len >= 16` so `src` is valid for 32 hex bytes and
+        // `dst` is valid for 16 output bytes.
+        let nib0 = unsafe { v128_load(src.cast()) };
+        let nib1 = unsafe { v128_load(src.add(16).cast()) };
 
         let (nibbles0, ok0) = decode_nibbles(nib0);
         let (nibbles1, ok1) = decode_nibbles(nib1);
@@ -120,19 +117,19 @@ pub(crate) unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Re
         let lo = u8x16_shuffle::<1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31>(nibbles0, nibbles1);
         let packed = v128_or(u8x16_shl(hi, 4), lo);
 
-        // SAFETY: `byte_off + 16 <= byte_len`.
         unsafe {
-            v128_store(dst.add(byte_off).cast(), packed);
+            v128_store(dst.cast(), packed);
         }
+
+        src = src.add(32);
+        dst = dst.add(16);
+        byte_len -= 16;
     }
 
     // Tail: delegate remaining bytes to scalar.
-    let consumed_hex = chunks * 32;
-    let consumed_bytes = chunks * 16;
-    if consumed_hex < hex_len {
-        let tail_byte_len = byte_len - consumed_bytes;
+    if byte_len > 0 {
         // SAFETY: same pointer validity as above.
-        err_accum |= u16::from(unsafe { scalar::decode_inner(src.add(consumed_hex), dst.add(consumed_bytes), tail_byte_len) });
+        err_accum |= u16::from(unsafe { scalar::decode_inner(src, dst, byte_len) });
     }
 
     if err_accum != 0 {
@@ -176,29 +173,25 @@ fn decode_nibbles(v: v128) -> (v128, u16) {
 ///
 /// Processes all chunks without short-circuiting (constant-time).
 /// Returns `true` iff all bytes are in `[0-9a-fA-F]`.
-pub(crate) fn check(input: &[u8]) -> bool {
+pub(crate) fn check(mut input: &[u8]) -> bool {
     let mut all_valid = true;
 
-    let chunks = input.len() / 16;
-    for i in 0..chunks {
-        let src = &input[i * 16..];
+    while input.len() >= 16 {
+        // SAFETY: `input.len() >= 16` so the pointer is valid for 16 reads.
+        let v = unsafe { v128_load(input.as_ptr().cast()) };
 
-        // SAFETY: at least 16 bytes remain.
-        let v = unsafe { v128_load(src.as_ptr().cast()) };
-
-        // Range check: three sub-ranges ORed together.
         let is_digit = v128_and(u8x16_ge(v, u8x16_splat(b'0')), u8x16_le(v, u8x16_splat(b'9')));
         let is_upper = v128_and(u8x16_ge(v, u8x16_splat(b'A')), u8x16_le(v, u8x16_splat(b'F')));
         let is_lower = v128_and(u8x16_ge(v, u8x16_splat(b'a')), u8x16_le(v, u8x16_splat(b'f')));
 
         let is_hex = v128_or(v128_or(is_digit, is_upper), is_lower);
-
         all_valid &= u8x16_all_true(is_hex);
+
+        // SAFETY: `input.len() >= 16` checked above.
+        input = unsafe { input.get_unchecked(16..) };
     }
 
-    // Tail: delegate remaining bytes to scalar.
-    let done = chunks * 16;
-    scalar::check(&input[done..]) & all_valid
+    scalar::check(input) & all_valid
 }
 
 #[cfg(test)]

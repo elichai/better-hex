@@ -29,7 +29,7 @@
 //! per iteration:
 //!
 //! 1. **Digit path**: For each byte, compute
-//!    `saturating_sub(byte.wrapping_add(0xC6), 6) - 0xF0`. This yields nibble
+//!    `saturating_sub(byte.add(0xC6), 6) - 0xF0`. This yields nibble
 //!    values 0-9 for ASCII digits `'0'`-`'9'`, and garbage (>= 16) for
 //!    non-digit characters.
 //!    Explanation: `'0'` is 0x30; `0x30 + 0xC6 = 0xF6` (wrapping u8).
@@ -89,7 +89,7 @@ use core::arch::aarch64::*;
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
 /// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
-pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
+pub unsafe fn encode<const UPPER: bool>(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) {
     let lut_bytes: [u8; 16] = if UPPER {
         *b"0123456789ABCDEF"
     } else {
@@ -100,16 +100,16 @@ pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: 
     let lut = unsafe { vld1q_u8(lut_bytes.as_ptr()) };
     let mask_lo = unsafe { vdupq_n_u8(0x0F) };
 
-    let mut i = 0usize;
+    // Save the original total length for the overlapping-tail heuristic.
+    let orig_byte_len = byte_len;
 
     // Process 32 bytes (2x16) per iteration to reduce loop overhead
     // and give the OoO engine more independent work per iteration.
-    let simd_end_2x = byte_len / 32 * 32;
-    while i < simd_end_2x {
+    while byte_len >= 32 {
         unsafe {
             // Load two 16-byte chunks.
-            let chunk_a = vld1q_u8(src.add(i));
-            let chunk_b = vld1q_u8(src.add(i + 16));
+            let chunk_a = vld1q_u8(src);
+            let chunk_b = vld1q_u8(src.add(16));
 
             // Process chunk A.
             let hi_a = vshrq_n_u8::<4>(chunk_a);
@@ -126,54 +126,63 @@ pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: 
             let zipped_b = vzipq_u8(hi_hex_b, lo_hex_b);
 
             // Store all 64 output bytes.
-            let out = dst.add(i * 2);
-            vst1q_u8(out, zipped_a.0);
-            vst1q_u8(out.add(16), zipped_a.1);
-            vst1q_u8(out.add(32), zipped_b.0);
-            vst1q_u8(out.add(48), zipped_b.1);
+            vst1q_u8(dst, zipped_a.0);
+            vst1q_u8(dst.add(16), zipped_a.1);
+            vst1q_u8(dst.add(32), zipped_b.0);
+            vst1q_u8(dst.add(48), zipped_b.1);
         }
-        i += 32;
+        // SAFETY: `byte_len >= 32` guarantees src/dst remain in bounds.
+        unsafe {
+            src = src.add(32);
+            dst = dst.add(64);
+        }
+        byte_len -= 32;
     }
 
-    // Handle a remaining 16-byte chunk if `byte_len % 32 >= 16`.
+    // Handle a remaining 16-byte chunk if `byte_len >= 16`.
     // (There can be at most one, since the 2x loop handles pairs.)
-    if i + 16 <= byte_len {
+    if byte_len >= 16 {
+        // SAFETY: `byte_len >= 16` guarantees src/dst remain in bounds.
         unsafe {
-            let chunk = vld1q_u8(src.add(i));
+            let chunk = vld1q_u8(src);
             let hi_nibbles = vshrq_n_u8::<4>(chunk);
             let lo_nibbles = vandq_u8(chunk, mask_lo);
             let hi_hex = vqtbl1q_u8(lut, hi_nibbles);
             let lo_hex = vqtbl1q_u8(lut, lo_nibbles);
             let zipped = vzipq_u8(hi_hex, lo_hex);
-            let out = dst.add(i * 2);
-            vst1q_u8(out, zipped.0);
-            vst1q_u8(out.add(16), zipped.1);
+            vst1q_u8(dst, zipped.0);
+            vst1q_u8(dst.add(16), zipped.1);
+            src = src.add(16);
+            dst = dst.add(32);
         }
-        i += 16;
+        byte_len -= 16;
     }
 
     // Handle the final < 16 bytes. Use an overlapping NEON read of the last
     // 16 input bytes when the tail is >= 4 bytes (worth the SIMD overhead)
     // and the total input is >= 16 bytes (so the overlap is valid). For
     // tiny tails (< 4 bytes) the scalar path is cheaper.
-    if i < byte_len {
-        let remaining = byte_len - i;
-        if remaining >= 4 && byte_len >= 16 {
+    if byte_len > 0 {
+        if byte_len >= 4 && orig_byte_len >= 16 {
             unsafe {
-                let chunk = vld1q_u8(src.add(byte_len - 16));
+                // Overlapping read: re-encode the last 16 bytes of the
+                // original input. `src` currently points `byte_len` bytes
+                // before the end, so `src.sub(16 - byte_len)` == last-16.
+                let overlap_src = src.sub(16 - byte_len);
+                let overlap_dst = dst.sub(32 - byte_len * 2);
+                let chunk = vld1q_u8(overlap_src);
                 let hi_nibbles = vshrq_n_u8::<4>(chunk);
                 let lo_nibbles = vandq_u8(chunk, mask_lo);
                 let hi_hex = vqtbl1q_u8(lut, hi_nibbles);
                 let lo_hex = vqtbl1q_u8(lut, lo_nibbles);
                 let zipped = vzipq_u8(hi_hex, lo_hex);
-                let out = dst.add((byte_len - 16) * 2);
-                vst1q_u8(out, zipped.0);
-                vst1q_u8(out.add(16), zipped.1);
+                vst1q_u8(overlap_dst, zipped.0);
+                vst1q_u8(overlap_dst.add(16), zipped.1);
             }
         } else {
-            // SAFETY: `src.add(i)` is valid for `byte_len - i` reads,
-            // `dst.add(i * 2)` is valid for `(byte_len - i) * 2` writes.
-            unsafe { scalar::encode_inner::<UPPER>(src.add(i), dst.add(i * 2), byte_len - i) };
+            // SAFETY: `src` is valid for `byte_len` reads,
+            // `dst` is valid for `byte_len * 2` writes.
+            unsafe { scalar::encode_inner::<UPPER>(src, dst, byte_len) };
         }
     }
 }
@@ -191,10 +200,7 @@ pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: 
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
-pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
-    let hex_len = byte_len * 2;
-    let simd_end = hex_len / 32 * 32;
-    let mut i = 0usize;
+pub unsafe fn decode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> Result<(), InvalidEncoding> {
     let mut err: u8 = 0;
 
     // Hoist all broadcast constants out of the loop so LLVM doesn't need to
@@ -208,9 +214,10 @@ pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<()
     let c_ten = unsafe { vdupq_n_u8(10) };
     let c_validate = unsafe { vdupq_n_u8(0x70) };
 
-    while i < simd_end {
-        let v0 = unsafe { vld1q_u8(src.add(i)) };
-        let v1 = unsafe { vld1q_u8(src.add(i + 16)) };
+    // NEON: 16 output bytes per iteration (32 hex chars).
+    while byte_len >= 16 {
+        let v0 = unsafe { vld1q_u8(src) };
+        let v1 = unsafe { vld1q_u8(src.add(16)) };
 
         let nib0 = decode_nibbles_with_consts(v0, c_c6, c_six, c_f0, c_df, c_a, c_ten);
         let nib1 = decode_nibbles_with_consts(v1, c_c6, c_six, c_f0, c_df, c_a, c_ten);
@@ -222,24 +229,24 @@ pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<()
         let check0 = unsafe { vqaddq_u8(nib0, c_validate) };
         let check1 = unsafe { vqaddq_u8(nib1, c_validate) };
         let combined_check = unsafe { vorrq_u8(check0, check1) };
-        let chunk_err = unsafe { vmaxvq_u8(combined_check) } & 0x80;
-
-        err |= chunk_err;
+        err |= unsafe { vmaxvq_u8(combined_check) } & 0x80;
 
         // Pack: deinterleave hi/lo nibbles, then combine.
         let deinterleaved = unsafe { vuzpq_u8(nib0, nib1) };
         let combined = unsafe { vorrq_u8(vshlq_n_u8::<4>(deinterleaved.0), deinterleaved.1) };
 
-        let out_ptr = dst.wrapping_add(i / 2);
-        unsafe { vst1q_u8(out_ptr, combined) };
-
-        i += 32;
+        // SAFETY: `byte_len >= 16` guarantees src/dst remain in bounds.
+        unsafe {
+            vst1q_u8(dst, combined);
+            src = src.add(32);
+            dst = dst.add(16);
+        }
+        byte_len -= 16;
     }
 
-    if i < hex_len {
-        let tail_byte_len = byte_len - i / 2;
+    if byte_len > 0 {
         // SAFETY: same pointer validity as above.
-        err |= unsafe { scalar::decode_inner(src.add(i), dst.add(i / 2), tail_byte_len) };
+        err |= unsafe { scalar::decode_inner(src, dst, byte_len) };
     }
 
     if err != 0 {
@@ -283,15 +290,12 @@ fn decode_nibbles_with_consts(
 /// valid, every lane is 0xFF; we reduce with `vminvq_u8` to check.
 ///
 /// Processes all chunks without early exit (constant-time).
-pub fn check(input: &[u8]) -> bool {
-    let simd_end = input.len() / 16 * 16;
-    let mut i = 0usize;
+pub fn check(mut input: &[u8]) -> bool {
     let mut all_valid = true;
-    let in_base = input.as_ptr();
 
-    while i < simd_end {
-        // SAFETY: `i + 16 <= input.len()`.
-        let v = unsafe { vld1q_u8(in_base.add(i)) };
+    while input.len() >= 16 {
+        // SAFETY: `input.len() >= 16` so the pointer is valid for 16 reads.
+        let v = unsafe { vld1q_u8(input.as_ptr()) };
 
         let ge_0 = unsafe { vcgeq_u8(v, vdupq_n_u8(b'0')) };
         let le_9 = unsafe { vcleq_u8(v, vdupq_n_u8(b'9')) };
@@ -306,21 +310,13 @@ pub fn check(input: &[u8]) -> bool {
         let is_lower = unsafe { vandq_u8(ge_a_lower, le_f_lower) };
 
         let valid = unsafe { vorrq_u8(vorrq_u8(is_digit, is_upper), is_lower) };
-        let min_val = unsafe { vminvq_u8(valid) };
+        all_valid &= unsafe { vminvq_u8(valid) } == 0xFF;
 
-        all_valid &= min_val == 0xFF;
-
-        i += 16;
+        // SAFETY: `input.len() >= 16` checked above.
+        input = unsafe { input.get_unchecked(16..) };
     }
 
-    // Tail
-    if i < input.len() {
-        let input_tail = unsafe { input.get_unchecked(i..) };
-        let tail_ok = scalar::check(input_tail);
-        all_valid &= tail_ok;
-    }
-
-    all_valid
+    all_valid & scalar::check(input)
 }
 
 #[cfg(test)]
