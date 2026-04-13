@@ -56,12 +56,11 @@ use crate::backend::scalar;
 ///
 /// # Safety
 ///
-/// - The CPU must support SSSE3.
+/// - The CPU must support SSSE3 (caller must have `#[target_feature(enable = "ssse3")]`).
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
 /// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
-#[inline]
-#[target_feature(enable = "ssse3")]
+#[inline(always)]
 unsafe fn encode_ssse3_inner<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
     // SAFETY: all intrinsics below require SSSE3, guaranteed by #[target_feature].
     // Pointer arithmetic stays within the bounds guaranteed by the caller.
@@ -131,12 +130,11 @@ pub(crate) unsafe fn encode_ssse3<const UPPER: bool>(src: *const u8, dst: *mut u
 ///
 /// # Safety
 ///
-/// - The CPU must support AVX2.
+/// - The CPU must support AVX2 (caller must have `#[target_feature(enable = "avx2")]`).
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
 /// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
-#[inline]
-#[target_feature(enable = "avx2")]
+#[inline(always)]
 unsafe fn encode_avx2_inner<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
     // SAFETY: all intrinsics below require AVX2, guaranteed by #[target_feature].
     unsafe {
@@ -208,20 +206,26 @@ pub(crate) unsafe fn encode_avx2<const UPPER: bool>(src: *const u8, dst: *mut u8
 /// three valid hex ranges (`'0'-'9'`, `'A'-'F'`, `'a'-'f'`) hash into after
 /// the subtract-one step, then choosing constants that place valid chars in
 /// the non-negative (MSB-clear) range of signed i8 arithmetic.
-#[inline]
-#[target_feature(enable = "ssse3")]
+///
+/// # Safety
+///
+/// - The CPU must support SSSE3 (caller must have `#[target_feature(enable = "ssse3")]`).
+#[inline(always)]
 unsafe fn decode_delta_check_128() -> __m128i {
-    _mm_setr_epi8(
-        -16,  // hash 0
-        -32,  // hash 1
-        -47,  // hash 2 — unused bucket, set to reject
-        71,   // hash 3 — digits '0'-'9' map here (vm1 = 0x2F..0x38)
-        58,   // hash 4 — uppercase 'A'-'F' (vm1 = 0x40..0x45)
-        -96,  // hash 5
-        26,   // hash 6 — lowercase 'a'-'f' (vm1 = 0x60..0x65)
-        -128, // hash 7
-        0, 0, 0, 0, 0, 0, 0, 0,
-    )
+    // SAFETY: caller guarantees SSSE3.
+    unsafe {
+        _mm_setr_epi8(
+            -16,  // hash 0
+            -32,  // hash 1
+            -47,  // hash 2 — unused bucket, set to reject
+            71,   // hash 3 — digits '0'-'9' map here (vm1 = 0x2F..0x38)
+            58,   // hash 4 — uppercase 'A'-'F' (vm1 = 0x40..0x45)
+            -96,  // hash 5
+            26,   // hash 6 — lowercase 'a'-'f' (vm1 = 0x60..0x65)
+            -128, // hash 7
+            0, 0, 0, 0, 0, 0, 0, 0,
+        )
+    }
 }
 
 /// Build the `delta_rebase` table for the Lemire SSSE3 hex-decode algorithm.
@@ -236,27 +240,26 @@ unsafe fn decode_delta_check_128() -> __m128i {
 ///   so delta = `-(0x41 - 1) + 10` = `-54` = `-55 + 1`.
 /// - Lowercase `'a'-'f'`: `vm1` is `0x60..0x65`, we need `10..15`,
 ///   so delta = `-(0x61 - 1) + 10` = `-86` = `-87 + 1`.
-#[inline]
-#[target_feature(enable = "ssse3")]
+///
+/// # Safety
+///
+/// - The CPU must support SSSE3 (caller must have `#[target_feature(enable = "ssse3")]`).
+#[inline(always)]
 unsafe fn decode_delta_rebase_128() -> __m128i {
-    _mm_setr_epi8(
-        0,
-        0,
-        -48 + 1, // hash 2: digits '0'-'7' (vm1 high nibble = 2)
-        -48 + 1, // hash 3: digits '8'-'9' (vm1 high nibble = 3)
-        -55 + 1, // hash 4: uppercase 'A'-'F'
-        0,
-        -87 + 1, // hash 6: lowercase 'a'-'f'
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-    )
+    // SAFETY: caller guarantees SSSE3.
+    unsafe {
+        _mm_setr_epi8(
+            0,
+            0,
+            -48 + 1, // hash 2: digits '0'-'7' (vm1 high nibble = 2)
+            -48 + 1, // hash 3: digits '8'-'9' (vm1 high nibble = 3)
+            -55 + 1, // hash 4: uppercase 'A'-'F'
+            0,
+            -87 + 1, // hash 6: lowercase 'a'-'f'
+            0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+        )
+    }
 }
 
 /// Decode a single 128-bit register (16 hex chars → 8 output bytes) using
@@ -269,9 +272,8 @@ unsafe fn decode_delta_rebase_128() -> __m128i {
 ///
 /// # Safety
 ///
-/// Caller must ensure SSSE3 is available.
-#[inline]
-#[target_feature(enable = "ssse3")]
+/// - The CPU must support SSSE3 (caller must have `#[target_feature(enable = "ssse3")]`).
+#[inline(always)]
 unsafe fn decode_chunk_128(
     chunk: __m128i,
     delta_check: __m128i,
@@ -280,18 +282,21 @@ unsafe fn decode_chunk_128(
     mask_hi: __m128i,
     weights: __m128i,
 ) -> (__m128i, __m128i) {
-    let vm1 = _mm_sub_epi8(chunk, one);
-    let hash_key = _mm_and_si128(_mm_srli_epi16(vm1, 4), mask_hi);
+    // SAFETY: caller guarantees SSSE3.
+    unsafe {
+        let vm1 = _mm_sub_epi8(chunk, one);
+        let hash_key = _mm_and_si128(_mm_srli_epi16(vm1, 4), mask_hi);
 
-    // check has MSB set for invalid bytes.
-    let check = _mm_add_epi8(vm1, _mm_shuffle_epi8(delta_check, hash_key));
-    let nibbles = _mm_add_epi8(vm1, _mm_shuffle_epi8(delta_rebase, hash_key));
+        // check has MSB set for invalid bytes.
+        let check = _mm_add_epi8(vm1, _mm_shuffle_epi8(delta_check, hash_key));
+        let nibbles = _mm_add_epi8(vm1, _mm_shuffle_epi8(delta_rebase, hash_key));
 
-    // Pack nibble pairs: hi*16 + lo via pmaddubsw, then narrow to u8.
-    let packed16 = _mm_maddubs_epi16(nibbles, weights);
-    let packed8 = _mm_packus_epi16(packed16, packed16);
+        // Pack nibble pairs: hi*16 + lo via pmaddubsw, then narrow to u8.
+        let packed16 = _mm_maddubs_epi16(nibbles, weights);
+        let packed8 = _mm_packus_epi16(packed16, packed16);
 
-    (packed8, check)
+        (packed8, check)
+    }
 }
 
 /// Hex-decode `input` into `output` using SSSE3.
@@ -303,12 +308,11 @@ unsafe fn decode_chunk_128(
 ///
 /// # Safety
 ///
-/// - The CPU must support SSSE3.
+/// - The CPU must support SSSE3 (caller must have `#[target_feature(enable = "ssse3")]`).
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
-#[inline]
-#[target_feature(enable = "ssse3")]
+#[inline(always)]
 unsafe fn decode_ssse3_inner(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
     let hex_len = byte_len * 2;
 
@@ -389,9 +393,8 @@ pub(crate) unsafe fn decode_ssse3(src: *const u8, dst: *mut u8, byte_len: usize)
 ///
 /// # Safety
 ///
-/// Caller must ensure AVX2 is available.
-#[inline]
-#[target_feature(enable = "avx2")]
+/// - The CPU must support AVX2 (caller must have `#[target_feature(enable = "avx2")]`).
+#[inline(always)]
 unsafe fn decode_chunk_256(
     chunk: __m256i,
     delta_check: __m256i,
@@ -400,18 +403,21 @@ unsafe fn decode_chunk_256(
     mask_hi: __m256i,
     weights: __m256i,
 ) -> (__m256i, __m256i) {
-    let vm1 = _mm256_sub_epi8(chunk, one);
-    let hash_key = _mm256_and_si256(_mm256_srli_epi16(vm1, 4), mask_hi);
+    // SAFETY: caller guarantees AVX2.
+    unsafe {
+        let vm1 = _mm256_sub_epi8(chunk, one);
+        let hash_key = _mm256_and_si256(_mm256_srli_epi16(vm1, 4), mask_hi);
 
-    let check = _mm256_add_epi8(vm1, _mm256_shuffle_epi8(delta_check, hash_key));
-    let nibbles = _mm256_add_epi8(vm1, _mm256_shuffle_epi8(delta_rebase, hash_key));
+        let check = _mm256_add_epi8(vm1, _mm256_shuffle_epi8(delta_check, hash_key));
+        let nibbles = _mm256_add_epi8(vm1, _mm256_shuffle_epi8(delta_rebase, hash_key));
 
-    let packed16 = _mm256_maddubs_epi16(nibbles, weights);
-    let packed8 = _mm256_packus_epi16(packed16, packed16);
-    // Fix cross-lane ordering from packuswb.
-    let result = _mm256_permute4x64_epi64(packed8, 0b_11_01_10_00);
+        let packed16 = _mm256_maddubs_epi16(nibbles, weights);
+        let packed8 = _mm256_packus_epi16(packed16, packed16);
+        // Fix cross-lane ordering from packuswb.
+        let result = _mm256_permute4x64_epi64(packed8, 0b_11_01_10_00);
 
-    (result, check)
+        (result, check)
+    }
 }
 
 /// Hex-decode `input` into `output` using AVX2.
@@ -422,12 +428,11 @@ unsafe fn decode_chunk_256(
 ///
 /// # Safety
 ///
-/// - The CPU must support AVX2.
+/// - The CPU must support AVX2 (caller must have `#[target_feature(enable = "avx2")]`).
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
-#[inline]
-#[target_feature(enable = "avx2")]
+#[inline(always)]
 unsafe fn decode_avx2_inner(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
     let hex_len = byte_len * 2;
 
@@ -511,9 +516,8 @@ pub(crate) unsafe fn decode_avx2(src: *const u8, dst: *mut u8, byte_len: usize) 
 ///
 /// # Safety
 ///
-/// Caller must ensure the CPU supports SSSE3.
-#[inline]
-#[target_feature(enable = "ssse3")]
+/// - The CPU must support SSSE3 (caller must have `#[target_feature(enable = "ssse3")]`).
+#[inline(always)]
 unsafe fn check_ssse3_inner(input: &[u8]) -> bool {
     // SAFETY: all intrinsics below require SSSE3, guaranteed by #[target_feature].
     unsafe {
@@ -553,7 +557,6 @@ unsafe fn check_ssse3_inner(input: &[u8]) -> bool {
 /// # Safety
 ///
 /// Caller must ensure the CPU supports SSSE3.
-#[inline]
 #[target_feature(enable = "ssse3")]
 pub(crate) unsafe fn check_ssse3(input: &[u8]) -> bool {
     // SAFETY: caller guarantees SSSE3.
@@ -573,9 +576,8 @@ pub(crate) unsafe fn check_ssse3(input: &[u8]) -> bool {
 ///
 /// # Safety
 ///
-/// Caller must ensure the CPU supports AVX2.
-#[inline]
-#[target_feature(enable = "avx2")]
+/// - The CPU must support AVX2 (caller must have `#[target_feature(enable = "avx2")]`).
+#[inline(always)]
 unsafe fn check_avx2_inner(input: &[u8]) -> bool {
     // SAFETY: all intrinsics below require AVX2, guaranteed by #[target_feature].
     unsafe {
@@ -616,7 +618,6 @@ unsafe fn check_avx2_inner(input: &[u8]) -> bool {
 /// # Safety
 ///
 /// Caller must ensure the CPU supports AVX2.
-#[inline]
 #[target_feature(enable = "avx2")]
 pub(crate) unsafe fn check_avx2(input: &[u8]) -> bool {
     // SAFETY: caller guarantees AVX2.
@@ -640,12 +641,11 @@ pub(crate) unsafe fn check_avx2(input: &[u8]) -> bool {
 ///
 /// # Safety
 ///
-/// - The CPU must support AVX-512BW.
+/// - The CPU must support AVX-512BW (caller must have `#[target_feature(enable = "avx512bw")]`).
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
 /// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
-#[inline]
-#[target_feature(enable = "avx512bw")]
+#[inline(always)]
 unsafe fn encode_avx512_inner<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
     // SAFETY: all intrinsics below require AVX-512BW (implies AVX-512F),
     // guaranteed by #[target_feature].
@@ -704,7 +704,7 @@ unsafe fn encode_avx512_inner<const UPPER: bool>(src: *const u8, dst: *mut u8, b
 /// # Safety
 ///
 /// Same as [`encode_avx512_inner`].
-#[target_feature(enable = "avx512bw")]
+#[target_feature(enable = "avx512bw,avx2,ssse3")]
 pub(crate) unsafe fn encode_avx512<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
     unsafe { encode_avx512_inner::<UPPER>(src, dst, byte_len) }
 }
@@ -718,9 +718,8 @@ pub(crate) unsafe fn encode_avx512<const UPPER: bool>(src: *const u8, dst: *mut 
 ///
 /// # Safety
 ///
-/// Caller must ensure AVX-512BW is available.
-#[inline]
-#[target_feature(enable = "avx512bw")]
+/// - The CPU must support AVX-512BW (caller must have `#[target_feature(enable = "avx512bw")]`).
+#[inline(always)]
 unsafe fn decode_chunk_512(
     chunk: __m512i,
     delta_check: __m512i,
@@ -730,22 +729,25 @@ unsafe fn decode_chunk_512(
     weights: __m512i,
     perm_idx: __m512i,
 ) -> (__m512i, u64) {
-    let vm1 = _mm512_sub_epi8(chunk, one);
-    let hash_key = _mm512_and_si512(_mm512_srli_epi16(vm1, 4), mask_hi);
+    // SAFETY: caller guarantees AVX-512BW.
+    unsafe {
+        let vm1 = _mm512_sub_epi8(chunk, one);
+        let hash_key = _mm512_and_si512(_mm512_srli_epi16(vm1, 4), mask_hi);
 
-    let check = _mm512_add_epi8(vm1, _mm512_shuffle_epi8(delta_check, hash_key));
-    let nibbles = _mm512_add_epi8(vm1, _mm512_shuffle_epi8(delta_rebase, hash_key));
+        let check = _mm512_add_epi8(vm1, _mm512_shuffle_epi8(delta_check, hash_key));
+        let nibbles = _mm512_add_epi8(vm1, _mm512_shuffle_epi8(delta_rebase, hash_key));
 
-    // movepi8_mask: one bit per byte, set if MSB is set (invalid).
-    let mask = _mm512_movepi8_mask(check);
+        // movepi8_mask: one bit per byte, set if MSB is set (invalid).
+        let mask = _mm512_movepi8_mask(check);
 
-    // Pack nibble pairs: hi*16 + lo via pmaddubsw, then narrow to u8.
-    let packed16 = _mm512_maddubs_epi16(nibbles, weights);
-    let packed8 = _mm512_packus_epi16(packed16, packed16);
-    // Fix cross-lane ordering from packuswb.
-    let result = _mm512_permutexvar_epi64(perm_idx, packed8);
+        // Pack nibble pairs: hi*16 + lo via pmaddubsw, then narrow to u8.
+        let packed16 = _mm512_maddubs_epi16(nibbles, weights);
+        let packed8 = _mm512_packus_epi16(packed16, packed16);
+        // Fix cross-lane ordering from packuswb.
+        let result = _mm512_permutexvar_epi64(perm_idx, packed8);
 
-    (result, mask)
+        (result, mask)
+    }
 }
 
 /// Hex-decode `input` into `output` using AVX-512BW.
@@ -756,12 +758,11 @@ unsafe fn decode_chunk_512(
 ///
 /// # Safety
 ///
-/// - The CPU must support AVX-512BW.
+/// - The CPU must support AVX-512BW (caller must have `#[target_feature(enable = "avx512bw")]`).
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
-#[inline]
-#[target_feature(enable = "avx512bw")]
+#[inline(always)]
 unsafe fn decode_avx512_inner(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
     let hex_len = byte_len * 2;
 
@@ -848,9 +849,8 @@ pub(crate) unsafe fn decode_avx512(src: *const u8, dst: *mut u8, byte_len: usize
 ///
 /// # Safety
 ///
-/// Caller must ensure the CPU supports AVX-512BW.
-#[inline]
-#[target_feature(enable = "avx512bw")]
+/// - The CPU must support AVX-512BW (caller must have `#[target_feature(enable = "avx512bw")]`).
+#[inline(always)]
 unsafe fn check_avx512_inner(input: &[u8]) -> bool {
     // SAFETY: all intrinsics below require AVX-512BW, guaranteed by #[target_feature].
     unsafe {
@@ -890,7 +890,6 @@ unsafe fn check_avx512_inner(input: &[u8]) -> bool {
 /// # Safety
 ///
 /// Caller must ensure the CPU supports AVX-512BW.
-#[inline]
 #[target_feature(enable = "avx512bw")]
 pub(crate) unsafe fn check_avx512(input: &[u8]) -> bool {
     // SAFETY: caller guarantees AVX-512BW.
