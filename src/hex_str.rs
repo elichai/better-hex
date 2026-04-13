@@ -164,7 +164,7 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     }
 }
 
-use crate::backend::scalar::{decode_nibble, encode_nibble};
+use crate::backend::scalar::encode_nibble;
 
 /// Const-context encode helper using branchless nibble arithmetic (no LUT).
 const fn const_encode_bytes<const N: usize, const UPPER: bool>(input: &[u8; N]) -> [[u8; 2]; N] {
@@ -282,17 +282,13 @@ pub const fn const_decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; 
         });
     }
     let mut out = [0u8; N];
-    let mut err: u16 = 0;
-    let mut i = 0;
-    while i < N {
-        let hi = decode_nibble(input[i * 2]);
-        let lo = decode_nibble(input[i * 2 + 1]);
-        err |= hi >> 8;
-        err |= lo >> 8;
-        out[i] = ((hi << 4) | lo) as u8;
-        i += 1;
+    // SAFETY: `input.len() == N * 2` (checked above), so `input.as_ptr()` is
+    // readable for `N * 2` bytes and `out.as_mut_ptr()` writable for `N` bytes.
+    if unsafe { crate::backend::scalar::decode_inner(input.as_ptr(), out.as_mut_ptr(), N) } != 0 {
+        Err(Error::InvalidEncoding)
+    } else {
+        Ok(out)
     }
-    if err != 0 { Err(Error::InvalidEncoding) } else { Ok(out) }
 }
 
 /// Check hex validity at compile time using branchless arithmetic.
@@ -300,14 +296,5 @@ pub const fn const_decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; 
 /// Returns `true` if `input` has even length and every byte is a valid hex
 /// character (`[0-9a-fA-F]`). Processes all bytes without short-circuiting.
 pub const fn const_check(input: &[u8]) -> bool {
-    if !input.len().is_multiple_of(2) {
-        return false;
-    }
-    let mut err: u16 = 0;
-    let mut i = 0;
-    while i < input.len() {
-        err |= decode_nibble(input[i]) >> 8;
-        i += 1;
-    }
-    err == 0
+    input.len().is_multiple_of(2) && crate::backend::scalar::check(input)
 }

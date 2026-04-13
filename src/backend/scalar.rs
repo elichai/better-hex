@@ -121,19 +121,19 @@ pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: 
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[inline(always)]
-pub unsafe fn decode_inner(src: *const u8, dst: *mut u8, byte_len: usize) -> u8 {
+pub const unsafe fn decode_inner(src: *const u8, dst: *mut u8, byte_len: usize) -> u8 {
     let mut err: u8 = 0;
+    let mut i = 0;
 
-    for i in 0..byte_len {
+    while i < byte_len {
         // SAFETY: `i < byte_len` so `src.add(i * 2 + {0,1})` is in bounds
         // for reads and `dst.add(i)` is in bounds for writes.
         let hi = decode_nibble(unsafe { src.add(i * 2).read() });
         let lo = decode_nibble(unsafe { src.add(i * 2 + 1).read() });
-        // If either hi or lo is invalid, its value is > 0xFF, so at least one of
-        // the high bits of hi or lo is set. We OR those together into `err`.
         err |= (hi >> 8) as u8;
         err |= (lo >> 8) as u8;
         unsafe { dst.add(i).write(((hi << 4) | lo) as u8) };
+        i += 1;
     }
 
     err
@@ -157,10 +157,12 @@ pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<()
 /// Returns `true` iff every byte in `input` is a valid hex ASCII character
 /// (`[0-9a-fA-F]`). Examines all bytes without short-circuiting.
 #[inline]
-pub fn check(input: &[u8]) -> bool {
+pub const fn check(input: &[u8]) -> bool {
     let mut err: u16 = 0;
-    for &byte in input {
-        err |= decode_nibble(byte) >> 8;
+    let mut i = 0;
+    while i < input.len() {
+        err |= decode_nibble(input[i]) >> 8;
+        i += 1;
     }
     err == 0
 }
