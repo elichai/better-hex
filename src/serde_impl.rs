@@ -88,22 +88,12 @@ impl<'de, T: crate::FromHex, const PREFIX: bool> de::Visitor<'de> for HexVisitor
 
 /// Strip a `"0x"` prefix when `PREFIX` is true.
 ///
-/// Uses constant-time XOR comparison so that the specific bytes of an
-/// incorrect prefix are not leaked via timing. However, whether the prefix
-/// matches `"0x"` or not IS observable (the branch on `err != 0` depends
-/// on that). This is acceptable: the `"0x"` prefix is a public format
-/// marker, not secret data.
+/// See [`crate::WithPrefix::strip_prefix`] for constant-time notes.
 fn strip_prefix<const PREFIX: bool>(s: &[u8]) -> Result<&[u8], &'static str> {
     if !PREFIX {
         return Ok(s);
     }
-    let (&[first, second], rest) = s.split_first_chunk().ok_or("expected \"0x\" prefix in hex string")?;
-    let err = (first ^ b'0') | (second ^ b'x');
-    if err != 0 {
-        Err("expected \"0x\" prefix in hex string")
-    } else {
-        Ok(rest)
-    }
+    <crate::WithPrefix as crate::Prefix>::strip_prefix(s).ok_or("expected \"0x\" prefix in hex string")
 }
 
 // ── default: lowercase, no prefix ───────────────────────────────────────────

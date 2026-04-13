@@ -36,12 +36,34 @@ pub trait Prefix: sealed::Sealed + IntoBytes + Immutable + Unaligned + Copy + 's
         debug_assert_eq!(bytes.len(), Self::LEN);
         zerocopy::transmute_ref!(bytes)
     }
+
+    /// Constant-time prefix strip.
+    ///
+    /// Returns `Some(rest)` if `input` starts with this prefix, `None` otherwise.
+    /// Uses XOR accumulation so the specific bytes of an incorrect prefix are
+    /// not leaked via timing. Whether the prefix matches or not IS observable
+    /// (the prefix is a public format marker, not secret data).
+    ///
+    /// For `NoPrefix` this always returns `Some(input)`.
+    fn strip_prefix(input: &[u8]) -> Option<&[u8]>;
 }
 
 impl Prefix for NoPrefix {
     const VALUE: Self = NoPrefix;
+
+    #[inline]
+    fn strip_prefix(input: &[u8]) -> Option<&[u8]> {
+        Some(input)
+    }
 }
 
 impl Prefix for WithPrefix {
     const VALUE: Self = WithPrefix([b'0', b'x']);
+
+    #[inline]
+    fn strip_prefix(input: &[u8]) -> Option<&[u8]> {
+        let (&[first, second], rest) = input.split_first_chunk()?;
+        let err = (first ^ b'0') | (second ^ b'x');
+        if err != 0 { None } else { Some(rest) }
+    }
 }
