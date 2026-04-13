@@ -66,31 +66,27 @@ impl<T: AsRef<[u8]>> fmt::UpperHex for HexDisplay<T> {
 ///
 /// `UPPER` selects lowercase vs uppercase at compile time (no branch in loop).
 /// `BUF` is the hex output buffer size in bytes (must be even; generic for benchmarking).
-pub(crate) fn write_hex_to<const UPPER: bool, const BUF: usize, W: fmt::Write>(input: &[u8], w: &mut W) -> fmt::Result {
+pub(crate) fn write_hex_to<const UPPER: bool, const BUF: usize, W: fmt::Write>(
+    mut input: &[u8],
+    w: &mut W,
+) -> fmt::Result {
     debug_assert!(BUF >= 2 && BUF.is_multiple_of(2), "BUF must be even and >= 2");
     let mut buf = [MaybeUninit::<u8>::uninit(); BUF];
     let chunk_size = BUF / 2;
+    let mut chunk;
 
-    let mut pos = 0;
-    // Full chunks.
-    while pos + chunk_size <= input.len() {
-        // Length invariant: buf.len() == BUF == chunk_size * 2.
-        backend::encode::<UPPER>(&input[pos..pos + chunk_size], &mut buf).expect("buf is correctly sized");
+    while input.len() >= chunk_size {
+        (chunk, input) = input.split_at(chunk_size);
+        backend::encode::<UPPER>(chunk, &mut buf).expect("buf is correctly sized");
         // SAFETY: backend initialized BUF bytes of valid hex ASCII.
-        let s = unsafe { maybe_uninit::assume_init_str(&buf) };
-        w.write_str(s)?;
-        pos += chunk_size;
+        w.write_str(unsafe { maybe_uninit::assume_init_str(&buf) })?;
     }
 
-    // Remainder (< chunk_size bytes).
-    if pos < input.len() {
-        let rest = &input[pos..];
-        let hex_len = rest.len() * 2;
-        // Length invariant: buf[..hex_len].len() == rest.len() * 2.
-        backend::encode::<UPPER>(rest, &mut buf[..hex_len]).expect("buf is correctly sized");
+    if !input.is_empty() {
+        let hex_len = input.len() * 2;
+        backend::encode::<UPPER>(input, &mut buf[..hex_len]).expect("buf is correctly sized");
         // SAFETY: backend initialized hex_len bytes of valid hex ASCII.
-        let s = unsafe { maybe_uninit::assume_init_str(&buf[..hex_len]) };
-        w.write_str(s)?;
+        w.write_str(unsafe { maybe_uninit::assume_init_str(&buf[..hex_len]) })?;
     }
 
     Ok(())
