@@ -115,6 +115,15 @@ impl FromHex for alloc::vec::Vec<u8> {
     }
 }
 
+#[cfg(feature = "alloc")]
+impl<'a> FromHex for alloc::borrow::Cow<'a, [u8]> {
+    type Error = Error;
+
+    fn from_hex(hex: impl AsRef<[u8]>) -> Result<Self, Self::Error> {
+        alloc::vec::Vec::<u8>::from_hex(hex).map(alloc::borrow::Cow::Owned)
+    }
+}
+
 impl<const N: usize> FromHex for [u8; N] {
     type Error = Error;
 
