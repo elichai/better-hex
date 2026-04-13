@@ -239,9 +239,7 @@ pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<()
     if i < hex_len {
         let tail_byte_len = byte_len - i / 2;
         // SAFETY: same pointer validity as above.
-        if unsafe { scalar::decode_inner(src.add(i), dst.add(i / 2), tail_byte_len) }.is_err() {
-            err |= 0x80;
-        }
+        err |= unsafe { scalar::decode_inner(src.add(i), dst.add(i / 2), tail_byte_len) };
     }
 
     if err != 0 {

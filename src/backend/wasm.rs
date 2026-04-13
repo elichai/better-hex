@@ -132,9 +132,7 @@ pub(crate) unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Re
     if consumed_hex < hex_len {
         let tail_byte_len = byte_len - consumed_bytes;
         // SAFETY: same pointer validity as above.
-        if unsafe { scalar::decode_inner(src.add(consumed_hex), dst.add(consumed_bytes), tail_byte_len) }.is_err() {
-            err_accum |= 1;
-        }
+        err_accum |= u16::from(unsafe { scalar::decode_inner(src.add(consumed_hex), dst.add(consumed_bytes), tail_byte_len) });
     }
 
     if err_accum != 0 {

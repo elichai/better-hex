@@ -121,20 +121,22 @@ pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: 
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[inline(always)]
-pub unsafe fn decode_inner(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), super::InvalidEncoding> {
-    let mut err: u16 = 0;
+pub unsafe fn decode_inner(src: *const u8, dst: *mut u8, byte_len: usize) -> u8 {
+    let mut err: u8 = 0;
 
     for i in 0..byte_len {
         // SAFETY: `i < byte_len` so `src.add(i * 2 + {0,1})` is in bounds
         // for reads and `dst.add(i)` is in bounds for writes.
         let hi = decode_nibble(unsafe { src.add(i * 2).read() });
         let lo = decode_nibble(unsafe { src.add(i * 2 + 1).read() });
-        err |= hi >> 8;
-        err |= lo >> 8;
+        // If either hi or lo is invalid, its value is > 0xFF, so at least one of
+        // the high bits of hi or lo is set. We OR those together into `err`.
+        err |= (hi >> 8) as u8;
+        err |= (lo >> 8) as u8;
         unsafe { dst.add(i).write(((hi << 4) | lo) as u8) };
     }
 
-    if err != 0 { Err(super::InvalidEncoding) } else { Ok(()) }
+    err
 }
 
 /// See [`decode_inner`].
@@ -143,7 +145,11 @@ pub unsafe fn decode_inner(src: *const u8, dst: *mut u8, byte_len: usize) -> Res
 ///
 /// Same requirements as [`decode_inner`].
 pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), super::InvalidEncoding> {
-    unsafe { decode_inner(src, dst, byte_len) }
+    if unsafe { decode_inner(src, dst, byte_len) } != 0 {
+        Err(super::InvalidEncoding)
+    } else {
+        Ok(())
+    }
 }
 
 /// Constant-time hex validator.
