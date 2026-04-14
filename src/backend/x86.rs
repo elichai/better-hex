@@ -627,8 +627,13 @@ unsafe fn encode_avx512_inner<const UPPER: bool>(mut src: *const u8, mut dst: *m
             _mm512_broadcast_i32x4(lut128)
         };
         let mask_lo = _mm512_set1_epi8(0x0F);
-        // Cross-lane fixup permutation: [0,4,1,5,2,6,3,7] as qword indices.
-        let perm_idx = _mm512_setr_epi64(0, 4, 1, 5, 2, 6, 3, 7);
+        // Cross-lane fixup indices for interleaving unpacklo/unpackhi results.
+        // unpacklo produces lanes [bytes0-7, bytes16-23, bytes32-39, bytes48-55]
+        // unpackhi produces lanes [bytes8-15, bytes24-31, bytes40-47, bytes56-63]
+        // We need to interleave the 128-bit lanes: lo_lane0, hi_lane0, lo_lane1, hi_lane1, ...
+        // permutex2var selects qwords: indices 0-7 from first source, 8-15 from second.
+        let idx0 = _mm512_setr_epi64(0, 1, 8, 9, 2, 3, 10, 11);
+        let idx1 = _mm512_setr_epi64(4, 5, 12, 13, 6, 7, 14, 15);
 
         while byte_len >= 64 {
             let chunk = _mm512_loadu_si512(src.cast());
@@ -645,11 +650,10 @@ unsafe fn encode_avx512_inner<const UPPER: bool>(mut src: *const u8, mut dst: *m
             let interleaved_lo = _mm512_unpacklo_epi8(hex_hi, hex_lo);
             let interleaved_hi = _mm512_unpackhi_epi8(hex_hi, hex_lo);
 
-            // Cross-lane fixup: reassemble the correct byte order.
-            let out0 = _mm512_permutexvar_epi64(perm_idx, interleaved_lo);
-            let out1 = _mm512_permutexvar_epi64(perm_idx, interleaved_hi);
+            // Cross-lane fixup: interleave 128-bit lanes from lo and hi.
+            let out0 = _mm512_permutex2var_epi64(interleaved_lo, idx0, interleaved_hi);
+            let out1 = _mm512_permutex2var_epi64(interleaved_lo, idx1, interleaved_hi);
 
-            // Store 128 bytes (two __m512i).
             _mm512_storeu_si512(dst.cast(), out0);
             _mm512_storeu_si512(dst.add(64).cast(), out1);
 
@@ -738,7 +742,9 @@ unsafe fn decode_avx512_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len
         let one = _mm512_set1_epi8(1);
         let mask_hi = _mm512_set1_epi8(0x0F);
         let weights = _mm512_set1_epi16(0x0110);
-        let perm_idx = _mm512_setr_epi64(0, 4, 1, 5, 2, 6, 3, 7);
+        // packus_epi16(a, a) produces: [valid0, dup0, valid1, dup1, valid2, dup2, valid3, dup3]
+        // as qwords. We want [valid0, valid1, valid2, valid3, ...] then store low 256 bits.
+        let perm_idx = _mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7);
         let mut err_accum = 0u64;
 
         // AVX-512: 64 output bytes per iteration (128 hex chars).
