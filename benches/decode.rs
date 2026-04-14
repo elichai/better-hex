@@ -39,6 +39,38 @@ fn bench_decode(c: &mut Criterion) {
             })
         });
 
+        #[cfg(all(not(feature = "disable-simd"), any(target_arch = "x86", target_arch = "x86_64")))]
+        {
+            use better_hex::bench_internals::x86;
+            if std::is_x86_feature_detected!("ssse3") {
+                group.bench_function(BenchmarkId::new("ssse3", size), |b| {
+                    b.iter(|| {
+                        let input = black_box(bufs.next());
+                        let out = black_box(&mut output);
+                        assert!(unsafe { x86::decode_ssse3(input.as_ptr(), out.as_mut_ptr(), out.len()) }.is_ok());
+                    })
+                });
+            }
+            if std::is_x86_feature_detected!("avx2") {
+                group.bench_function(BenchmarkId::new("avx2", size), |b| {
+                    b.iter(|| {
+                        let input = black_box(bufs.next());
+                        let out = black_box(&mut output);
+                        assert!(unsafe { x86::decode_avx2(input.as_ptr(), out.as_mut_ptr(), out.len()) }.is_ok());
+                    })
+                });
+            }
+            if std::is_x86_feature_detected!("avx512bw") {
+                group.bench_function(BenchmarkId::new("avx512", size), |b| {
+                    b.iter(|| {
+                        let input = black_box(bufs.next());
+                        let out = black_box(&mut output);
+                        assert!(unsafe { x86::decode_avx512(input.as_ptr(), out.as_mut_ptr(), out.len()) }.is_ok());
+                    })
+                });
+            }
+        }
+
         group.bench_function(BenchmarkId::new("dispatched", size), |b| {
             let out_mu = unsafe { &mut *(output.as_mut_slice() as *mut [u8] as *mut [core::mem::MaybeUninit<u8>]) };
             b.iter(|| dispatched_decode(black_box(bufs.next()), black_box(out_mu)).unwrap())
