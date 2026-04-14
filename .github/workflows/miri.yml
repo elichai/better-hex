@@ -20,23 +20,23 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Full API coverage under the scalar path. This keeps the integration
-          # suite in play without paying the SIMD backend cost on every row.
+          # Full API coverage under the scalar path (all features enabled).
           - name: Miri (x86_64 scalar API)
             target: x86_64-unknown-linux-gnu
             rustflags: ""
-            cargo_args: --target x86_64-unknown-linux-gnu --features disable-simd --lib --tests
+            cargo_args: --target x86_64-unknown-linux-gnu --features disable-simd,serde,heapless,arrayvec --lib --tests
 
-          # Direct backend coverage on x86_64 with the relevant virtual CPU features.
+          # Direct backend coverage on x86_64 with the relevant virtual CPU
+          # features. All crate features enabled for maximum code coverage.
           - name: Miri (x86_64 SSSE3 impl)
             target: x86_64-unknown-linux-gnu
             rustflags: -C target-feature=+ssse3
-            cargo_args: --target x86_64-unknown-linux-gnu --lib
+            cargo_args: --target x86_64-unknown-linux-gnu --features serde,heapless,arrayvec --lib --tests
 
           - name: Miri (x86_64 AVX2 impl)
             target: x86_64-unknown-linux-gnu
             rustflags: -C target-feature=+avx2
-            cargo_args: --target x86_64-unknown-linux-gnu --lib
+            cargo_args: --target x86_64-unknown-linux-gnu --features serde,heapless,arrayvec --lib --tests
 
           # Deliberately stop at AVX2 here. Miri aborts on the AVX-512
           # `_mm512_permutexvar_epi64` path used by `encode_avx512`.
@@ -44,7 +44,7 @@ jobs:
           - name: Miri (i686 SSSE3 impl)
             target: i686-unknown-linux-gnu
             rustflags: -C target-feature=+ssse3
-            cargo_args: --target i686-unknown-linux-gnu --lib
+            cargo_args: --target i686-unknown-linux-gnu --features serde,heapless,arrayvec --lib
 
           # Cross-interpret the AArch64 NEON backend on the same Linux runner.
           # wasm stays out of Miri because Miri only promises Linux/macOS/Windows
@@ -52,7 +52,7 @@ jobs:
           - name: Miri (aarch64 NEON impl)
             target: aarch64-unknown-linux-gnu
             rustflags: -C target-feature=+neon
-            cargo_args: --target aarch64-unknown-linux-gnu --lib
+            cargo_args: --target aarch64-unknown-linux-gnu --features serde,heapless,arrayvec --lib --tests
 
     steps:
       - name: Checkout
@@ -84,3 +84,12 @@ jobs:
             -Zmiri-env-set=PROPTEST_MAX_SHRINK_ITERS=32
             -Zmiri-env-set=PROPTEST_DISABLE_FAILURE_PERSISTENCE=1
         run: cargo miri test --locked ${{ matrix.cargo_args }}
+
+      - name: Run doc-tests under Miri
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+          MIRIFLAGS: >-
+            -Zmiri-env-set=PROPTEST_CASES=8
+            -Zmiri-env-set=PROPTEST_MAX_SHRINK_ITERS=32
+            -Zmiri-env-set=PROPTEST_DISABLE_FAILURE_PERSISTENCE=1
+        run: cargo miri test --locked --target ${{ matrix.target }} --features serde,heapless,arrayvec --doc

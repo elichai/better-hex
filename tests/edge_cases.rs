@@ -261,6 +261,40 @@ fn missized_fixed_containers_are_rejected() {
     );
 }
 
+// ── HexStr from_hex / const_from_hex (runtime) ─────────────────────────────
+
+#[test]
+fn hex_str_from_hex_runtime() {
+    // from_hex: valid input
+    let hex = HexStr::<4>::from_hex(*b"deadbeef");
+    assert!(hex.is_some());
+    assert_eq!(hex.unwrap().decode(), [0xde, 0xad, 0xbe, 0xef]);
+
+    // from_hex: invalid input
+    assert!(HexStr::<4>::from_hex(*b"deadbeeG").is_none());
+
+    // const_from_hex at runtime
+    let hex = HexStr::<4>::const_from_hex(*b"DEADBEEF");
+    assert!(hex.is_some());
+    assert_eq!(hex.unwrap().decode(), [0xde, 0xad, 0xbe, 0xef]);
+
+    // const_from_hex: invalid
+    assert!(HexStr::<4>::const_from_hex(*b"ZZZZZZZZ").is_none());
+
+    // const_encode_lower/upper at runtime (not const context)
+    let lower = HexStr::<4>::const_encode_lower(&[0xca, 0xfe, 0xba, 0xbe]);
+    assert_eq!(lower.as_str(), "cafebabe");
+    let upper = HexStr::<4>::const_encode_upper(&[0xca, 0xfe, 0xba, 0xbe]);
+    assert_eq!(upper.as_str(), "CAFEBABE");
+
+    // Various sizes
+    let h1 = HexStr::<1>::from_hex(*b"ab");
+    assert_eq!(h1.unwrap().decode(), [0xab]);
+    let h16 = HexStr::<16>::from_hex(*b"000102030405060708090a0b0c0d0e0f");
+    assert_eq!(h16.unwrap().decode()[0], 0x00);
+    assert_eq!(h16.unwrap().decode()[15], 0x0f);
+}
+
 // ── HexStr const fns ────────────────────────────────────────────────────────
 
 #[test]
