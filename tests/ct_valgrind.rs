@@ -246,37 +246,40 @@ mod avx2_ct {
 mod avx512_ct {
     use super::*;
 
-    fn has_avx512() -> bool {
+    fn has_avx512bw() -> bool {
         std::is_x86_feature_detected!("avx512bw")
+    }
+    fn has_avx512vbmi() -> bool {
+        std::is_x86_feature_detected!("avx512vbmi")
     }
 
     #[test]
     fn encode_lower() {
-        if has_avx512() {
+        if has_avx512vbmi() {
             test_encode_ct(x86::encode_avx512::<false>);
         }
     }
     #[test]
     fn encode_upper() {
-        if has_avx512() {
+        if has_avx512vbmi() {
             test_encode_ct(x86::encode_avx512::<true>);
         }
     }
     #[test]
     fn decode() {
-        if has_avx512() {
+        if has_avx512bw() {
             test_decode_ct(x86::decode_avx512);
         }
     }
     #[test]
     fn decode_invalid() {
-        if has_avx512() {
+        if has_avx512bw() {
             test_decode_invalid_ct(x86::decode_avx512);
         }
     }
     #[test]
     fn check() {
-        if has_avx512() {
+        if has_avx512bw() {
             test_check_ct(x86::check_avx512);
         }
     }

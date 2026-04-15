@@ -5,7 +5,7 @@
 //! # Features
 //!
 //! - **Constant-time** — all operations use branchless arithmetic w.r.t. input data values
-//! - **SIMD** — x86 (SSSE3/AVX2/AVX-512BW), AArch64 (NEON), WASM (SIMD128)
+//! - **SIMD** — x86 (SSSE3/AVX2/AVX-512BW/AVX-512 VBMI), AArch64 (NEON), WASM (SIMD128)
 //! - **`const fn`** — compile-time encode, decode, and validation
 //! - **Stack strings** — [`HexStr<N>`][HexStr] with zero heap allocation
 //! - **Extensible** — [`HexTarget`] trait for custom output types
@@ -83,7 +83,7 @@ pub type PrefixedHexStr<const N: usize> = HexStr<N, WithPrefix>;
 #[cfg(feature = "_bench_internals")]
 #[doc(hidden)]
 pub mod bench_internals {
-    pub use crate::backend::scalar;
+    pub use crate::backend::{InvalidEncoding, scalar};
 
     #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
     pub use crate::backend::neon;

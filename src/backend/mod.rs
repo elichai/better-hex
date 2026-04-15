@@ -12,7 +12,7 @@
 //! | Target          | Detection        | Priority                        |
 //! |-----------------|------------------|---------------------------------|
 //! | aarch64 (NEON)  | compile-time     | baseline on aarch64             |
-//! | x86/x86_64      | runtime, cached in `AtomicU8` | AVX-512BW > AVX2 > SSSE3 > scalar |
+//! | x86/x86_64      | runtime, cached in `AtomicU8` | AVX-512 VBMI > AVX-512BW > AVX2 > SSSE3 > scalar |
 //! | wasm32 (SIMD128)| compile-time     | when `target_feature="simd128"` |
 //! | everything else | —                | scalar fallback                 |
 //!
@@ -45,13 +45,58 @@ pub struct InvalidEncoding;
 /// x86 SIMD arms are `unsafe` because the backend functions carry
 /// `#[target_feature]`. Safety: [`platform::detect()`] only returns an x86
 /// variant after confirming the CPU supports the required feature set.
+///
+/// Three forms:
+/// - `avx512bw:` only — both AVX-512 tiers use it (VBMI inherits BW).
+/// - `avx512vbmi:` only — VBMI tier uses it, BW tier falls back to `avx2:`.
+/// - Both `avx512bw:` and `avx512vbmi:` — each tier gets its own expression.
 macro_rules! dispatch {
+    // avx512bw only: VBMI inherits the same expression.
     (
         scalar: $scalar:expr,
         neon: $neon:expr,
         ssse3: $ssse3:expr,
         avx2: $avx2:expr,
-        avx512: $avx512:expr,
+        avx512bw: $avx512bw:expr,
+        wasm: $wasm:expr $(,)?
+    ) => {
+        dispatch!(
+            scalar: $scalar,
+            neon: $neon,
+            ssse3: $ssse3,
+            avx2: $avx2,
+            avx512bw: $avx512bw,
+            avx512vbmi: $avx512bw,
+            wasm: $wasm,
+        )
+    };
+    // avx512vbmi only: BW tier falls back to $avx2.
+    (
+        scalar: $scalar:expr,
+        neon: $neon:expr,
+        ssse3: $ssse3:expr,
+        avx2: $avx2:expr,
+        avx512vbmi: $avx512vbmi:expr,
+        wasm: $wasm:expr $(,)?
+    ) => {
+        dispatch!(
+            scalar: $scalar,
+            neon: $neon,
+            ssse3: $ssse3,
+            avx2: $avx2,
+            avx512bw: $avx2,
+            avx512vbmi: $avx512vbmi,
+            wasm: $wasm,
+        )
+    };
+    // Both tiers provided explicitly.
+    (
+        scalar: $scalar:expr,
+        neon: $neon:expr,
+        ssse3: $ssse3:expr,
+        avx2: $avx2:expr,
+        avx512bw: $avx512bw:expr,
+        avx512vbmi: $avx512vbmi:expr,
         wasm: $wasm:expr $(,)?
     ) => {
         match platform::detect() {
@@ -63,7 +108,9 @@ macro_rules! dispatch {
             #[cfg(all(not(feature = "disable-simd"), any(target_arch = "x86", target_arch = "x86_64")))]
             Platform::Avx2 => $avx2,
             #[cfg(all(not(feature = "disable-simd"), any(target_arch = "x86", target_arch = "x86_64")))]
-            Platform::Avx512bw => $avx512,
+            Platform::Avx512bw => $avx512bw,
+            #[cfg(all(not(feature = "disable-simd"), any(target_arch = "x86", target_arch = "x86_64")))]
+            Platform::Avx512vbmi => $avx512vbmi,
             #[cfg(all(not(feature = "disable-simd"), target_arch = "wasm32", target_feature = "simd128"))]
             Platform::Wasm => $wasm,
         }
@@ -76,7 +123,7 @@ macro_rules! dispatch {
 /// initialized with valid hex ASCII bytes.
 ///
 /// Returns `Err(InvalidLength)` if `output.len() != input.len() * 2`.
-#[inline]
+#[inline(never)]
 pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     if output.len() != input.len() * 2 {
         return Err(Error::InvalidLength {
@@ -96,7 +143,7 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) -
         neon: unsafe { neon::encode::<UPPER>(src, dst, byte_len) },
         ssse3: unsafe { x86::encode_ssse3::<UPPER>(src, dst, byte_len) },
         avx2: unsafe { x86::encode_avx2::<UPPER>(src, dst, byte_len) },
-        avx512: unsafe { x86::encode_avx512::<UPPER>(src, dst, byte_len) },
+        avx512vbmi: unsafe { x86::encode_avx512::<UPPER>(src, dst, byte_len) },
         wasm: unsafe { wasm::encode::<UPPER>(src, dst, byte_len) },
     );
     Ok(())
@@ -106,7 +153,7 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) -
 ///
 /// Returns `Ok(())` on success, `Err(InvalidEncoding)` on invalid hex,
 /// or `Err(InvalidLength)` if the buffer sizes are wrong.
-#[inline]
+#[inline(never)]
 pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     if input.len() != output.len() * 2 {
         return Err(Error::InvalidLength {
@@ -125,21 +172,21 @@ pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error>
         neon: unsafe { neon::decode(src, dst, byte_len) },
         ssse3: unsafe { x86::decode_ssse3(src, dst, byte_len) },
         avx2: unsafe { x86::decode_avx2(src, dst, byte_len) },
-        avx512: unsafe { x86::decode_avx512(src, dst, byte_len) },
+        avx512bw: unsafe { x86::decode_avx512(src, dst, byte_len) },
         wasm: unsafe { wasm::decode(src, dst, byte_len) },
     )
     .map_err(|InvalidEncoding| Error::InvalidEncoding)
 }
 
 /// Check if every byte in `input` is a valid hex ASCII character.
-#[inline]
+#[inline(never)]
 pub fn check(input: &[u8]) -> bool {
     dispatch!(
         scalar: scalar::check(input),
         neon: neon::check(input),
         ssse3: unsafe { x86::check_ssse3(input) },
         avx2: unsafe { x86::check_avx2(input) },
-        avx512: unsafe { x86::check_avx512(input) },
+        avx512bw: unsafe { x86::check_avx512(input) },
         wasm: wasm::check(input),
     )
 }

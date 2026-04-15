@@ -4,7 +4,7 @@
 //! variant.
 //!
 //! On targets where the SIMD level is known at compile time (aarch64+NEON,
-//! wasm32+simd128, x86+avx512bw, or `disable-simd`), `detect()` returns a
+//! wasm32+simd128, x86+AVX-512, or `disable-simd`), `detect()` returns a
 //! constant — no atomic load, no branch. Only x86/x86_64 without a
 //! compile-time-known top-tier feature falls through to runtime CPUID,
 //! cached in an [`AtomicU8`].
@@ -26,6 +26,8 @@ pub(crate) enum Platform {
     Avx2,
     #[cfg(all(not(feature = "disable-simd"), any(target_arch = "x86", target_arch = "x86_64")))]
     Avx512bw,
+    #[cfg(all(not(feature = "disable-simd"), any(target_arch = "x86", target_arch = "x86_64")))]
+    Avx512vbmi,
     #[cfg(all(not(feature = "disable-simd"), target_arch = "wasm32", target_feature = "simd128"))]
     Wasm,
 }
@@ -33,10 +35,10 @@ pub(crate) enum Platform {
 /// Return the best available platform.
 ///
 /// On platforms where the SIMD level is known at compile time (aarch64+NEON,
-/// wasm32+simd128, x86+avx512bw, or `disable-simd`), this returns a constant
+/// wasm32+simd128, x86+AVX-512, or `disable-simd`), this returns a constant
 /// with zero runtime overhead — no atomic load, no branch.
 ///
-/// Only x86/x86_64 without compile-time avx512bw goes through the cached
+/// Only x86/x86_64 without compile-time AVX-512BW goes through the cached
 /// atomic path (CPUID on first call, then a single relaxed load thereafter).
 #[inline(always)]
 pub(crate) fn detect() -> Platform {
@@ -47,10 +49,10 @@ pub(crate) fn detect() -> Platform {
             Platform::Neon
         } else if #[cfg(all(
             any(target_arch = "x86", target_arch = "x86_64"),
-            target_feature = "avx512bw",
+            target_feature = "avx512vbmi",
         ))] {
-            // Highest x86 tier known at compile time — nothing higher to probe.
-            Platform::Avx512bw
+            // avx512vbmi implies avx512bw — highest x86 tier.
+            Platform::Avx512vbmi
         } else if #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {
             runtime::detect()
         } else if #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))] {
@@ -65,7 +67,7 @@ pub(crate) fn detect() -> Platform {
 #[cfg(all(
     not(feature = "disable-simd"),
     any(target_arch = "x86", target_arch = "x86_64"),
-    not(target_feature = "avx512bw"),
+    not(target_feature = "avx512vbmi"),
 ))]
 mod runtime {
     use super::Platform;
@@ -104,13 +106,10 @@ mod runtime {
     #[cold]
     #[inline(never)]
     fn detect_impl() -> Platform {
-        // avx512bw at compile time is handled in detect() directly.
-        // Lower compile-time tiers (avx2, ssse3) still need runtime probes
-        // because a higher tier might be available on the actual CPU.
-        // Check bottom-up so each tier's presence confirms all lower tiers.
-        // AVX2 requires SSSE3; AVX-512BW requires AVX2 (and thus SSSE3).
-        // By checking SSSE3 first we never select a higher tier without
-        // having verified its prerequisites.
+        // avx512vbmi at compile time is handled in detect() directly.
+        // Lower compile-time tiers (avx512bw, avx2, ssse3) still need
+        // runtime probes because a higher tier might be available.
+        // Check top-down: VBMI → BW → AVX2 → SSSE3 → Scalar.
         cfg_if::cfg_if! {
             if #[cfg(feature = "std")] {
                 if !std::is_x86_feature_detected!("ssse3") {
@@ -119,21 +118,26 @@ mod runtime {
                     Platform::Ssse3
                 } else if !std::is_x86_feature_detected!("avx512bw") {
                     Platform::Avx2
-                } else {
+                } else if !std::is_x86_feature_detected!("avx512vbmi") {
                     Platform::Avx512bw
+                } else {
+                    Platform::Avx512vbmi
                 }
             } else {
                 cpufeatures::new!(cpuid_ssse3, "ssse3");
                 cpufeatures::new!(cpuid_avx2, "avx2");
                 cpufeatures::new!(cpuid_avx512bw, "avx512bw");
+                cpufeatures::new!(cpuid_avx512vbmi, "avx512bw", "avx512vbmi");
                 if !cpuid_ssse3::init().get() {
                     Platform::Scalar
                 } else if !cpuid_avx2::init().get() {
                     Platform::Ssse3
                 } else if !cpuid_avx512bw::init().get() {
                     Platform::Avx2
-                } else {
+                } else if !cpuid_avx512vbmi::init().get() {
                     Platform::Avx512bw
+                } else {
+                    Platform::Avx512vbmi
                 }
             }
         }

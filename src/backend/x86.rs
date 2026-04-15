@@ -592,30 +592,30 @@ pub unsafe fn check_avx2(input: &[u8]) -> bool {
     unsafe { check_avx2_inner(input) }
 }
 
-/// Hex-encode `input` into `output` using AVX-512BW for the hot loop.
+/// Hex-encode `input` into `output` using AVX-512 VBMI for the hot loop.
 ///
 /// Processes 64 input bytes (→ 128 hex chars) per iteration, then falls
 /// through to [`encode_avx2_inner`] for the 32–63 byte middle range, and finally
 /// down through SSSE3/scalar for smaller tails.
 ///
-/// ## Cross-lane fixup
+/// ## Byte-level interleaving via `vpermi2b`
 ///
-/// AVX-512 `vpunpcklbw`/`vpunpckhbw` operate independently on each 128-bit
-/// lane (four lanes in a 512-bit register), producing an interleaving that is
-/// correct *within* each lane but in the wrong lane order.
-/// `vpermq` (`_mm512_permutexvar_epi64`) with indices `[0,4,1,5,2,6,3,7]`
-/// reassembles the four lanes correctly (same idea as AVX2's `vperm2i128`
-/// but generalized for 4 lanes).
+/// After the nibble-split and `vpshufb` LUT lookup, `hex_hi[i]` holds the
+/// hex char for the high nibble of input byte `i`, and `hex_lo[i]` the low.
+/// A single `_mm512_permutex2var_epi8` interleaves them into the correct
+/// output order `[hex_hi[0], hex_lo[0], hex_hi[1], hex_lo[1], …]` — replacing
+/// the `vpunpcklbw`/`vpunpckhbw` + two `vpermt2q` fixups needed without VBMI.
 ///
 /// # Safety
 ///
-/// - The CPU must support AVX-512BW (caller must have `#[target_feature(enable = "avx512bw")]`).
+/// - The CPU must support AVX-512BW + VBMI
+///   (caller must have `#[target_feature(enable = "avx512bw,avx512vbmi")]`).
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
 /// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
 #[inline(always)]
 unsafe fn encode_avx512_inner<const UPPER: bool>(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) {
-    // SAFETY: all intrinsics below require AVX-512BW (implies AVX-512F),
+    // SAFETY: all intrinsics below require AVX-512BW + VBMI,
     // guaranteed by #[target_feature].
     unsafe {
         let lut = {
@@ -627,13 +627,33 @@ unsafe fn encode_avx512_inner<const UPPER: bool>(mut src: *const u8, mut dst: *m
             _mm512_broadcast_i32x4(lut128)
         };
         let mask_lo = _mm512_set1_epi8(0x0F);
-        // Cross-lane fixup indices for interleaving unpacklo/unpackhi results.
-        // unpacklo produces lanes [bytes0-7, bytes16-23, bytes32-39, bytes48-55]
-        // unpackhi produces lanes [bytes8-15, bytes24-31, bytes40-47, bytes56-63]
-        // We need to interleave the 128-bit lanes: lo_lane0, hi_lane0, lo_lane1, hi_lane1, ...
-        // permutex2var selects qwords: indices 0-7 from first source, 8-15 from second.
-        let idx0 = _mm512_setr_epi64(0, 1, 8, 9, 2, 3, 10, 11);
-        let idx1 = _mm512_setr_epi64(4, 5, 12, 13, 6, 7, 14, 15);
+        // Byte-level interleave indices for vpermi2b.
+        // For input byte k, output position 2k gets hex_hi[k] (index k, from first source)
+        // and position 2k+1 gets hex_lo[k] (index 64+k, from second source).
+        // idx0 covers input bytes 0..31 → output bytes 0..63.
+        // idx1 covers input bytes 32..63 → output bytes 64..127.
+        const INTERLEAVE_LO: [i8; 64] = {
+            let mut a = [0i8; 64];
+            let mut i = 0;
+            while i < 32 {
+                a[i * 2] = i as i8;
+                a[i * 2 + 1] = (64 + i) as i8;
+                i += 1;
+            }
+            a
+        };
+        const INTERLEAVE_HI: [i8; 64] = {
+            let mut a = [0i8; 64];
+            let mut i = 0;
+            while i < 32 {
+                a[i * 2] = (32 + i) as i8;
+                a[i * 2 + 1] = (96 + i) as i8;
+                i += 1;
+            }
+            a
+        };
+        let idx0 = _mm512_loadu_si512(INTERLEAVE_LO.as_ptr().cast());
+        let idx1 = _mm512_loadu_si512(INTERLEAVE_HI.as_ptr().cast());
 
         while byte_len >= 64 {
             let chunk = _mm512_loadu_si512(src.cast());
@@ -646,13 +666,9 @@ unsafe fn encode_avx512_inner<const UPPER: bool>(mut src: *const u8, mut dst: *m
             let hex_lo = _mm512_shuffle_epi8(lut, lo);
             let hex_hi = _mm512_shuffle_epi8(lut, hi);
 
-            // Interleave within 128-bit lanes.
-            let interleaved_lo = _mm512_unpacklo_epi8(hex_hi, hex_lo);
-            let interleaved_hi = _mm512_unpackhi_epi8(hex_hi, hex_lo);
-
-            // Cross-lane fixup: interleave 128-bit lanes from lo and hi.
-            let out0 = _mm512_permutex2var_epi64(interleaved_lo, idx0, interleaved_hi);
-            let out1 = _mm512_permutex2var_epi64(interleaved_lo, idx1, interleaved_hi);
+            // Byte-level interleave: one cross-lane permute per output register.
+            let out0 = _mm512_permutex2var_epi8(hex_hi, idx0, hex_lo);
+            let out1 = _mm512_permutex2var_epi8(hex_hi, idx1, hex_lo);
 
             _mm512_storeu_si512(dst.cast(), out0);
             _mm512_storeu_si512(dst.add(64).cast(), out1);
@@ -674,7 +690,7 @@ unsafe fn encode_avx512_inner<const UPPER: bool>(mut src: *const u8, mut dst: *m
 /// # Safety
 ///
 /// Same as [`encode_avx512_inner`].
-#[target_feature(enable = "avx512bw,avx2,ssse3")]
+#[target_feature(enable = "avx512vbmi")]
 pub unsafe fn encode_avx512<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
     unsafe { encode_avx512_inner::<UPPER>(src, dst, byte_len) }
 }
@@ -682,7 +698,8 @@ pub unsafe fn encode_avx512<const UPPER: bool>(src: *const u8, dst: *mut u8, byt
 /// Decode a single 512-bit register (64 hex chars → 32 output bytes) using
 /// the Lemire algorithm, AVX-512BW variant.
 ///
-/// Returns `(packed_bytes, mask)` where `mask` is a `u64` bitmask from
+/// Returns `(packed_bytes, mask)` where `packed_bytes` is a `__m256i` with
+/// 32 decoded bytes, and `mask` is a `u64` bitmask from
 /// `_mm512_movepi8_mask` — one bit per byte, set if that byte was invalid.
 /// Callers OR multiple masks together, then branch once.
 ///
@@ -697,8 +714,7 @@ unsafe fn decode_chunk_512(
     one: __m512i,
     mask_hi: __m512i,
     weights: __m512i,
-    perm_idx: __m512i,
-) -> (__m512i, u64) {
+) -> (__m256i, u64) {
     // SAFETY: caller guarantees AVX-512BW.
     unsafe {
         let vm1 = _mm512_sub_epi8(chunk, one);
@@ -710,11 +726,11 @@ unsafe fn decode_chunk_512(
         // movepi8_mask: one bit per byte, set if MSB is set (invalid).
         let mask = _mm512_movepi8_mask(check);
 
-        // Pack nibble pairs: hi*16 + lo via pmaddubsw, then narrow to u8.
+        // Pack nibble pairs: hi*16 + lo via pmaddubsw, then truncate to u8.
         let packed16 = _mm512_maddubs_epi16(nibbles, weights);
-        let packed8 = _mm512_packus_epi16(packed16, packed16);
-        // Fix cross-lane ordering from packuswb.
-        let result = _mm512_permutexvar_epi64(perm_idx, packed8);
+        // vpmovwb: truncate 32×i16 → 32×u8 directly into a __m256i.
+        // No cross-lane permute needed (replaces packuswb + vpermq fixup).
+        let result = _mm512_cvtepi16_epi8(packed16);
 
         (result, mask)
     }
@@ -742,9 +758,6 @@ unsafe fn decode_avx512_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len
         let one = _mm512_set1_epi8(1);
         let mask_hi = _mm512_set1_epi8(0x0F);
         let weights = _mm512_set1_epi16(0x0110);
-        // packus_epi16(a, a) produces: [valid0, dup0, valid1, dup1, valid2, dup2, valid3, dup3]
-        // as qwords. We want [valid0, valid1, valid2, valid3, ...] then store low 256 bits.
-        let perm_idx = _mm512_setr_epi64(0, 2, 4, 6, 1, 3, 5, 7);
         let mut err_accum = 0u64;
 
         // AVX-512: 64 output bytes per iteration (128 hex chars).
@@ -752,15 +765,13 @@ unsafe fn decode_avx512_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len
             let chunk0 = _mm512_loadu_si512(src.cast());
             let chunk1 = _mm512_loadu_si512(src.add(64).cast());
 
-            let (decoded0, mask0) =
-                decode_chunk_512(chunk0, delta_check, delta_rebase, one, mask_hi, weights, perm_idx);
-            let (decoded1, mask1) =
-                decode_chunk_512(chunk1, delta_check, delta_rebase, one, mask_hi, weights, perm_idx);
+            let (decoded0, mask0) = decode_chunk_512(chunk0, delta_check, delta_rebase, one, mask_hi, weights);
+            let (decoded1, mask1) = decode_chunk_512(chunk1, delta_check, delta_rebase, one, mask_hi, weights);
 
             err_accum |= mask0 | mask1;
 
-            _mm256_storeu_si256(dst.cast(), _mm512_castsi512_si256(decoded0));
-            _mm256_storeu_si256(dst.add(32).cast(), _mm512_castsi512_si256(decoded1));
+            _mm256_storeu_si256(dst.cast(), decoded0);
+            _mm256_storeu_si256(dst.add(32).cast(), decoded1);
 
             src = src.add(128);
             dst = dst.add(64);
@@ -769,7 +780,7 @@ unsafe fn decode_avx512_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len
 
         // Tail: fall through to AVX2, then SSSE3, then scalar.
         if byte_len > 0 {
-            // i32 → u64: non-zero error is preserved (sign-extends then reinterprets).
+            // i32 → u64: non-zero error is preserved (zero-extends).
             err_accum |= decode_avx2_inner(src, dst, byte_len) as u64;
         }
 
@@ -860,6 +871,7 @@ mod tests {
     cpufeatures::new!(has_ssse3, "ssse3");
     cpufeatures::new!(has_avx2, "avx2");
     cpufeatures::new!(has_avx512bw, "avx512bw");
+    cpufeatures::new!(has_avx512vbmi, "avx512vbmi");
 
     #[test]
     fn ssse3_matches_scalar_oracle() {
@@ -899,13 +911,37 @@ mod tests {
         );
     }
 
+    /// Tests decode and check at the AVX-512BW tier (no VBMI required).
+    /// Encode is tested separately in [`avx512vbmi_matches_scalar_oracle`]
+    /// since it requires VBMI; here we fall through to AVX2 encode.
     #[test]
-    fn avx512_matches_scalar_oracle() {
+    fn avx512bw_matches_scalar_oracle() {
         let available = cfg!(target_feature = "avx512bw") || has_avx512bw::init().get();
         if !available {
             return;
         }
         assert!(cfg!(miri) || has_avx512bw::init().get());
+
+        exercise_backend(
+            |input, output| unsafe { encode_avx2::<false>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
+            |input, output| unsafe { encode_avx2::<true>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
+            |input, output| unsafe {
+                decode_avx512(input.as_ptr(), output.as_mut_ptr().cast(), output.len())
+                    .map_err(|_| crate::error::Error::InvalidEncoding)
+            },
+            |input| unsafe { check_avx512(input) },
+        );
+    }
+
+    /// Tests encode at the AVX-512 VBMI tier (requires VBMI for `vpermi2b`).
+    /// Decode and check are already covered by [`avx512bw_matches_scalar_oracle`].
+    #[test]
+    fn avx512vbmi_matches_scalar_oracle() {
+        let available = cfg!(target_feature = "avx512vbmi") || has_avx512vbmi::init().get();
+        if !available {
+            return;
+        }
+        assert!(cfg!(miri) || has_avx512vbmi::init().get());
 
         exercise_backend(
             |input, output| unsafe { encode_avx512::<false>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
