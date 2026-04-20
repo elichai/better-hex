@@ -86,3 +86,22 @@ pub(crate) unsafe fn bytes_to_hex_str_mut(s: &mut [u8]) -> &mut str {
     // which is a subset of valid UTF-8.
     unsafe { str::from_utf8_unchecked_mut(s) }
 }
+
+/// Build a `&mut [MaybeUninit<u8>]` view over `cap` bytes starting at `ptr`.
+///
+/// Consolidates the raw-pointer → MaybeUninit slice construction used by
+/// fixed-capacity [`Container`](crate::traits::Container) impls
+/// (`arrayvec::ArrayVec`, `arrayvec::ArrayString`, `heapless::Vec`,
+/// `heapless::String`), so the safety argument lives in one place.
+///
+/// # Safety
+///
+/// - `ptr` must be valid for reads and writes of `cap` bytes and properly
+///   aligned for `u8`.
+/// - The memory must not be accessed through any other pointer for lifetime `'a`.
+/// - `MaybeUninit<u8>` has the same layout as `u8`, so the cast is sound.
+#[cfg(any(feature = "arrayvec", feature = "heapless"))]
+pub(crate) unsafe fn spare_capacity_raw<'a>(ptr: *mut u8, cap: usize) -> &'a mut [MaybeUninit<u8>] {
+    // SAFETY: caller contract above.
+    unsafe { slice::from_raw_parts_mut(ptr.cast::<MaybeUninit<u8>>(), cap) }
+}

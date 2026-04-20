@@ -5,12 +5,12 @@ use crate::{
     prefix::{NoPrefix, Prefix},
 };
 use core::{fmt, mem::MaybeUninit, ops::Deref, str::FromStr};
-use zerocopy::{FromBytes, Immutable, IntoBytes};
+use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 /// Raw storage for [`HexStr`].
 ///
 /// Not exposed publicly — `HexStr` wraps this and enforces the hex ASCII invariant.
-#[derive(Copy, Clone, IntoBytes, Immutable)]
+#[derive(Copy, Clone, IntoBytes, Immutable, KnownLayout)]
 #[repr(C)]
 pub(crate) struct RawHexStr<const N: usize, P: Prefix> {
     pub(crate) prefix: P,
@@ -128,24 +128,27 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     }
 
     /// View the full string as a byte slice (includes prefix when present).
-    pub fn as_bytes(&self) -> &[u8] {
+    pub const fn as_bytes(&self) -> &[u8] {
         const { assert!(core::mem::size_of::<RawHexStr<N, P>>() == Self::LEN) };
-        let res = IntoBytes::as_bytes(&self.inner);
-        debug_assert_eq!(res.len(), Self::LEN);
+        let res: &[u8] =
+            unsafe { core::slice::from_raw_parts((&self.inner) as *const RawHexStr<N, P> as *const u8, Self::LEN) };
         res
     }
 
     /// View the hex content (without prefix) as a byte slice.
-    pub fn as_bytes_no_prefix(&self) -> &[u8] {
-        let bytes = self.as_bytes();
-        &bytes[P::LEN..]
+    pub const fn as_bytes_no_prefix(&self) -> &[u8] {
+        let bytes = &self.inner.bytes;
+        let size = size_of_val(bytes);
+        assert!(size == N * 2, "size of bytes array must equal N * 2");
+        // SAFETY: `bytes` is a contiguous array of `u8` with length `N * 2` (guaranteed by the type and constructors), so we can safely reinterpret it as a byte slice of the appropriate length.
+        unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast::<u8>(), size_of_val(bytes)) }
     }
 
     /// View the full string as a `&str`.
     ///
     /// Always valid UTF-8 because the prefix is `b"0x"` (ASCII) and the hex
     /// characters are in `[0-9a-fA-F]` (ASCII).
-    pub fn as_str(&self) -> &str {
+    pub const fn as_str(&self) -> &str {
         let bytes = self.as_bytes();
         debug_assert!(core::str::from_utf8(bytes).is_ok(), "HexStr contained invalid UTF-8");
         // SAFETY: all constructors guarantee hex ASCII content (valid UTF-8).
@@ -161,6 +164,13 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
         // SAFETY: all constructors guarantee `inner.bytes` contains valid hex
         // ASCII, so `backend::decode` always succeeds and initializes all N bytes.
         unsafe { maybe_uninit::transpose(out).assume_init() }
+    }
+
+    pub const fn const_decode(&self) -> Result<[u8; N], Error> {
+        let hex_bytes = self.as_bytes_no_prefix();
+        debug_assert!(const_check(hex_bytes), "HexStr contained invalid hex bytes");
+        // SAFETY: We've const asserted that the bytes are valid hex ASCII, so this constructor's invariant is upheld and the decode will succeed.
+        const_decode_to_array(hex_bytes)
     }
 }
 
@@ -213,6 +223,7 @@ impl<const N: usize, P: Prefix> PartialEq<str> for HexStr<N, P> {
 impl<const N: usize, P: Prefix> FromStr for HexStr<N, P> {
     type Err = Error;
 
+    #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let expected = Self::LEN; // P::LEN + N * 2
         if s.len() != expected {
@@ -234,26 +245,6 @@ impl<const N: usize, P: Prefix> FromStr for HexStr<N, P> {
             },
         })
     }
-}
-
-/// Encode `N` input bytes to a `[u8; M]` hex array at compile time.
-///
-/// `M` must equal `N * 2` — enforced at compile time. Inverse of
-/// [`const_decode_to_array`]. `upper = true` yields `'A'..='F'`, `false` yields `'a'..='f'`.
-///
-/// ```
-/// # use better_hex::const_encode;
-/// const HEX: [u8; 8] = const_encode(&[0xde, 0xad, 0xbe, 0xef], false);
-/// assert_eq!(&HEX, b"deadbeef");
-/// ```
-pub const fn const_encode<const N: usize, const M: usize>(input: &[u8; N], upper: bool) -> [u8; M] {
-    const { assert!(M == N * 2, "output length M must equal N * 2") };
-    let mut out = [0u8; M];
-    // SAFETY: `input` is readable for `N` bytes; `out` is writable for
-    // `M == N * 2` bytes (const-asserted above). They cannot overlap —
-    // `out` is a fresh local. `scalar::encode` writes exactly `N * 2` bytes.
-    unsafe { crate::backend::scalar::encode(input.as_ptr(), out.as_mut_ptr(), N, upper) };
-    out
 }
 
 /// Internal helper: encode into the paired `[[u8; 2]; N]` shape `RawHexStr` stores.

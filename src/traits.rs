@@ -8,7 +8,7 @@
 //! from hex strings — including `Vec<u8>`, `[u8; N]`, `heapless::Vec`, and
 //! `arrayvec::ArrayVec`.
 
-use crate::{HexDisplay, HexStr, Prefix, display::write_hex_to, error::Error, maybe_uninit};
+use crate::{HexStr, Prefix, error::Error, maybe_uninit};
 use core::fmt;
 use core::mem::MaybeUninit;
 
@@ -334,12 +334,11 @@ unsafe impl<const N: usize> Container for arrayvec::ArrayVec<u8, N> {
     }
     #[inline]
     fn as_mut_slice(handle: &mut Self::Handle) -> &mut [MaybeUninit<u8>] {
-        // SAFETY: `ArrayVec<u8, N>` has a backing array of N bytes.
-        // `as_mut_ptr()` points to its start, and `capacity()` returns N.
-        // `MaybeUninit<u8>` has the same layout as `u8`, so the cast is valid.
         let capacity = handle.capacity();
-        let ptr = handle.as_mut_ptr().cast::<MaybeUninit<u8>>();
-        unsafe { core::slice::from_raw_parts_mut(ptr, capacity) }
+        // SAFETY: `ArrayVec<u8, N>` owns a backing `[u8; N]`; `as_mut_ptr()`
+        // points to its start and `capacity()` returns `N`. No other pointer
+        // aliases this region for the lifetime of `handle`.
+        unsafe { maybe_uninit::spare_capacity_raw(handle.as_mut_ptr(), capacity) }
     }
     #[inline]
     unsafe fn set_len(mut handle: Self::Handle, new_len: usize) -> Self {
@@ -365,15 +364,12 @@ unsafe impl<const N: usize> Container for arrayvec::ArrayString<N> {
     }
     #[inline]
     fn as_mut_slice(handle: &mut Self::Handle) -> &mut [MaybeUninit<u8>] {
-        // SAFETY: `ArrayString<N>` has a backing byte array of N bytes.
-        // `as_mut_ptr()` points to its start, and `capacity()` returns N.
-        // `MaybeUninit<u8>` has the same layout as `u8`, so the cast is valid.
-        // `as_mut_ptr()` on ArrayString is unsafe because it allows writing
-        // non-UTF-8; the caller (`to_hex_container`) will write valid hex ASCII
-        // before calling `set_len`.
         let capacity = handle.capacity();
-        let ptr = handle.as_mut_ptr().cast::<MaybeUninit<u8>>();
-        unsafe { core::slice::from_raw_parts_mut(ptr, capacity) }
+        // SAFETY: `ArrayString<N>` owns a backing `[u8; N]`; `as_mut_ptr()`
+        // points to its start and `capacity()` returns `N`. The caller
+        // (`to_hex_container`) writes valid hex ASCII before `set_len`,
+        // restoring the UTF-8 invariant.
+        unsafe { maybe_uninit::spare_capacity_raw(handle.as_mut_ptr(), capacity) }
     }
     #[inline]
     unsafe fn set_len(mut handle: Self::Handle, new_len: usize) -> Self {
@@ -399,11 +395,10 @@ unsafe impl<const N: usize> Container for heapless::Vec<u8, N> {
     }
     #[inline]
     fn as_mut_slice(handle: &mut Self::Handle) -> &mut [MaybeUninit<u8>] {
-        // SAFETY: heapless 0.9 — as_mut_ptr() points to the backing [u8; N].
-        // We expose the full buffer as MaybeUninit.
         let capacity = handle.capacity();
-        let ptr = handle.as_mut_ptr().cast::<MaybeUninit<u8>>();
-        unsafe { core::slice::from_raw_parts_mut(ptr, capacity) }
+        // SAFETY: heapless 0.9 — `as_mut_ptr()` points to the backing `[u8; N]`;
+        // `capacity()` returns `N`. No other pointer aliases this region.
+        unsafe { maybe_uninit::spare_capacity_raw(handle.as_mut_ptr(), capacity) }
     }
 
     unsafe fn set_len(mut handle: Self::Handle, new_len: usize) -> Self {
@@ -430,14 +425,13 @@ unsafe impl<const N: usize> Container for heapless::String<N> {
     #[inline]
     fn as_mut_slice(handle: &mut Self::Handle) -> &mut [MaybeUninit<u8>] {
         // SAFETY: `as_mut_vec()` is unsafe because it allows writing non-UTF-8
-        // bytes. Here we only access the backing buffer for the caller
-        // (`to_hex_container`) to write valid hex ASCII before `set_len`.
+        // bytes. The caller (`to_hex_container`) writes valid hex ASCII before
+        // `set_len`, restoring the UTF-8 invariant.
         let vec = unsafe { handle.as_mut_vec() };
-        // SAFETY: `as_mut_ptr()` points to the start of the heapless Vec's
-        // backing [u8; N]. `MaybeUninit<u8>` has the same layout as `u8`.
         let capacity = vec.capacity();
-        let ptr = vec.as_mut_ptr().cast::<MaybeUninit<u8>>();
-        unsafe { core::slice::from_raw_parts_mut(ptr, capacity) }
+        // SAFETY: `as_mut_ptr()` points to the backing `[u8; N]`;
+        // `capacity()` returns `N`. No other pointer aliases this region.
+        unsafe { maybe_uninit::spare_capacity_raw(vec.as_mut_ptr(), capacity) }
     }
     #[inline]
     unsafe fn set_len(mut handle: Self::Handle, new_len: usize) -> Self {

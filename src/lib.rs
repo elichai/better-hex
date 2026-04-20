@@ -6,7 +6,10 @@
 //!
 //! - **Constant-time** — all operations use branchless arithmetic w.r.t. input data values
 //! - **SIMD** — x86 (SSSE3/AVX2/AVX-512BW/AVX-512 VBMI), AArch64 (NEON), WASM (SIMD128)
-//! - **`const fn`** — compile-time encode, decode, and validation
+//! - **`const fn`** — compile-time encode, decode, and validation via
+//!   [`HexStr::const_encode_lower`] / [`const_encode_upper`][HexStr::const_encode_upper] /
+//!   [`const_from_hex`][HexStr::const_from_hex] / [`const_decode`][HexStr::const_decode],
+//!   plus the free functions [`const_decode_to_array`] and [`const_check`]
 //! - **Stack strings** — [`HexStr<N>`][HexStr] with zero heap allocation
 //! - **Extensible** — [`HexTarget`] trait for custom output types
 //!
@@ -69,7 +72,7 @@ pub use display::{HexDisplay, display};
 pub use encode::encode_string;
 pub use encode::{encode, encode_to_slice, encode_to_slice_upper, encode_upper};
 pub use error::Error;
-pub use hex_str::{HexStr, const_check, const_decode_to_array, const_encode};
+pub use hex_str::{HexStr, const_check, const_decode_to_array};
 pub use prefix::{NoPrefix, Prefix, WithPrefix};
 pub use traits::{FromHex, HexTarget, ToHex};
 
