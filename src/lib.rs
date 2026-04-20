@@ -69,7 +69,7 @@ pub use display::{HexDisplay, display};
 pub use encode::encode_string;
 pub use encode::{encode, encode_to_slice, encode_to_slice_upper, encode_upper};
 pub use error::Error;
-pub use hex_str::{HexStr, const_check, const_decode_to_array};
+pub use hex_str::{HexStr, const_check, const_decode_to_array, const_encode};
 pub use prefix::{NoPrefix, Prefix, WithPrefix};
 pub use traits::{FromHex, HexTarget, ToHex};
 

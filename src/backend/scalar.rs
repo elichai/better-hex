@@ -37,7 +37,7 @@
 /// to reach `'A'`; lowercase needs `+39` (`0x27`) to reach `'a'`.
 #[inline(always)]
 #[allow(dead_code)]
-pub(crate) const fn encode_nibble(nibble: u8, offset: u8) -> u8 {
+const fn encode_nibble(nibble: u8, offset: u8) -> u8 {
     debug_assert!(
         offset == 0x07 || offset == 0x27,
         "offset must be 0x07 for upper or 0x27 for lower"
@@ -63,7 +63,7 @@ pub(crate) const fn encode_nibble(nibble: u8, offset: u8) -> u8 {
 /// The initial `ret = -1` makes an invalid byte produce `≤ -1` (bit 8 set in
 /// i16), which callers detect by checking `ret >> 8` (non-zero ⇒ invalid).
 #[inline(always)]
-pub(crate) const fn decode_nibble(byte: u8) -> u16 {
+const fn decode_nibble(byte: u8) -> u16 {
     let b = byte as i16;
     let upper = b & !0x20; // 'a'-'f' → 'A'-'F', digits unchanged
     let mut ret: i16 = -1;
@@ -89,7 +89,7 @@ pub(crate) const fn decode_nibble(byte: u8) -> u16 {
 pub const unsafe fn encode_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize, upper: bool) {
     // 0x07 for upper, 0x27 for lower; passed to `encode_nibble` to select case.
     let offset = if upper { 0x07 } else { 0x27 };
-     while byte_len != 0 {
+    while byte_len != 0 {
         // SAFETY: `i < byte_len` so `src.add(i)` is in bounds for reads
         // and `dst.add(i * 2 + {0,1})` is in bounds for writes.
         unsafe {
@@ -132,19 +132,21 @@ pub const unsafe fn encode(src: *const u8, dst: *mut u8, byte_len: usize, upper:
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[inline(always)]
-pub const unsafe fn decode_inner(src: *const u8, dst: *mut u8, byte_len: usize) -> u8 {
+pub const unsafe fn decode_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> u8 {
     let mut err: u8 = 0;
-    let mut i = 0;
 
-    while i < byte_len {
+    while byte_len != 0 {
         // SAFETY: `i < byte_len` so `src.add(i * 2 + {0,1})` is in bounds
         // for reads and `dst.add(i)` is in bounds for writes.
-        let hi = decode_nibble(unsafe { src.add(i * 2).read() });
-        let lo = decode_nibble(unsafe { src.add(i * 2 + 1).read() });
+        let hi = decode_nibble(unsafe { src.read() });
+        src = unsafe { src.add(1) };
+        let lo = decode_nibble(unsafe { src.read() });
+        src = unsafe { src.add(1) };
         err |= (hi >> 8) as u8;
         err |= (lo >> 8) as u8;
-        unsafe { dst.add(i).write(((hi << 4) | lo) as u8) };
-        i += 1;
+        unsafe { dst.write(((hi << 4) | lo) as u8) };
+        dst = unsafe { dst.add(1) };
+        byte_len -= 1;
     }
 
     err
@@ -155,7 +157,7 @@ pub const unsafe fn decode_inner(src: *const u8, dst: *mut u8, byte_len: usize) 
 /// # Safety
 ///
 /// Same requirements as [`decode_inner`].
-pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), super::InvalidEncoding> {
+pub const unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), super::InvalidEncoding> {
     if unsafe { decode_inner(src, dst, byte_len) } != 0 {
         Err(super::InvalidEncoding)
     } else {
@@ -168,12 +170,14 @@ pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<()
 /// Returns `true` iff every byte in `input` is a valid hex ASCII character
 /// (`[0-9a-fA-F]`). Examines all bytes without short-circuiting.
 #[inline]
-pub const fn check(input: &[u8]) -> bool {
+pub const fn check(mut input: &[u8]) -> bool {
     let mut err: u16 = 0;
-    let mut i = 0;
-    while i < input.len() {
-        err |= decode_nibble(input[i]) >> 8;
-        i += 1;
+    while let Some((&byte, rest)) = input.split_first() {
+        // `decode_nibble` returns 0..=15 for valid bytes and a value with
+        // bit 8 set for invalid ones. Shift right to isolate the error bit
+        // — otherwise valid nibbles (e.g. 'd' → 13) would make `err != 0`.
+        err |= decode_nibble(byte) >> 8;
+        input = rest;
     }
     err == 0
 }

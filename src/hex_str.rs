@@ -63,7 +63,7 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
         Self {
             inner: RawHexStr {
                 prefix: P::VALUE,
-                bytes: const_encode_bytes(input, false),
+                bytes: const_encode_pairs(input, false),
             },
         }
     }
@@ -73,7 +73,7 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
         Self {
             inner: RawHexStr {
                 prefix: P::VALUE,
-                bytes: const_encode_bytes(input, true),
+                bytes: const_encode_pairs(input, true),
             },
         }
     }
@@ -164,21 +164,6 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     }
 }
 
-use crate::backend::scalar::encode_nibble;
-
-/// Const-context encode helper using branchless nibble arithmetic (no LUT).
-const fn const_encode_bytes<const N: usize>(input: &[u8; N], upper: bool) -> [[u8; 2]; N] {
-    let offset = if upper { 0x07 } else { 0x27 };
-    let mut bytes = [[0u8; 2]; N];
-    let mut i = 0;
-    while i < N {
-        bytes[i][0] = encode_nibble(input[i] >> 4, offset);
-        bytes[i][1] = encode_nibble(input[i] & 0x0f, offset);
-        i += 1;
-    }
-    bytes
-}
-
 impl<const N: usize, P: Prefix> Deref for HexStr<N, P> {
     type Target = str;
 
@@ -236,9 +221,10 @@ impl<const N: usize, P: Prefix> FromStr for HexStr<N, P> {
         let s_bytes = s.as_bytes();
         // Verify and strip prefix using constant-time comparison.
         let hex_part = P::strip_prefix(s_bytes).ok_or(Error::InvalidEncoding)?;
-        // Decode to validate hex content — processes all bytes (CT).
-        let mut scratch: [MaybeUninit<u8>; N] = maybe_uninit::uninit_array();
-        backend::decode(hex_part, &mut scratch)?;
+        // Validate all bytes without short-circuiting (constant-time w.r.t. data).
+        if !backend::check(hex_part) {
+            return Err(Error::InvalidEncoding);
+        }
         // Input is valid hex — reinterpret as [[u8; 2]; N] and construct.
         let bytes: &[[u8; 2]; N] = FromBytes::ref_from_bytes(hex_part).expect("length already checked above");
         Ok(Self {
@@ -250,6 +236,41 @@ impl<const N: usize, P: Prefix> FromStr for HexStr<N, P> {
     }
 }
 
+/// Encode `N` input bytes to a `[u8; M]` hex array at compile time.
+///
+/// `M` must equal `N * 2` — enforced at compile time. Inverse of
+/// [`const_decode_to_array`]. `upper = true` yields `'A'..='F'`, `false` yields `'a'..='f'`.
+///
+/// ```
+/// # use better_hex::const_encode;
+/// const HEX: [u8; 8] = const_encode(&[0xde, 0xad, 0xbe, 0xef], false);
+/// assert_eq!(&HEX, b"deadbeef");
+/// ```
+pub const fn const_encode<const N: usize, const M: usize>(input: &[u8; N], upper: bool) -> [u8; M] {
+    const { assert!(M == N * 2, "output length M must equal N * 2") };
+    let mut out = [0u8; M];
+    // SAFETY: `input` is readable for `N` bytes; `out` is writable for
+    // `M == N * 2` bytes (const-asserted above). They cannot overlap —
+    // `out` is a fresh local. `scalar::encode` writes exactly `N * 2` bytes.
+    unsafe { crate::backend::scalar::encode(input.as_ptr(), out.as_mut_ptr(), N, upper) };
+    out
+}
+
+/// Internal helper: encode into the paired `[[u8; 2]; N]` shape `RawHexStr` stores.
+///
+/// Same contents as [`const_encode`] — paired shape avoids a transmute at the
+/// call site. `[[u8; 2]; N]` has layout `[u8; 2 * N]` (arrays have guaranteed
+/// contiguous layout with no padding).
+const fn const_encode_pairs<const N: usize>(input: &[u8; N], upper: bool) -> [[u8; 2]; N] {
+    let mut out: MaybeUninit<[[u8; 2]; N]> = MaybeUninit::uninit();
+    // SAFETY: `input` is readable for `N` bytes; `out` is writable for
+    // `N * 2` bytes (size of `[[u8; 2]; N]`). `scalar::encode` writes exactly
+    // `N * 2` bytes unconditionally, so the whole buffer is initialized.
+    unsafe { crate::backend::scalar::encode(input.as_ptr(), out.as_mut_ptr().cast::<u8>(), N, upper) };
+    // SAFETY: `scalar::encode` fully initialized all `N * 2` bytes.
+    unsafe { out.assume_init() }
+}
+
 /// Decode hex at compile time using branchless arithmetic.
 ///
 /// Uses error accumulation (no early return on invalid bytes) to remain
@@ -258,13 +279,7 @@ impl<const N: usize, P: Prefix> FromStr for HexStr<N, P> {
 /// Returns an error if the input length is not exactly `2 * N`, or if any
 /// byte is not a valid hex character.
 pub const fn const_decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; N], Error> {
-    if !input.len().is_multiple_of(2) {
-        return Err(Error::InvalidLength {
-            expected: input.len() & !1,
-            got: input.len(),
-        });
-    }
-    if input.len() / 2 != N {
+    if input.len() != N * 2 {
         return Err(Error::InvalidLength {
             expected: N * 2,
             got: input.len(),
@@ -273,10 +288,10 @@ pub const fn const_decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; 
     let mut out = [0u8; N];
     // SAFETY: `input.len() == N * 2` (checked above), so `input.as_ptr()` is
     // readable for `N * 2` bytes and `out.as_mut_ptr()` writable for `N` bytes.
-    if unsafe { crate::backend::scalar::decode_inner(input.as_ptr(), out.as_mut_ptr(), N) } != 0 {
-        Err(Error::InvalidEncoding)
-    } else {
-        Ok(out)
+    // Can't use `?` here: `From<InvalidEncoding>` is not (and cannot be) `const`.
+    match unsafe { crate::backend::scalar::decode(input.as_ptr(), out.as_mut_ptr(), N) } {
+        Ok(()) => Ok(out),
+        Err(crate::backend::InvalidEncoding) => Err(Error::InvalidEncoding),
     }
 }
 

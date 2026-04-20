@@ -51,35 +51,17 @@ fn bench_encode(c: &mut Criterion) {
             use better_hex::bench_internals::x86;
             if std::is_x86_feature_detected!("ssse3") {
                 group.bench_function(BenchmarkId::new("ssse3", size), |b| {
-                    b.iter(|| {
-                        call(
-                            x86::encode_ssse3,
-                            black_box(bufs.next()),
-                            black_box(&mut output),
-                        )
-                    })
+                    b.iter(|| call(x86::encode_ssse3, black_box(bufs.next()), black_box(&mut output)))
                 });
             }
             if std::is_x86_feature_detected!("avx2") {
                 group.bench_function(BenchmarkId::new("avx2", size), |b| {
-                    b.iter(|| {
-                        call(
-                            x86::encode_avx2,
-                            black_box(bufs.next()),
-                            black_box(&mut output),
-                        )
-                    })
+                    b.iter(|| call(x86::encode_avx2, black_box(bufs.next()), black_box(&mut output)))
                 });
             }
             if std::is_x86_feature_detected!("avx512vbmi") {
                 group.bench_function(BenchmarkId::new("avx512vbmi", size), |b| {
-                    b.iter(|| {
-                        call(
-                            x86::encode_avx512,
-                            black_box(bufs.next()),
-                            black_box(&mut output),
-                        )
-                    })
+                    b.iter(|| call(x86::encode_avx512, black_box(bufs.next()), black_box(&mut output)))
                 });
             }
         }

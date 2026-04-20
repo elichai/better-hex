@@ -70,11 +70,7 @@ impl<T: AsRef<[u8]>> fmt::UpperHex for HexDisplay<T> {
 ///
 /// `upper` selects lowercase vs uppercase.
 /// `BUF` is the hex output buffer size in bytes (must be even; generic for benchmarking).
-pub(crate) fn write_hex_to<const BUF: usize, W: fmt::Write>(
-    mut input: &[u8],
-    w: &mut W,
-    upper: bool,
-) -> fmt::Result {
+pub(crate) fn write_hex_to<const BUF: usize, W: fmt::Write>(mut input: &[u8], w: &mut W, upper: bool) -> fmt::Result {
     debug_assert!(BUF >= 2 && BUF.is_multiple_of(2), "BUF must be even and >= 2");
     let mut buf = [MaybeUninit::<u8>::uninit(); BUF];
     let chunk_size = BUF / 2;

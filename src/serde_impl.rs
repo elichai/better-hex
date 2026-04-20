@@ -102,7 +102,10 @@ fn strip_prefix<const PREFIX: bool>(s: &[u8]) -> Result<&[u8], &'static str> {
 
 /// Serialize bytes as lowercase hex (no prefix).
 pub fn serialize<T: AsRef<[u8]>, S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
-    serializer.collect_str(&HexDisplayAdapter::<false> { data: value.as_ref(), upper: false })
+    serializer.collect_str(&HexDisplayAdapter::<false> {
+        data: value.as_ref(),
+        upper: false,
+    })
 }
 
 /// Deserialize bytes from a hex string (no prefix).
@@ -120,7 +123,10 @@ pub mod upper {
 
     /// Serialize bytes as uppercase hex (no prefix).
     pub fn serialize<T: AsRef<[u8]>, S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(&super::HexDisplayAdapter::<false> { data: value.as_ref(), upper: true })
+        serializer.collect_str(&super::HexDisplayAdapter::<false> {
+            data: value.as_ref(),
+            upper: true,
+        })
     }
 
     /// Deserialize bytes from a hex string (no prefix).
@@ -141,7 +147,10 @@ pub mod prefixed {
 
     /// Serialize bytes as lowercase hex with a `"0x"` prefix.
     pub fn serialize<T: AsRef<[u8]>, S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(&super::HexDisplayAdapter::<true> { data: value.as_ref(), upper: false })
+        serializer.collect_str(&super::HexDisplayAdapter::<true> {
+            data: value.as_ref(),
+            upper: false,
+        })
     }
 
     /// Deserialize bytes from a `"0x"`-prefixed hex string.
@@ -163,7 +172,10 @@ pub mod upper_prefixed {
 
     /// Serialize bytes as uppercase hex with a `"0x"` prefix.
     pub fn serialize<T: AsRef<[u8]>, S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(&super::HexDisplayAdapter::<true> { data: value.as_ref(), upper: true })
+        serializer.collect_str(&super::HexDisplayAdapter::<true> {
+            data: value.as_ref(),
+            upper: true,
+        })
     }
 
     /// Deserialize bytes from a `"0x"`-prefixed hex string.

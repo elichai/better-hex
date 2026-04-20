@@ -90,7 +90,7 @@ pub trait HexTarget: Sized {
 
 impl<S: AsRef<[u8]>> ToHex for S {
     fn write_hex<W: fmt::Write>(&self, w: &mut W, upper: bool) -> fmt::Result {
-        crate::display::write_hex_to::<{crate::display::DEFAULT_BUF}, _>(self.as_ref(), w, upper)
+        crate::display::write_hex_to::<{ crate::display::DEFAULT_BUF }, _>(self.as_ref(), w, upper)
     }
 
     fn encode_hex<T: HexTarget>(&self) -> Result<T, T::Error> {
