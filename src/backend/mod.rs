@@ -123,8 +123,8 @@ macro_rules! dispatch {
 /// initialized with valid hex ASCII bytes.
 ///
 /// Returns `Err(InvalidLength)` if `output.len() != input.len() * 2`.
-#[inline(never)]
-pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
+#[inline]
+pub fn encode(input: &[u8], output: &mut [MaybeUninit<u8>], upper: bool) -> Result<(), Error> {
     if output.len() != input.len() * 2 {
         return Err(Error::InvalidLength {
             expected: input.len() * 2,
@@ -139,12 +139,12 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) -
     // bytes. CPU feature requirements are satisfied by `platform::detect()`
     // only returning a variant after confirming support.
     dispatch!(
-        scalar: unsafe { scalar::encode::<UPPER>(src, dst, byte_len) },
-        neon: unsafe { neon::encode::<UPPER>(src, dst, byte_len) },
-        ssse3: unsafe { x86::encode_ssse3::<UPPER>(src, dst, byte_len) },
-        avx2: unsafe { x86::encode_avx2::<UPPER>(src, dst, byte_len) },
-        avx512vbmi: unsafe { x86::encode_avx512::<UPPER>(src, dst, byte_len) },
-        wasm: unsafe { wasm::encode::<UPPER>(src, dst, byte_len) },
+        scalar: unsafe { scalar::encode(src, dst, byte_len, upper) },
+        neon: unsafe { neon::encode(src, dst, byte_len, upper) },
+        ssse3: unsafe { x86::encode_ssse3(src, dst, byte_len, upper) },
+        avx2: unsafe { x86::encode_avx2(src, dst, byte_len, upper) },
+        avx512vbmi: unsafe { x86::encode_avx512(src, dst, byte_len, upper) },
+        wasm: unsafe { wasm::encode(src, dst, byte_len, upper) },
     );
     Ok(())
 }
@@ -153,7 +153,6 @@ pub fn encode<const UPPER: bool>(input: &[u8], output: &mut [MaybeUninit<u8>]) -
 ///
 /// Returns `Ok(())` on success, `Err(InvalidEncoding)` on invalid hex,
 /// or `Err(InvalidLength)` if the buffer sizes are wrong.
-#[inline(never)]
 pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     if input.len() != output.len() * 2 {
         return Err(Error::InvalidLength {
@@ -207,10 +206,10 @@ pub(crate) mod test_support {
             .collect()
     }
 
-    fn scalar_encode<const UPPER: bool>(input: &[u8]) -> alloc::vec::Vec<u8> {
+    fn scalar_encode(input: &[u8], upper: bool) -> alloc::vec::Vec<u8> {
         let mut out = alloc::vec![0u8; input.len() * 2];
         // SAFETY: pointers derived from valid slices with correct lengths.
-        unsafe { scalar::encode::<UPPER>(input.as_ptr(), out.as_mut_ptr(), input.len()) };
+        unsafe { scalar::encode(input.as_ptr(), out.as_mut_ptr(), input.len(), upper) };
         out
     }
 
@@ -226,8 +225,8 @@ pub(crate) mod test_support {
         for size in 0..=MAX_SIZE {
             let input = make_input(size);
             let hex_len = size * 2;
-            let expected_lower = scalar_encode::<false>(&input);
-            let expected_upper = scalar_encode::<true>(&input);
+            let expected_lower = scalar_encode(&input, false);
+            let expected_upper = scalar_encode(&input, true);
 
             // Encode lower
             let mut lower_out = alloc::vec![MaybeUninit::uninit(); hex_len];
@@ -291,7 +290,7 @@ mod boundary_tests {
 
     fn encode_hex(input: &[u8]) -> Vec<u8> {
         let mut out = vec![MaybeUninit::uninit(); input.len() * 2];
-        encode::<false>(input, &mut out).expect("encode failed");
+        encode(input, &mut out, false).expect("encode failed");
         out.iter().map(|m| unsafe { m.assume_init() }).collect()
     }
 
@@ -337,7 +336,7 @@ mod boundary_tests {
 
             // Lower-case roundtrip
             let mut lower = vec![MaybeUninit::uninit(); hex_len];
-            encode::<false>(&input, &mut lower).expect("encode lower failed");
+            encode(&input, &mut lower, false).expect("encode lower failed");
             let lower_hex: Vec<u8> = lower.iter().map(|m| unsafe { m.assume_init() }).collect();
             let mut dec = vec![MaybeUninit::uninit(); size];
             decode(&lower_hex, &mut dec).unwrap_or_else(|e| panic!("roundtrip(lower) failed at {size}: {e}"));
@@ -346,7 +345,7 @@ mod boundary_tests {
 
             // Upper-case roundtrip
             let mut upper = vec![MaybeUninit::uninit(); hex_len];
-            encode::<true>(&input, &mut upper).expect("encode upper failed");
+            encode(&input, &mut upper, true).expect("encode upper failed");
             let upper_hex: Vec<u8> = upper.iter().map(|m| unsafe { m.assume_init() }).collect();
             let mut dec2 = vec![MaybeUninit::uninit(); size];
             decode(&upper_hex, &mut dec2).unwrap_or_else(|e| panic!("roundtrip(upper) failed at {size}: {e}"));

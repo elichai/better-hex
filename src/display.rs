@@ -34,27 +34,31 @@ pub fn display<T: AsRef<[u8]>>(data: T) -> HexDisplay<T> {
 pub struct HexDisplay<T>(T);
 
 impl<T: AsRef<[u8]>> fmt::Display for HexDisplay<T> {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::LowerHex::fmt(self, f)
     }
 }
 
 impl<T: AsRef<[u8]>> fmt::LowerHex for HexDisplay<T> {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // The '#' flag in format strings (e.g., "{:#x}") requests a "0x" prefix.
         if f.alternate() {
             f.write_str("0x")?;
         }
-        write_hex_to::<false, DEFAULT_BUF, _>(self.0.as_ref(), f)
+        write_hex_to::<DEFAULT_BUF, _>(self.0.as_ref(), f, false)
     }
 }
 
 impl<T: AsRef<[u8]>> fmt::UpperHex for HexDisplay<T> {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // The '#' flag in format strings (e.g., "{:#x}") requests a "0x" prefix.
         if f.alternate() {
             f.write_str("0x")?;
         }
-        write_hex_to::<true, DEFAULT_BUF, _>(self.0.as_ref(), f)
+        write_hex_to::<DEFAULT_BUF, _>(self.0.as_ref(), f, true)
     }
 }
 
@@ -64,11 +68,12 @@ impl<T: AsRef<[u8]>> fmt::UpperHex for HexDisplay<T> {
 /// `BUF / 2` input bytes into `BUF` hex characters, then flushes via a
 /// single `write_str` call.
 ///
-/// `UPPER` selects lowercase vs uppercase at compile time (no branch in loop).
+/// `upper` selects lowercase vs uppercase.
 /// `BUF` is the hex output buffer size in bytes (must be even; generic for benchmarking).
-pub(crate) fn write_hex_to<const UPPER: bool, const BUF: usize, W: fmt::Write>(
+pub(crate) fn write_hex_to<const BUF: usize, W: fmt::Write>(
     mut input: &[u8],
     w: &mut W,
+    upper: bool,
 ) -> fmt::Result {
     debug_assert!(BUF >= 2 && BUF.is_multiple_of(2), "BUF must be even and >= 2");
     let mut buf = [MaybeUninit::<u8>::uninit(); BUF];
@@ -77,14 +82,14 @@ pub(crate) fn write_hex_to<const UPPER: bool, const BUF: usize, W: fmt::Write>(
 
     while input.len() >= chunk_size {
         (chunk, input) = input.split_at(chunk_size);
-        backend::encode::<UPPER>(chunk, &mut buf).expect("buf is correctly sized");
+        backend::encode(chunk, &mut buf, upper).expect("buf is correctly sized");
         // SAFETY: backend initialized BUF bytes of valid hex ASCII.
         w.write_str(unsafe { maybe_uninit::assume_init_str(&buf) })?;
     }
 
     if !input.is_empty() {
         let hex_len = input.len() * 2;
-        backend::encode::<UPPER>(input, &mut buf[..hex_len]).expect("buf is correctly sized");
+        backend::encode(input, &mut buf[..hex_len], upper).expect("buf is correctly sized");
         // SAFETY: backend initialized hex_len bytes of valid hex ASCII.
         w.write_str(unsafe { maybe_uninit::assume_init_str(&buf[..hex_len]) })?;
     }

@@ -53,16 +53,18 @@ use serde::{Deserializer, Serializer, de};
 // ── shared helpers ──────────────────────────────────────────────────────────
 
 /// Display adapter for `collect_str`. Const generics select case and prefix.
-struct HexDisplayAdapter<'a, const UPPER: bool, const PREFIX: bool> {
+struct HexDisplayAdapter<'a, const PREFIX: bool> {
     data: &'a [u8],
+    upper: bool,
 }
 
-impl<const UPPER: bool, const PREFIX: bool> fmt::Display for HexDisplayAdapter<'_, UPPER, PREFIX> {
+impl<const PREFIX: bool> fmt::Display for HexDisplayAdapter<'_, PREFIX> {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if PREFIX {
             f.write_str("0x")?;
         }
-        crate::display::write_hex_to::<UPPER, { crate::display::DEFAULT_BUF }, _>(self.data, f)
+        crate::display::write_hex_to::<{ crate::display::DEFAULT_BUF }, _>(self.data, f, self.upper)
     }
 }
 
@@ -100,7 +102,7 @@ fn strip_prefix<const PREFIX: bool>(s: &[u8]) -> Result<&[u8], &'static str> {
 
 /// Serialize bytes as lowercase hex (no prefix).
 pub fn serialize<T: AsRef<[u8]>, S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
-    serializer.collect_str(&HexDisplayAdapter::<false, false> { data: value.as_ref() })
+    serializer.collect_str(&HexDisplayAdapter::<false> { data: value.as_ref(), upper: false })
 }
 
 /// Deserialize bytes from a hex string (no prefix).
@@ -118,7 +120,7 @@ pub mod upper {
 
     /// Serialize bytes as uppercase hex (no prefix).
     pub fn serialize<T: AsRef<[u8]>, S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(&super::HexDisplayAdapter::<true, false> { data: value.as_ref() })
+        serializer.collect_str(&super::HexDisplayAdapter::<false> { data: value.as_ref(), upper: true })
     }
 
     /// Deserialize bytes from a hex string (no prefix).
@@ -139,7 +141,7 @@ pub mod prefixed {
 
     /// Serialize bytes as lowercase hex with a `"0x"` prefix.
     pub fn serialize<T: AsRef<[u8]>, S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(&super::HexDisplayAdapter::<false, true> { data: value.as_ref() })
+        serializer.collect_str(&super::HexDisplayAdapter::<true> { data: value.as_ref(), upper: false })
     }
 
     /// Deserialize bytes from a `"0x"`-prefixed hex string.
@@ -161,7 +163,7 @@ pub mod upper_prefixed {
 
     /// Serialize bytes as uppercase hex with a `"0x"` prefix.
     pub fn serialize<T: AsRef<[u8]>, S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(&super::HexDisplayAdapter::<true, true> { data: value.as_ref() })
+        serializer.collect_str(&super::HexDisplayAdapter::<true> { data: value.as_ref(), upper: true })
     }
 
     /// Deserialize bytes from a `"0x"`-prefixed hex string.

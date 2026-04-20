@@ -7,8 +7,8 @@ use crate::{backend, error::Error, maybe_uninit, traits::HexTarget};
 
 /// Encode `input` into a caller-provided `output` buffer, returning `&mut str`.
 #[inline]
-fn encode_to_slice_inner<'a, const UPPER: bool>(input: &[u8], output: &'a mut [u8]) -> Result<&'a mut str, Error> {
-    backend::encode::<UPPER>(input, maybe_uninit::slice_as_uninit_mut(output))?;
+fn encode_to_slice_inner<'a>(input: &[u8], output: &'a mut [u8], upper: bool) -> Result<&'a mut str, Error> {
+    backend::encode(input, maybe_uninit::slice_as_uninit_mut(output), upper)?;
     // SAFETY: backend wrote valid hex ASCII (valid UTF-8) into every byte.
     Ok(unsafe { maybe_uninit::bytes_to_hex_str_mut(output) })
 }
@@ -18,7 +18,7 @@ fn encode_to_slice_inner<'a, const UPPER: bool>(input: &[u8], output: &'a mut [u
 /// Returns [`Error::InvalidLength`] if `output.len() != input.len() * 2`.
 #[inline]
 pub fn encode_to_slice<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a mut str, Error> {
-    encode_to_slice_inner::<false>(input, output)
+    encode_to_slice_inner(input, output, false)
 }
 
 /// Encode bytes to uppercase hex into `output`. Returns the hex string.
@@ -26,7 +26,7 @@ pub fn encode_to_slice<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a mut
 /// Returns [`Error::InvalidLength`] if `output.len() != input.len() * 2`.
 #[inline]
 pub fn encode_to_slice_upper<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a mut str, Error> {
-    encode_to_slice_inner::<true>(input, output)
+    encode_to_slice_inner(input, output, true)
 }
 
 /// Encode bytes to lowercase hex into any [`HexTarget`].

@@ -43,10 +43,11 @@ fn check_encode(
     label: &str,
     data: &[u8],
     expected: &[u8],
-    encode_fn: impl Fn(&[u8], &mut [MaybeUninit<u8>]),
+    upper: bool,
+    encode_fn: impl Fn(&[u8], &mut [MaybeUninit<u8>], bool),
 ) {
     let mut buf = vec![MaybeUninit::uninit(); expected.len()];
-    encode_fn(data, &mut buf);
+    encode_fn(data, &mut buf, upper);
     let result: Vec<u8> = buf.into_iter().map(|b| unsafe { b.assume_init() }).collect();
     assert_eq!(result, expected, "{label} mismatch");
 }
@@ -72,9 +73,9 @@ fn check_decode(
 }
 
 /// Wrap a raw-pointer encode backend for use with `check_encode`.
-fn scalar_encode<const UPPER: bool>(data: &[u8], out: &mut [MaybeUninit<u8>]) {
+fn scalar_encode(data: &[u8], out: &mut [MaybeUninit<u8>], upper: bool) {
     // SAFETY: `data` and `out` are valid slices, out.len() == data.len() * 2 by caller contract.
-    unsafe { scalar::encode::<UPPER>(data.as_ptr(), out.as_mut_ptr().cast(), data.len()) }
+    unsafe { scalar::encode(data.as_ptr(), out.as_mut_ptr().cast(), data.len(), upper) }
 }
 
 /// Wrap a raw-pointer decode backend for use with `check_decode`.
@@ -89,10 +90,10 @@ fuzz_target!(|data: &[u8]| {
     let expected_upper = naive_encode(data, true);
 
     // Encode: all paths must match naive oracle
-    check_encode("scalar lower", data, &expected_lower, scalar_encode::<false>);
-    check_encode("scalar upper", data, &expected_upper, scalar_encode::<true>);
-    check_encode("dispatched lower", data, &expected_lower, |d, o| { dispatched_encode::<false>(d, o).unwrap() });
-    check_encode("dispatched upper", data, &expected_upper, |d, o| { dispatched_encode::<true>(d, o).unwrap() });
+    check_encode("scalar lower", data, &expected_lower, false, scalar_encode);
+    check_encode("scalar upper", data, &expected_upper, true, scalar_encode);
+    check_encode("dispatched lower", data, &expected_lower, false, |d, o, u| { dispatched_encode(d, o, u).unwrap() });
+    check_encode("dispatched upper", data, &expected_upper, true, |d, o, u| { dispatched_encode(d, o, u).unwrap() });
 
     // Check: test character validity on ALL inputs (including odd-length).
     // Backend check functions only validate characters, not length.

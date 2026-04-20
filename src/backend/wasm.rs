@@ -29,10 +29,16 @@ use super::InvalidEncoding;
 use crate::backend::scalar;
 use core::arch::wasm32::*;
 
-/// Lower-case hex lookup table: nibble value 0..15 → ASCII `'0'..'f'`.
-const HEX_LOWER: [u8; 16] = *b"0123456789abcdef";
-/// Upper-case hex lookup table: nibble value 0..15 → ASCII `'0'..'F'`.
-const HEX_UPPER: [u8; 16] = *b"0123456789ABCDEF";
+#[inline(always)]
+fn hex_lut(upper: bool) -> v128 {
+    let table = if upper {
+        *b"0123456789ABCDEF"
+    } else {
+        *b"0123456789abcdef"
+    };
+    // SAFETY: `table` is a 16-byte array; reading it as v128 is valid.
+    unsafe { v128_load(table.as_ptr().cast()) }
+}
 
 /// Encode `input` bytes as hex into `output`, using SIMD128 for 16-byte chunks.
 ///
@@ -44,12 +50,8 @@ const HEX_UPPER: [u8; 16] = *b"0123456789ABCDEF";
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
 /// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
-pub unsafe fn encode<const UPPER: bool>(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) {
-    let table = if UPPER { &HEX_UPPER } else { &HEX_LOWER };
-
-    // Load the 16-byte hex LUT into a SIMD register.
-    // SAFETY: `table` is a 16-byte aligned array; reading it as v128 is valid.
-    let lut = unsafe { v128_load(table.as_ptr().cast()) };
+pub unsafe fn encode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize, upper: bool) {
+    let lut = hex_lut(upper);
     let mask_lo = u8x16_splat(0x0F);
 
     while byte_len >= 16 {
@@ -82,7 +84,7 @@ pub unsafe fn encode<const UPPER: bool>(mut src: *const u8, mut dst: *mut u8, mu
 
     // Tail: delegate remaining bytes to scalar.
     // SAFETY: `src` valid for `byte_len` reads, `dst` valid for `byte_len * 2` writes.
-    unsafe { scalar::encode_inner::<UPPER>(src, dst, byte_len) };
+    unsafe { scalar::encode_inner(src, dst, byte_len, upper) };
 }
 
 /// Decode hex-encoded `input` into `output`, using SIMD128 for 32-byte chunks.

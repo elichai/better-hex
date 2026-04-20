@@ -89,15 +89,19 @@ use core::arch::aarch64::*;
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
 /// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
-pub unsafe fn encode<const UPPER: bool>(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) {
-    let lut_bytes: [u8; 16] = if UPPER {
+#[inline(always)]
+fn hex_lut(upper: bool) -> uint8x16_t {
+    let bytes: [u8; 16] = if upper {
         *b"0123456789ABCDEF"
     } else {
         *b"0123456789abcdef"
     };
-
     // SAFETY: Loading a constant 16-byte array into a NEON register.
-    let lut = unsafe { vld1q_u8(lut_bytes.as_ptr()) };
+    unsafe { vld1q_u8(bytes.as_ptr()) }
+}
+
+pub unsafe fn encode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize, upper: bool) {
+    let lut = hex_lut(upper);
     let mask_lo = unsafe { vdupq_n_u8(0x0F) };
 
     // Save the original total length for the overlapping-tail heuristic.
@@ -182,7 +186,7 @@ pub unsafe fn encode<const UPPER: bool>(mut src: *const u8, mut dst: *mut u8, mu
         } else {
             // SAFETY: `src` is valid for `byte_len` reads,
             // `dst` is valid for `byte_len * 2` writes.
-            unsafe { scalar::encode_inner::<UPPER>(src, dst, byte_len) };
+            unsafe { scalar::encode_inner(src, dst, byte_len, upper) };
         }
     }
 }
@@ -327,8 +331,8 @@ mod tests {
     #[test]
     fn neon_matches_scalar_oracle() {
         exercise_backend(
-            |input, output| unsafe { encode::<false>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
-            |input, output| unsafe { encode::<true>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
+            |input, output| unsafe { encode(input.as_ptr(), output.as_mut_ptr().cast(), input.len(), false) },
+            |input, output| unsafe { encode(input.as_ptr(), output.as_mut_ptr().cast(), input.len(), true) },
             |input, output| unsafe {
                 decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len())
                     .map_err(|_| crate::error::Error::InvalidEncoding)

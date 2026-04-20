@@ -39,7 +39,7 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     pub const LEN: usize = P::LEN + N * 2;
 
     /// Create a hex string representing all zeros (`"00...00"`).
-    pub fn zero() -> Self {
+    pub const fn zero() -> Self {
         Self {
             inner: RawHexStr {
                 prefix: P::VALUE,
@@ -63,7 +63,7 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
         Self {
             inner: RawHexStr {
                 prefix: P::VALUE,
-                bytes: const_encode_bytes::<N, false>(input),
+                bytes: const_encode_bytes(input, false),
             },
         }
     }
@@ -73,7 +73,7 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
         Self {
             inner: RawHexStr {
                 prefix: P::VALUE,
-                bytes: const_encode_bytes::<N, true>(input),
+                bytes: const_encode_bytes(input, true),
             },
         }
     }
@@ -167,12 +167,13 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
 use crate::backend::scalar::encode_nibble;
 
 /// Const-context encode helper using branchless nibble arithmetic (no LUT).
-const fn const_encode_bytes<const N: usize, const UPPER: bool>(input: &[u8; N]) -> [[u8; 2]; N] {
+const fn const_encode_bytes<const N: usize>(input: &[u8; N], upper: bool) -> [[u8; 2]; N] {
+    let offset = if upper { 0x07 } else { 0x27 };
     let mut bytes = [[0u8; 2]; N];
     let mut i = 0;
     while i < N {
-        bytes[i][0] = encode_nibble::<UPPER>(input[i] >> 4);
-        bytes[i][1] = encode_nibble::<UPPER>(input[i] & 0x0f);
+        bytes[i][0] = encode_nibble(input[i] >> 4, offset);
+        bytes[i][1] = encode_nibble(input[i] & 0x0f, offset);
         i += 1;
     }
     bytes

@@ -30,19 +30,22 @@
 /// Branchless nibble-to-ASCII encoder (no LUT).
 ///
 /// Maps `nibble ∈ 0..=15` to the corresponding hex ASCII byte.
-/// - If `UPPER = true`:  `'0'-'9'`, `'A'-'F'`.
-/// - If `UPPER = false`: `'0'-'9'`, `'a'-'f'`.
+/// - If `offset == 0x07`: `'0'-'9'`, `'A'-'F'` (uppercase).
+/// - If `offset == 0x27`: `'0'-'9'`, `'a'-'f'` (lowercase).
 ///
 /// The offset distinguishes upper/lower: uppercase needs `+7` past `'9'`
 /// to reach `'A'`; lowercase needs `+39` (`0x27`) to reach `'a'`.
 #[inline(always)]
 #[allow(dead_code)]
-pub(crate) const fn encode_nibble<const UPPER: bool>(nibble: u8) -> u8 {
+pub(crate) const fn encode_nibble(nibble: u8, offset: u8) -> u8 {
+    debug_assert!(
+        offset == 0x07 || offset == 0x27,
+        "offset must be 0x07 for upper or 0x27 for lower"
+    );
     let mut ret = nibble as i16 + 0x30;
-    let offset = if UPPER { 0x07i16 } else { 0x27i16 };
     // If ret > 0x39 ('9'), (0x39 - ret) is negative → its high byte is 0xFF.
     // We mask `offset` with that and add it to shift into the letter range.
-    ret += ((0x39i16 - ret) >> 8) & offset;
+    ret += ((0x39i16 - ret) >> 8) & (offset as i16);
     ret as u8
 }
 
@@ -83,13 +86,21 @@ pub(crate) const fn decode_nibble(byte: u8) -> u16 {
 /// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
 #[inline]
 #[allow(dead_code)]
-pub unsafe fn encode_inner<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
-    for i in 0..byte_len {
+pub const unsafe fn encode_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize, upper: bool) {
+    // 0x07 for upper, 0x27 for lower; passed to `encode_nibble` to select case.
+    let offset = if upper { 0x07 } else { 0x27 };
+     while byte_len != 0 {
         // SAFETY: `i < byte_len` so `src.add(i)` is in bounds for reads
         // and `dst.add(i * 2 + {0,1})` is in bounds for writes.
-        let byte = unsafe { src.add(i).read() };
-        unsafe { dst.add(i * 2).write(encode_nibble::<UPPER>(byte >> 4)) };
-        unsafe { dst.add(i * 2 + 1).write(encode_nibble::<UPPER>(byte & 0x0F)) };
+        unsafe {
+            let byte = src.read();
+            src = src.add(1);
+            dst.write(encode_nibble(byte >> 4, offset));
+            dst = dst.add(1);
+            dst.write(encode_nibble(byte & 0x0F, offset));
+            dst = dst.add(1);
+            byte_len -= 1;
+        }
     }
 }
 
@@ -99,8 +110,8 @@ pub unsafe fn encode_inner<const UPPER: bool>(src: *const u8, dst: *mut u8, byte
 ///
 /// Same requirements as [`encode_inner`].
 #[allow(dead_code)]
-pub unsafe fn encode<const UPPER: bool>(src: *const u8, dst: *mut u8, byte_len: usize) {
-    unsafe { encode_inner::<UPPER>(src, dst, byte_len) }
+pub const unsafe fn encode(src: *const u8, dst: *mut u8, byte_len: usize, upper: bool) {
+    unsafe { encode_inner(src, dst, byte_len, upper) }
 }
 
 /// Constant-time hex decoder.
@@ -181,7 +192,7 @@ mod tests {
     fn encode_nibble_lower_all_values() {
         for nibble in 0u8..=15 {
             assert_eq!(
-                encode_nibble::<false>(nibble),
+                encode_nibble(nibble, 0x27),
                 LOWER_EXPECTED[nibble as usize],
                 "lower nibble {nibble}"
             );
@@ -192,7 +203,7 @@ mod tests {
     fn encode_nibble_upper_all_values() {
         for nibble in 0u8..=15 {
             assert_eq!(
-                encode_nibble::<true>(nibble),
+                encode_nibble(nibble, 0x07),
                 UPPER_EXPECTED[nibble as usize],
                 "upper nibble {nibble}"
             );
@@ -249,8 +260,8 @@ mod tests {
         let mut lower_out = [0u8; 512];
         // SAFETY: pointers derived from fixed-size arrays with correct lengths.
         unsafe {
-            encode::<true>(input.as_ptr(), upper_out.as_mut_ptr(), input.len());
-            encode::<false>(input.as_ptr(), lower_out.as_mut_ptr(), input.len());
+            encode(input.as_ptr(), upper_out.as_mut_ptr(), input.len(), true);
+            encode(input.as_ptr(), lower_out.as_mut_ptr(), input.len(), false);
         }
 
         // Decode back and compare.

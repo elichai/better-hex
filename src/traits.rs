@@ -8,7 +8,7 @@
 //! from hex strings — including `Vec<u8>`, `[u8; N]`, `heapless::Vec`, and
 //! `arrayvec::ArrayVec`.
 
-use crate::{HexStr, Prefix, display::write_hex_to, error::Error, maybe_uninit};
+use crate::{HexDisplay, HexStr, Prefix, display::write_hex_to, error::Error, maybe_uninit};
 use core::fmt;
 use core::mem::MaybeUninit;
 
@@ -90,11 +90,7 @@ pub trait HexTarget: Sized {
 
 impl<S: AsRef<[u8]>> ToHex for S {
     fn write_hex<W: fmt::Write>(&self, w: &mut W, upper: bool) -> fmt::Result {
-        if upper {
-            write_hex_to::<true, 128, W>(self.as_ref(), w)
-        } else {
-            write_hex_to::<false, 128, W>(self.as_ref(), w)
-        }
+        crate::display::write_hex_to::<{crate::display::DEFAULT_BUF}, _>(self.as_ref(), w, upper)
     }
 
     fn encode_hex<T: HexTarget>(&self) -> Result<T, T::Error> {
@@ -164,10 +160,10 @@ impl HexTarget for alloc::string::String {
     type Error = core::convert::Infallible;
     fn encode_hex(bytes: &[u8]) -> Result<Self, Self::Error> {
         // String::new() never fails, so unwrap is safe.
-        Ok(to_hex_container::<false, Self>(bytes).expect("Should never fail"))
+        Ok(to_hex_container(bytes, false).expect("Should never fail"))
     }
     fn encode_hex_upper(bytes: &[u8]) -> Result<Self, Self::Error> {
-        Ok(to_hex_container::<true, Self>(bytes).expect("Should never fail"))
+        Ok(to_hex_container(bytes, true).expect("Should never fail"))
     }
 }
 
@@ -175,10 +171,10 @@ impl HexTarget for alloc::string::String {
 impl<const CAP: usize> HexTarget for heapless::String<CAP> {
     type Error = crate::error::Error;
     fn encode_hex(bytes: &[u8]) -> Result<Self, Self::Error> {
-        to_hex_container::<false, Self>(bytes)
+        to_hex_container(bytes, false)
     }
     fn encode_hex_upper(bytes: &[u8]) -> Result<Self, Self::Error> {
-        to_hex_container::<true, Self>(bytes)
+        to_hex_container(bytes, true)
     }
 }
 
@@ -187,11 +183,11 @@ impl<const CAP: usize> HexTarget for arrayvec::ArrayString<CAP> {
     type Error = crate::error::Error;
 
     fn encode_hex(bytes: &[u8]) -> Result<Self, Self::Error> {
-        to_hex_container::<false, Self>(bytes)
+        to_hex_container(bytes, false)
     }
 
     fn encode_hex_upper(bytes: &[u8]) -> Result<Self, Self::Error> {
-        to_hex_container::<true, Self>(bytes)
+        to_hex_container(bytes, true)
     }
 }
 
@@ -199,19 +195,19 @@ impl<const N: usize, P: Prefix> HexTarget for HexStr<N, P> {
     type Error = crate::error::Error;
 
     fn encode_hex(bytes: &[u8]) -> Result<Self, Self::Error> {
-        to_hex_container::<false, Self>(bytes)
+        to_hex_container(bytes, false)
     }
 
     fn encode_hex_upper(bytes: &[u8]) -> Result<Self, Self::Error> {
-        to_hex_container::<true, Self>(bytes)
+        to_hex_container(bytes, true)
     }
 }
 
 #[inline]
-fn to_hex_container<const UPPER: bool, C: Container>(input: &[u8]) -> Result<C, Error> {
+fn to_hex_container<C: Container>(input: &[u8], upper: bool) -> Result<C, Error> {
     let hex_len = input.len() * 2;
     let mut out = C::new(hex_len)?;
-    crate::backend::encode::<UPPER>(input, &mut C::as_mut_slice(&mut out)[..hex_len])?;
+    crate::backend::encode(input, &mut C::as_mut_slice(&mut out)[..hex_len], upper)?;
     // SAFETY: the first `hex_len` bytes of the spare capacity have been
     // initialized by `backend::encode` with valid hex ASCII characters.
     // Hex ASCII is a subset of UTF-8, satisfying `set_len`'s requirement

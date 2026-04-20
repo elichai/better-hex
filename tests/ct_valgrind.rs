@@ -40,19 +40,19 @@ fn unpoison<T: ?Sized>(val: &mut T) {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-type EncodeFn = unsafe fn(*const u8, *mut u8, usize);
+type EncodeFn = unsafe fn(*const u8, *mut u8, usize, bool);
 type DecodeFn = unsafe fn(*const u8, *mut u8, usize) -> Result<(), InvalidEncoding>;
 type CheckFn = unsafe fn(&[u8]) -> bool;
 
 /// Test that an encode function is CT for sizes 0..=512.
-fn test_encode_ct(encode: EncodeFn) {
+fn test_encode_ct(encode: EncodeFn, upper: bool) {
     for size in 0..=512 {
         let input: Vec<u8> = (0..size).map(|i| (i as u8).wrapping_mul(37)).collect();
         let mut output = vec![0u8; size * 2];
 
         poison(&input);
         poison(&output);
-        unsafe { encode(input.as_ptr(), output.as_mut_ptr(), size) };
+        unsafe { encode(input.as_ptr(), output.as_mut_ptr(), size, upper) };
     }
 }
 
@@ -109,12 +109,12 @@ fn test_check_ct(check: CheckFn) {
 
 #[test]
 fn scalar_encode_lower() {
-    test_encode_ct(scalar::encode::<false>);
+    test_encode_ct(scalar::encode, false);
 }
 
 #[test]
 fn scalar_encode_upper() {
-    test_encode_ct(scalar::encode::<true>);
+    test_encode_ct(scalar::encode, true);
 }
 
 #[test]
@@ -138,12 +138,12 @@ mod neon_ct {
 
     #[test]
     fn encode_lower() {
-        test_encode_ct(neon::encode::<false>);
+        test_encode_ct(neon::encode, false);
     }
 
     #[test]
     fn encode_upper() {
-        test_encode_ct(neon::encode::<true>);
+        test_encode_ct(neon::encode, true);
     }
 
     #[test]
@@ -173,13 +173,13 @@ mod ssse3_ct {
     #[test]
     fn encode_lower() {
         if has_ssse3() {
-            test_encode_ct(x86::encode_ssse3::<false>);
+            test_encode_ct(x86::encode_ssse3, false);
         }
     }
     #[test]
     fn encode_upper() {
         if has_ssse3() {
-            test_encode_ct(x86::encode_ssse3::<true>);
+            test_encode_ct(x86::encode_ssse3, true);
         }
     }
     #[test]
@@ -213,13 +213,13 @@ mod avx2_ct {
     #[test]
     fn encode_lower() {
         if has_avx2() {
-            test_encode_ct(x86::encode_avx2::<false>);
+            test_encode_ct(x86::encode_avx2, false);
         }
     }
     #[test]
     fn encode_upper() {
         if has_avx2() {
-            test_encode_ct(x86::encode_avx2::<true>);
+            test_encode_ct(x86::encode_avx2, true);
         }
     }
     #[test]
@@ -256,13 +256,13 @@ mod avx512_ct {
     #[test]
     fn encode_lower() {
         if has_avx512vbmi() {
-            test_encode_ct(x86::encode_avx512::<false>);
+            test_encode_ct(x86::encode_avx512, false);
         }
     }
     #[test]
     fn encode_upper() {
         if has_avx512vbmi() {
-            test_encode_ct(x86::encode_avx512::<true>);
+            test_encode_ct(x86::encode_avx512, true);
         }
     }
     #[test]
