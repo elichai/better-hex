@@ -6,11 +6,14 @@ Fast, constant-time hex encoding and decoding with SIMD and `const fn`.
 
 ## Features
 
-- **Constant-time** — all operations are constant-time w.r.t. input data values:
+- **Constant-time** — all operations are constant-time w.r.t. the *content* of valid hex input:
   - No lookup tables in memory (branchless arithmetic or register-only SIMD LUTs)
   - No data-dependent branches
   - Error accumulation without early return
-  - Note: NOT constant-time w.r.t. input *length*, only w.r.t. data values
+  - Scope: the input *length* is not secret (loop bounds depend on it), and for
+    `decode` / `check` the *validity* bit (whether any byte was non-hex) is
+    observable via the boolean/`Result` return. Content of valid hex is
+    never leaked.
 - **SIMD acceleration** — x86 (SSSE3 / AVX2 / AVX-512BW), AArch64 (NEON), WASM (SIMD128)
 - **Compile-time** — `const fn` encode, decode, and validation via `const_fn`
 - **Stack hex strings** — `HexStr<N>` / `PrefixedHexStr<N>` with zero overhead (no heap)
