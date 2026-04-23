@@ -28,6 +28,13 @@ impl Buffers {
         Self { buffers, index: 0 }
     }
 
+    /// Hex-encoded buffers for decode/check benches.
+    ///
+    /// Alternates lower- and upper-case buffers: every `next()` call returns
+    /// a buffer whose case differs from the previous call's. Decode/check
+    /// backends take the case-fold at runtime, so the reported throughput
+    /// is an average over both paths. If you need a pure-lower or pure-upper
+    /// measurement, generate a dedicated buffer set.
     pub fn new_hex(size: usize) -> Self {
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(SEED);
         let count = (MAX_ALLOC / (size * 2)).max(2);
@@ -36,7 +43,6 @@ impl Buffers {
             .map(|(idx, _)| {
                 let mut buf = vec![0u8; size];
                 rng.fill_bytes(&mut buf);
-                // Alternate lower/upper to benchmark mixed-case decode.
                 if idx % 2 == 0 {
                     better_hex::encode::<String>(&buf)
                 } else {

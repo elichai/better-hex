@@ -1,3 +1,10 @@
+//! Narrow encode-only oracle.
+//!
+//! Strict subset of `oracle.rs` — kept as a standalone target so an
+//! encode-path fuzz campaign doesn't pay the overhead of the full
+//! oracle's decode + roundtrip work. Any bug this finds will also be
+//! reachable via `oracle.rs`; this target just iterates faster.
+
 #![no_main]
 
 use better_hex::bench_internals::{

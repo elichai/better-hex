@@ -16,8 +16,9 @@ fn bench_decode(c: &mut Criterion) {
         let mut bufs = common::Buffers::new_hex(size);
         let mut output: Vec<u8> = vec![0; size];
 
-        // Throughput is measured in *output* (decoded) bytes.
-        group.throughput(Throughput::Bytes(size as u64));
+        // Throughput is measured in *input* (hex) bytes to match `check.rs`
+        // so GB/s figures are directly comparable between decode and check.
+        group.throughput(Throughput::Bytes((size * 2) as u64));
 
         group.bench_function(BenchmarkId::new("scalar", size), |b| {
             b.iter(|| {
