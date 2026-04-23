@@ -94,6 +94,66 @@ fn roundtrip_all_apis() {
     }
 }
 
+// ── Exhaustive over byte values ─────────────────────────────────────────────
+
+#[test]
+fn single_byte_roundtrip_all_values() {
+    for b in 0u8..=255 {
+        let input = [b];
+        let hex: String = better_hex::encode(&input).unwrap();
+        let decoded: [u8; 1] = better_hex::decode(&hex).unwrap();
+        assert_eq!(decoded, input, "roundtrip mismatch for byte 0x{b:02x}");
+
+        let hex_upper: String = better_hex::encode_upper(&input).unwrap();
+        let decoded_upper: [u8; 1] = better_hex::decode(&hex_upper).unwrap();
+        assert_eq!(decoded_upper, input, "roundtrip (upper) mismatch for byte 0x{b:02x}");
+    }
+}
+
+#[test]
+fn two_byte_roundtrip_all_values() {
+    for ab in 0u16..=u16::MAX {
+        let input = ab.to_le_bytes();
+        let hex: String = better_hex::encode(&input).unwrap();
+        let decoded: [u8; 2] = better_hex::decode(&hex).unwrap();
+        assert_eq!(decoded, input, "roundtrip mismatch for bytes {input:?}");
+    }
+}
+
+#[test]
+fn decode_accepts_exactly_ascii_hex_digits() {
+    // For every possible byte value, build a 2-char input containing it at
+    // each position and confirm decode succeeds iff the byte is an ASCII
+    // hex digit. This pins the acceptance set at the public API boundary.
+    for b in 0u8..=255 {
+        let expected_ok = b.is_ascii_hexdigit();
+
+        let first_pos = [b, b'0'];
+        let second_pos = [b'0', b];
+
+        assert_eq!(
+            better_hex::decode::<[u8; 1]>(&first_pos).is_ok(),
+            expected_ok,
+            "first-position byte 0x{b:02x} acceptance mismatch",
+        );
+        assert_eq!(
+            better_hex::decode::<[u8; 1]>(&second_pos).is_ok(),
+            expected_ok,
+            "second-position byte 0x{b:02x} acceptance mismatch",
+        );
+        assert_eq!(
+            better_hex::check(&first_pos),
+            expected_ok,
+            "check mismatch for first-position byte 0x{b:02x}",
+        );
+        assert_eq!(
+            better_hex::check(&second_pos),
+            expected_ok,
+            "check mismatch for second-position byte 0x{b:02x}",
+        );
+    }
+}
+
 // ── FromHex for [u8; N] — representative sizes (requires const generics) ────
 
 #[test]
