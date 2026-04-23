@@ -204,8 +204,8 @@ mod tests {
     #[test]
     fn wasm_matches_scalar_oracle() {
         exercise_backend(
-            |input, output| unsafe { encode::<false>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
-            |input, output| unsafe { encode::<true>(input.as_ptr(), output.as_mut_ptr().cast(), input.len()) },
+            |input, output| unsafe { encode(input.as_ptr(), output.as_mut_ptr().cast(), input.len(), false) },
+            |input, output| unsafe { encode(input.as_ptr(), output.as_mut_ptr().cast(), input.len(), true) },
             |input, output| unsafe {
                 decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len())
                     .map_err(|_| crate::error::Error::InvalidEncoding)
