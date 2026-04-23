@@ -266,6 +266,14 @@ impl<const N: usize, P: Prefix> PartialEq<str> for HexStr<N, P> {
 impl<const N: usize, P: Prefix> FromStr for HexStr<N, P> {
     type Err = Error;
 
+    /// Parse a hex string.
+    ///
+    /// On length mismatch, `Error::InvalidLength::expected` is the
+    /// **full** string length including any prefix — so for
+    /// `PrefixedHexStr<4>` the expected length is 10 (`"0x"` + 8 hex
+    /// chars), even if the caller supplied 8 hex chars without the prefix.
+    /// Errors from a missing or malformed prefix are reported as
+    /// `Error::InvalidEncoding` rather than `InvalidLength`.
     #[inline]
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let expected = Self::LEN; // P::LEN + N * 2

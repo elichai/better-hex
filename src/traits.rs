@@ -243,6 +243,11 @@ fn from_hex_container<C: Container>(hex: &[u8]) -> Result<C, Error> {
 /// # Safety
 ///
 /// Implementors must ensure:
+/// - `Handle` returned by `new(n)` has `len() == 0` so the spare capacity
+///   returned by `as_mut_slice` does not alias any already-initialized
+///   bytes. Current callers (`to_hex_container` / `from_hex_container`)
+///   always construct a fresh handle, so this invariant matches their
+///   usage; implementors must not rely on pre-existing content.
 /// - `as_mut_slice()` returns a slice covering the full spare capacity.
 /// - After `set_len(n)`, the first `n` bytes are treated as initialized.
 ///   For string types, those bytes must be valid UTF-8.
