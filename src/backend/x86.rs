@@ -686,7 +686,7 @@ unsafe fn encode_avx512_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len
 /// # Safety
 ///
 /// Same as [`encode_avx512_inner`].
-#[target_feature(enable = "avx512vbmi")]
+#[target_feature(enable = "avx512bw,avx512vbmi")]
 pub unsafe fn encode_avx512(src: *const u8, dst: *mut u8, byte_len: usize, upper: bool) {
     unsafe { encode_avx512_inner(src, dst, byte_len, upper) }
 }
