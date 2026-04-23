@@ -101,6 +101,54 @@ fuzz_target!(|data: &[u8]| {
     assert_eq!(scalar::check(data), all_hex, "scalar check disagrees");
     assert_eq!(dispatched_check(data), all_hex, "dispatched check disagrees");
 
+    // Per-backend fuzzing: run every tier the host CPU actually supports.
+    // Without this, only the single top-tier backend gets exercised — a
+    // regression in SSSE3 on an AVX-512 host would stay hidden.
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        use better_hex::bench_internals::x86;
+        if std::is_x86_feature_detected!("ssse3") {
+            check_encode("ssse3 lower", data, &expected_lower, false, |d, o, u| unsafe {
+                x86::encode_ssse3(d.as_ptr(), o.as_mut_ptr().cast(), d.len(), u);
+            });
+            check_encode("ssse3 upper", data, &expected_upper, true, |d, o, u| unsafe {
+                x86::encode_ssse3(d.as_ptr(), o.as_mut_ptr().cast(), d.len(), u);
+            });
+            assert_eq!(unsafe { x86::check_ssse3(data) }, all_hex, "ssse3 check disagrees");
+        }
+        if std::is_x86_feature_detected!("avx2") {
+            check_encode("avx2 lower", data, &expected_lower, false, |d, o, u| unsafe {
+                x86::encode_avx2(d.as_ptr(), o.as_mut_ptr().cast(), d.len(), u);
+            });
+            check_encode("avx2 upper", data, &expected_upper, true, |d, o, u| unsafe {
+                x86::encode_avx2(d.as_ptr(), o.as_mut_ptr().cast(), d.len(), u);
+            });
+            assert_eq!(unsafe { x86::check_avx2(data) }, all_hex, "avx2 check disagrees");
+        }
+        if std::is_x86_feature_detected!("avx512bw") {
+            assert_eq!(unsafe { x86::check_avx512(data) }, all_hex, "avx512 check disagrees");
+        }
+        if std::is_x86_feature_detected!("avx512vbmi") {
+            check_encode("avx512 lower", data, &expected_lower, false, |d, o, u| unsafe {
+                x86::encode_avx512(d.as_ptr(), o.as_mut_ptr().cast(), d.len(), u);
+            });
+            check_encode("avx512 upper", data, &expected_upper, true, |d, o, u| unsafe {
+                x86::encode_avx512(d.as_ptr(), o.as_mut_ptr().cast(), d.len(), u);
+            });
+        }
+    }
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    {
+        use better_hex::bench_internals::neon;
+        check_encode("neon lower", data, &expected_lower, false, |d, o, u| unsafe {
+            neon::encode(d.as_ptr(), o.as_mut_ptr().cast(), d.len(), u);
+        });
+        check_encode("neon upper", data, &expected_upper, true, |d, o, u| unsafe {
+            neon::encode(d.as_ptr(), o.as_mut_ptr().cast(), d.len(), u);
+        });
+        assert_eq!(neon::check(data), all_hex, "neon check disagrees");
+    }
+
     // Decode: only on even-length inputs
     if data.len() % 2 != 0 {
         return;
@@ -110,6 +158,37 @@ fuzz_target!(|data: &[u8]| {
 
     check_decode("scalar", data, &naive_result, scalar_decode);
     check_decode("dispatched", data, &naive_result, dispatched_decode);
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        use better_hex::bench_internals::x86;
+        if std::is_x86_feature_detected!("ssse3") {
+            check_decode("ssse3", data, &naive_result, |hex, out| unsafe {
+                x86::decode_ssse3(hex.as_ptr(), out.as_mut_ptr().cast(), out.len())
+                    .map_err(|_| better_hex::Error::InvalidEncoding)
+            });
+        }
+        if std::is_x86_feature_detected!("avx2") {
+            check_decode("avx2", data, &naive_result, |hex, out| unsafe {
+                x86::decode_avx2(hex.as_ptr(), out.as_mut_ptr().cast(), out.len())
+                    .map_err(|_| better_hex::Error::InvalidEncoding)
+            });
+        }
+        if std::is_x86_feature_detected!("avx512bw") {
+            check_decode("avx512", data, &naive_result, |hex, out| unsafe {
+                x86::decode_avx512(hex.as_ptr(), out.as_mut_ptr().cast(), out.len())
+                    .map_err(|_| better_hex::Error::InvalidEncoding)
+            });
+        }
+    }
+    #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
+    {
+        use better_hex::bench_internals::neon;
+        check_decode("neon", data, &naive_result, |hex, out| unsafe {
+            neon::decode(hex.as_ptr(), out.as_mut_ptr().cast(), out.len())
+                .map_err(|_| better_hex::Error::InvalidEncoding)
+        });
+    }
 
     // Roundtrip: encode then decode must recover original
     if !data.is_empty() {
