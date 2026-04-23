@@ -1,40 +1,54 @@
 # Suppress the err_accum != 0 branch inside SIMD decode/check wrappers.
 #
-# The SIMD backends accumulate errors branchlessly, then do a final
-# `if err_accum != 0 { Err } else { Ok }`. This branch depends on
-# poisoned data, but it only reveals whether the input was valid — not
-# which bytes were invalid. The CT property (constant-time w.r.t. data
-# values) holds up to this final result branch.
+# The SIMD backends accumulate errors branchlessly, then end with a final
+# `if err_accum != 0 { Err } else { Ok }` or equivalent. That branch
+# observes a value derived from poisoned input — but only the single
+# "valid vs invalid" bit, not the input content. The CT guarantee holds
+# over valid-hex content; the validity bit is explicitly out of scope
+# (see README).
 #
-# The scalar decode_inner returns a raw u8 accumulator with no branch,
-# so it doesn't need suppression.
+# Patterns are anchored on the `better_hex` crate to avoid hiding
+# accidental branches in unrelated code.
+#
+# The scalar decode_inner returns a raw u8 accumulator with no branch
+# inside the loop, so it doesn't need suppression.
 {
-   simd_decode_result_branch
+   simd_decode_result_branch_ssse3
    Memcheck:Cond
-   fun:*decode_ssse3*
+   fun:*better_hex*decode_ssse3*
 }
 {
    simd_decode_result_branch_avx2
    Memcheck:Cond
-   fun:*decode_avx2*
+   fun:*better_hex*decode_avx2*
+}
+{
+   simd_decode_result_branch_avx512
+   Memcheck:Cond
+   fun:*better_hex*decode_avx512*
 }
 {
    simd_decode_result_branch_neon
    Memcheck:Cond
-   fun:*neon*decode*
+   fun:*better_hex*neon*decode*
 }
 {
-   simd_check_result_branch
+   simd_check_result_branch_ssse3
    Memcheck:Cond
-   fun:*check_ssse3*
+   fun:*better_hex*check_ssse3*
 }
 {
    simd_check_result_branch_avx2
    Memcheck:Cond
-   fun:*check_avx2*
+   fun:*better_hex*check_avx2*
+}
+{
+   simd_check_result_branch_avx512
+   Memcheck:Cond
+   fun:*better_hex*check_avx512*
 }
 {
    simd_check_result_branch_neon
    Memcheck:Cond
-   fun:*neon*check*
+   fun:*better_hex*neon*check*
 }
