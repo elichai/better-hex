@@ -1,17 +1,17 @@
-use core::mem::MaybeUninit;
-use zerocopy::{Immutable, IntoBytes, Unaligned};
+use bytemuck::{NoUninit, Zeroable};
+use core::{hint::black_box, mem::MaybeUninit};
 
 mod sealed {
     pub trait Sealed {}
 }
 
 /// A zero-sized prefix marker (no "0x" prefix).
-#[derive(Debug, Copy, Clone, PartialEq, Eq, IntoBytes, Immutable, Unaligned)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, NoUninit, Zeroable)]
 #[repr(transparent)]
 pub struct NoPrefix;
 
 /// A prefix marker that stores the "0x" prefix.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, IntoBytes, Immutable, Unaligned)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, NoUninit, Zeroable)]
 #[repr(transparent)]
 pub struct WithPrefix(pub(crate) [u8; 2]);
 
@@ -21,7 +21,7 @@ impl sealed::Sealed for WithPrefix {}
 /// Sealed trait for hex string prefix types.
 ///
 /// Only `NoPrefix` and `WithPrefix` implement this.
-pub trait Prefix: sealed::Sealed + IntoBytes + Immutable + Unaligned + Copy + 'static {
+pub trait Prefix: sealed::Sealed + NoUninit + Copy + 'static {
     /// The canonical prefix value. `NoPrefix` is a ZST; `WithPrefix` is `"0x"`.
     const VALUE: Self;
 
@@ -32,9 +32,9 @@ pub trait Prefix: sealed::Sealed + IntoBytes + Immutable + Unaligned + Copy + 's
     /// uninitialized buffers (e.g., writing prefix bytes into a `MaybeUninit`
     /// output before the hex content).
     fn bytes(&self) -> &[MaybeUninit<u8>] {
-        let bytes = self.as_bytes();
+        let bytes: &[u8] = bytemuck::bytes_of(self);
         debug_assert_eq!(bytes.len(), Self::LEN);
-        zerocopy::transmute_ref!(bytes)
+        crate::maybe_uninit::slice_as_uninit(bytes)
     }
 
     /// Constant-time prefix strip.
@@ -64,6 +64,6 @@ impl Prefix for WithPrefix {
     fn strip_prefix(input: &[u8]) -> Option<&[u8]> {
         let (&[first, second], rest) = input.split_first_chunk()?;
         let err = (first ^ b'0') | (second ^ b'x');
-        if err != 0 { None } else { Some(rest) }
+        if black_box(err) != 0 { None } else { Some(rest) }
     }
 }

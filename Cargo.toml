@@ -22,7 +22,7 @@ _bench_hex = []
 ct-test = ["dep:crabgrind", "_bench_internals"]
 
 [dependencies]
-zerocopy = { version = "0.8", features = ["derive"] }
+bytemuck = { version = "1.25", default-features = false, features = ["derive", "min_const_generics", "must_cast"] }
 cfg-if = "1"
 serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 heapless = { version = "0.9", default-features = false, optional = true }
@@ -33,7 +33,7 @@ crabgrind = { version = "0.2", optional = true }
 cpufeatures = "0.3"
 
 [dev-dependencies]
-zerocopy = { version = "0.8", features = ["derive"] }
+bytemuck = { version = "1.25", default-features = false, features = ["derive", "min_const_generics"] }
 criterion = { version = "0.8", features = ["html_reports"] }
 proptest = { version = "1", default-features = false, features = ["std"] }
 rand_core = "0.10"

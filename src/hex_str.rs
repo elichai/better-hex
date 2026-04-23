@@ -4,18 +4,26 @@ use crate::{
     maybe_uninit,
     prefix::{NoPrefix, Prefix},
 };
+use bytemuck::NoUninit;
 use core::{fmt, mem::MaybeUninit, ops::Deref, str::FromStr};
-use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
 
 /// Raw storage for [`HexStr`].
 ///
 /// Not exposed publicly — `HexStr` wraps this and enforces the hex ASCII invariant.
-#[derive(Copy, Clone, IntoBytes, Immutable, KnownLayout)]
+#[derive(Copy, Clone)]
 #[repr(C)]
 pub(crate) struct RawHexStr<const N: usize, P: Prefix> {
     pub(crate) prefix: P,
     pub(crate) bytes: [[u8; 2]; N],
 }
+
+// Manual `NoUninit` impl: bytemuck's `#[derive(NoUninit)]` refuses generic
+// structs because it can't prove absence of padding. Here all fields are
+// `u8`/arrays-of-`u8` (alignment 1), so `#[repr(C)]` has no padding.
+//
+// SAFETY: `#[repr(C)]`, `P: NoUninit` has alignment 1 (both `NoPrefix` and
+// `WithPrefix` are u8-aligned), `[[u8; 2]; N]` has alignment 1 — no padding.
+unsafe impl<const N: usize, P: Prefix> NoUninit for RawHexStr<N, P> {}
 
 /// Stack-allocated hex string for `N` input bytes.
 ///
@@ -59,6 +67,16 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     }
 
     /// Encode bytes to lowercase hex at compile time.
+    ///
+    /// # Performance
+    ///
+    /// `const fn` runs the scalar backend only — SIMD intrinsics aren't
+    /// callable from `const` context. For runtime encoding prefer
+    /// [`HexStr::encode_lower`], which dispatches to SIMD and is 10–50×
+    /// faster on typical inputs. See the [crate-level performance note]
+    /// for detail.
+    ///
+    /// [crate-level performance note]: crate#performance-const-fn-vs-runtime-apis
     pub const fn const_encode_lower(input: &[u8; N]) -> Self {
         Self {
             inner: RawHexStr {
@@ -69,6 +87,14 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     }
 
     /// Encode bytes to uppercase hex at compile time.
+    ///
+    /// # Performance
+    ///
+    /// Scalar-only; see [`HexStr::const_encode_lower`] and the
+    /// [crate-level performance note] for details. For runtime encoding
+    /// prefer [`HexStr::encode_upper`].
+    ///
+    /// [crate-level performance note]: crate#performance-const-fn-vs-runtime-apis
     pub const fn const_encode_upper(input: &[u8; N]) -> Self {
         Self {
             inner: RawHexStr {
@@ -103,13 +129,14 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     /// validity invariants.
     pub const unsafe fn from_hex_unchecked<const M: usize>(hex: [u8; M]) -> Self {
         const { assert!(M == N * 2, "hex input length must equal N * 2") };
-        // SAFETY: The caller must uphold the invariant that all bytes are valid
-        // hex ASCII. The transmute is sound because [u8; M] and [[u8; 2]; N]
-        // have identical layout when M == N * 2 (const-asserted above).
+        // Safe const-compatible cast: `bytemuck::must_cast` proves at compile
+        // time that `[u8; M]` and `[[u8; 2]; N]` have equal size and alignment
+        // (both align 1, size M = 2*N). The caller must uphold the outer
+        // hex-ASCII invariant for `as_str`.
         Self {
             inner: RawHexStr {
                 prefix: P::VALUE,
-                bytes: *zerocopy::transmute_ref!(&hex),
+                bytes: bytemuck::must_cast(hex),
             },
         }
     }
@@ -118,6 +145,14 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     ///
     /// `M` must equal `N * 2` (enforced at compile time). Returns `None` if
     /// any byte is not valid hex ASCII.
+    ///
+    /// # Performance
+    ///
+    /// Runs the scalar validator only — no SIMD. See the
+    /// [crate-level performance note]. For runtime construction prefer
+    /// [`HexStr::from_hex`].
+    ///
+    /// [crate-level performance note]: crate#performance-const-fn-vs-runtime-apis
     pub const fn const_from_hex<const M: usize>(hex: [u8; M]) -> Option<Self> {
         const { assert!(M == N * 2, "hex input length must equal N * 2") };
         if !const_check(&hex) {
@@ -130,18 +165,12 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     /// View the full string as a byte slice (includes prefix when present).
     pub const fn as_bytes(&self) -> &[u8] {
         const { assert!(core::mem::size_of::<RawHexStr<N, P>>() == Self::LEN) };
-        let res: &[u8] =
-            unsafe { core::slice::from_raw_parts((&self.inner) as *const RawHexStr<N, P> as *const u8, Self::LEN) };
-        res
+        bytemuck::must_cast_slice(core::slice::from_ref(&self.inner))
     }
 
     /// View the hex content (without prefix) as a byte slice.
     pub const fn as_bytes_no_prefix(&self) -> &[u8] {
-        let bytes = &self.inner.bytes;
-        let size = size_of_val(bytes);
-        assert!(size == N * 2, "size of bytes array must equal N * 2");
-        // SAFETY: `bytes` is a contiguous array of `u8` with length `N * 2` (guaranteed by the type and constructors), so we can safely reinterpret it as a byte slice of the appropriate length.
-        unsafe { core::slice::from_raw_parts(bytes.as_ptr().cast::<u8>(), size_of_val(bytes)) }
+        self.inner.bytes.as_slice().as_flattened()
     }
 
     /// View the full string as a `&str`.
@@ -150,6 +179,7 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     /// characters are in `[0-9a-fA-F]` (ASCII).
     pub const fn as_str(&self) -> &str {
         let bytes = self.as_bytes();
+
         debug_assert!(core::str::from_utf8(bytes).is_ok(), "HexStr contained invalid UTF-8");
         // SAFETY: all constructors guarantee hex ASCII content (valid UTF-8).
         unsafe { core::str::from_utf8_unchecked(bytes) }
@@ -166,6 +196,19 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
         unsafe { maybe_uninit::transpose(out).assume_init() }
     }
 
+    /// Decode the hex content back to raw bytes at compile time.
+    ///
+    /// Returns `Ok([u8; N])` for any value constructed through the normal
+    /// constructors (which maintain the hex-ASCII invariant). The `Result`
+    /// is kept so the decoder's internal error accumulation path remains
+    /// expressible in `const`.
+    ///
+    /// # Performance
+    ///
+    /// Scalar-only; see the [crate-level performance note]. For runtime
+    /// decoding prefer [`HexStr::decode`] which uses SIMD.
+    ///
+    /// [crate-level performance note]: crate#performance-const-fn-vs-runtime-apis
     pub const fn const_decode(&self) -> Result<[u8; N], Error> {
         let hex_bytes = self.as_bytes_no_prefix();
         debug_assert!(const_check(hex_bytes), "HexStr contained invalid hex bytes");
@@ -237,7 +280,9 @@ impl<const N: usize, P: Prefix> FromStr for HexStr<N, P> {
             return Err(Error::InvalidEncoding);
         }
         // Input is valid hex — reinterpret as [[u8; 2]; N] and construct.
-        let bytes: &[[u8; 2]; N] = FromBytes::ref_from_bytes(hex_part).expect("length already checked above");
+        // `[u8; N*2]` and `[[u8; 2]; N]` have identical layout (no padding).
+        let bytes: &[[u8; 2]; N] =
+            bytemuck::try_from_bytes(hex_part).expect("length already checked above");
         Ok(Self {
             inner: RawHexStr {
                 prefix: P::VALUE,
@@ -269,6 +314,14 @@ const fn const_encode_pairs<const N: usize>(input: &[u8; N], upper: bool) -> [[u
 ///
 /// Returns an error if the input length is not exactly `2 * N`, or if any
 /// byte is not a valid hex character.
+///
+/// # Performance
+///
+/// Scalar-only (one byte per iteration). At runtime, [`decode`](crate::decode)
+/// / [`decode_to_slice`](crate::decode_to_slice) dispatch to SIMD
+/// (16–64 bytes per iteration). See the [crate-level performance note].
+///
+/// [crate-level performance note]: crate#performance-const-fn-vs-runtime-apis
 pub const fn const_decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; N], Error> {
     if input.len() != N * 2 {
         return Err(Error::InvalidLength {
@@ -290,6 +343,14 @@ pub const fn const_decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; 
 ///
 /// Returns `true` if `input` has even length and every byte is a valid hex
 /// character (`[0-9a-fA-F]`). Processes all bytes without short-circuiting.
+///
+/// # Performance
+///
+/// Scalar-only. At runtime, [`check`](crate::check) dispatches to SIMD and
+/// is 10–50× faster on typical inputs. See the [crate-level performance
+/// note].
+///
+/// [crate-level performance note]: crate#performance-const-fn-vs-runtime-apis
 pub const fn const_check(input: &[u8]) -> bool {
     input.len().is_multiple_of(2) && crate::backend::scalar::check(input)
 }

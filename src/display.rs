@@ -70,22 +70,21 @@ impl<T: AsRef<[u8]>> fmt::UpperHex for HexDisplay<T> {
 ///
 /// `upper` selects lowercase vs uppercase.
 /// `BUF` is the hex output buffer size in bytes (must be even; generic for benchmarking).
-pub(crate) fn write_hex_to<const BUF: usize, W: fmt::Write>(mut input: &[u8], w: &mut W, upper: bool) -> fmt::Result {
+pub(crate) fn write_hex_to<const BUF: usize, W: fmt::Write>(input: &[u8], w: &mut W, upper: bool) -> fmt::Result {
     debug_assert!(BUF >= 2 && BUF.is_multiple_of(2), "BUF must be even and >= 2");
     let mut buf = [MaybeUninit::<u8>::uninit(); BUF];
-    let chunk_size = BUF / 2;
-    let mut chunk;
+    let mut chunks = input.chunks_exact(BUF / 2);
 
-    while input.len() >= chunk_size {
-        (chunk, input) = input.split_at(chunk_size);
+    while let Some(chunk) = chunks.next() {
         backend::encode(chunk, &mut buf, upper).expect("buf is correctly sized");
         // SAFETY: backend initialized BUF bytes of valid hex ASCII.
         w.write_str(unsafe { maybe_uninit::assume_init_str(&buf) })?;
     }
 
-    if !input.is_empty() {
-        let hex_len = input.len() * 2;
-        backend::encode(input, &mut buf[..hex_len], upper).expect("buf is correctly sized");
+    let remainder = chunks.remainder();
+    if !remainder.is_empty() {
+        let hex_len = remainder.len() * 2;
+        backend::encode(remainder, &mut buf[..hex_len], upper).expect("buf is correctly sized");
         // SAFETY: backend initialized hex_len bytes of valid hex ASCII.
         w.write_str(unsafe { maybe_uninit::assume_init_str(&buf[..hex_len]) })?;
     }

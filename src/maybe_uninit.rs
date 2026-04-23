@@ -34,6 +34,13 @@ pub(crate) const fn transpose<const N: usize>(mu: [MaybeUninit<u8>; N]) -> Maybe
     unsafe { ptr::from_ref(&mu).cast::<MaybeUninit<[u8; N]>>().read() }
 }
 
+/// Reinterpret `&[u8]` as `&[MaybeUninit<u8>]` (widening).
+pub(crate) fn slice_as_uninit(s: &[u8]) -> &[MaybeUninit<u8>] {
+    // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`; converting
+    // initialized `u8` to `MaybeUninit<u8>` is always valid.
+    unsafe { slice::from_raw_parts(s.as_ptr().cast::<MaybeUninit<u8>>(), s.len()) }
+}
+
 /// Reinterpret `&mut [u8]` as `&mut [MaybeUninit<u8>]`.
 ///
 /// Safe because `MaybeUninit<u8>` has the same layout as `u8`, and going
@@ -51,7 +58,7 @@ pub(crate) fn slice_as_uninit_mut(s: &mut [u8]) -> &mut [MaybeUninit<u8>] {
 /// # Safety
 ///
 /// All elements must have been initialized.
-pub(crate) unsafe fn assume_init_slice(s: &[MaybeUninit<u8>]) -> &[u8] {
+pub(crate) const unsafe fn assume_init_slice(s: &[MaybeUninit<u8>]) -> &[u8] {
     // SAFETY: caller guarantees all elements are initialized. `MaybeUninit<u8>`
     // has the same layout as `u8`, so the pointer cast is valid.
     unsafe { slice::from_raw_parts(s.as_ptr().cast::<u8>(), s.len()) }
@@ -65,7 +72,7 @@ pub(crate) unsafe fn assume_init_slice(s: &[MaybeUninit<u8>]) -> &[u8] {
 /// # Safety
 ///
 /// All elements must be initialized and contain valid UTF-8 bytes.
-pub(crate) unsafe fn assume_init_str(s: &[MaybeUninit<u8>]) -> &str {
+pub(crate) const unsafe fn assume_init_str(s: &[MaybeUninit<u8>]) -> &str {
     // SAFETY: caller guarantees all elements are initialized.
     let bytes = unsafe { assume_init_slice(s) };
     debug_assert!(str::from_utf8(bytes).is_ok(), "assume_init_str: invalid UTF-8");

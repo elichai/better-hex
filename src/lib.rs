@@ -11,6 +11,21 @@
 //!   [`const_from_hex`][HexStr::const_from_hex] / [`const_decode`][HexStr::const_decode],
 //!   plus the free functions [`const_decode_to_array`] and [`const_check`]
 //! - **Stack strings** — [`HexStr<N>`][HexStr] with zero heap allocation
+//!
+//! # Performance: `const fn` vs runtime APIs
+//!
+//! All `const fn` entry points run the scalar branchless backend only —
+//! CPU SIMD intrinsics (SSSE3/AVX2/AVX-512/NEON/SIMD128) are not callable
+//! from `const` contexts in stable Rust. The scalar backend is still
+//! constant-time (no table lookups, no data-dependent branches), but it
+//! processes one byte per iteration where SIMD processes 16–64.
+//!
+//! Use `const fn` for small, fixed inputs evaluated at compile time
+//! (literals, static lookup tables, test vectors). For runtime encoding
+//! and decoding of user data, prefer the non-`const` API — [`encode`],
+//! [`decode`], [`check`], [`HexStr::encode_lower`], [`HexStr::from_hex`],
+//! [`HexStr::decode`] — which dispatches to SIMD and is 10–50× faster on
+//! typical inputs.
 //! - **Extensible** — [`HexTarget`] trait for custom output types
 //!
 //! # Acknowledgments

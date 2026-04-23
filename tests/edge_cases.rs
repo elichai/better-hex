@@ -25,7 +25,7 @@ fn prefix_type_properties() {
     assert_eq!(NoPrefix::LEN, 0);
     assert_eq!(core::mem::size_of::<WithPrefix>(), 2);
     assert_eq!(WithPrefix::LEN, 2);
-    assert_eq!(zerocopy::IntoBytes::as_bytes(&WithPrefix::VALUE), b"0x");
+    assert_eq!(bytemuck::bytes_of(&WithPrefix::VALUE), b"0x");
 }
 
 // ── Invalid-input handling ──────────────────────────────────────────────────
