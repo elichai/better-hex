@@ -41,8 +41,10 @@ fuzz_target!(|data: &str| {
             if let Ok(hs) = PrefixedHexStr::<$n>::from_str(data) {
                 let decoded = hs.decode();
                 let re_encoded = PrefixedHexStr::<$n>::encode_lower(&decoded);
-                let original_lower: String = hs.as_str()[..2].to_owned()
-                    + &hs.as_str()[2..].to_ascii_lowercase();
+                // Lowercase the entire string — including the prefix — so that
+                // if from_str ever accepts "0X..." as a valid prefix the
+                // assertion still holds.
+                let original_lower: String = hs.as_str().to_ascii_lowercase();
                 assert_eq!(
                     re_encoded.as_str(),
                     original_lower.as_str(),
