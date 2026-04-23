@@ -107,6 +107,29 @@ fn test_check_ct(check: CheckFn) {
     }
 }
 
+/// Test that a check function processes all bytes (invalid at every position).
+///
+/// A short-circuit implementation that returns on the first invalid byte
+/// would leak the position via timing, and Valgrind would flag the branch
+/// on poisoned data.
+fn test_check_invalid_ct(check: CheckFn) {
+    for size in 1..=512 {
+        let input: Vec<u8> = (0..size).map(|i| (i as u8).wrapping_mul(37)).collect();
+        let hex = better_hex::encode_string(&input);
+        let valid_hex = hex.into_bytes();
+
+        for corrupt_pos in 0..valid_hex.len() {
+            let mut hex_bytes = valid_hex.clone();
+            hex_bytes[corrupt_pos] = 0xFF;
+
+            poison(&hex_bytes);
+            let mut valid = unsafe { check(&hex_bytes) };
+            unpoison(&mut valid);
+            assert!(!valid, "check accepted invalid byte at pos {corrupt_pos} (size {size})");
+        }
+    }
+}
+
 #[test]
 fn scalar_encode_lower() {
     test_encode_ct(scalar::encode, false);
@@ -130,6 +153,11 @@ fn scalar_decode_invalid() {
 #[test]
 fn scalar_check() {
     test_check_ct(scalar::check);
+}
+
+#[test]
+fn scalar_check_invalid() {
+    test_check_invalid_ct(scalar::check);
 }
 
 #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
@@ -159,6 +187,11 @@ mod neon_ct {
     #[test]
     fn check() {
         test_check_ct(neon::check);
+    }
+
+    #[test]
+    fn check_invalid() {
+        test_check_invalid_ct(neon::check);
     }
 }
 
@@ -200,6 +233,12 @@ mod ssse3_ct {
             test_check_ct(x86::check_ssse3);
         }
     }
+    #[test]
+    fn check_invalid() {
+        if has_ssse3() {
+            test_check_invalid_ct(x86::check_ssse3);
+        }
+    }
 }
 
 #[cfg(all(not(feature = "disable-simd"), any(target_arch = "x86", target_arch = "x86_64")))]
@@ -238,6 +277,12 @@ mod avx2_ct {
     fn check() {
         if has_avx2() {
             test_check_ct(x86::check_avx2);
+        }
+    }
+    #[test]
+    fn check_invalid() {
+        if has_avx2() {
+            test_check_invalid_ct(x86::check_avx2);
         }
     }
 }
@@ -281,6 +326,12 @@ mod avx512_ct {
     fn check() {
         if has_avx512bw() {
             test_check_ct(x86::check_avx512);
+        }
+    }
+    #[test]
+    fn check_invalid() {
+        if has_avx512bw() {
+            test_check_invalid_ct(x86::check_avx512);
         }
     }
 }
