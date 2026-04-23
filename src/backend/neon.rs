@@ -100,6 +100,7 @@ fn hex_lut(upper: bool) -> uint8x16_t {
     unsafe { vld1q_u8(bytes.as_ptr()) }
 }
 
+#[target_feature(enable = "neon")]
 pub unsafe fn encode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize, upper: bool) {
     let lut = hex_lut(upper);
     let mask_lo = unsafe { vdupq_n_u8(0x0F) };
@@ -204,6 +205,7 @@ pub unsafe fn encode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize, 
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
+#[target_feature(enable = "neon")]
 pub unsafe fn decode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> Result<(), InvalidEncoding> {
     let mut err: u8 = 0;
 
