@@ -56,11 +56,10 @@ jobs:
             echo "seconds=60" >> "$GITHUB_OUTPUT"
           fi
 
-      # AddressSanitizer catches heap/stack/global out-of-bounds accesses.
-      # --release keeps optimized code paths; --debug-assertions keeps debug assertions and overflow checks.
-      # --careful builds std with extra runtime checks, at the cost of throughput.
+      # Build flags and timeouts live in fuzz/fuzz.sh — one source of truth
+      # so local runs (./fuzz/fuzz.sh) and CI invoke the fuzzer identically.
       - name: Run fuzzer
         env:
           FUZZ_TARGET: ${{ matrix.target }}
           FUZZ_SECONDS: ${{ steps.duration.outputs.seconds }}
-        run: cargo fuzz run --release --debug-assertions --careful --sanitizer address "$FUZZ_TARGET" -- -max_total_time="$FUZZ_SECONDS" -rss_limit_mb=2048
+        run: ./fuzz/fuzz.sh "$FUZZ_TARGET"
