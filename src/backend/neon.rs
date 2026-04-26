@@ -78,17 +78,7 @@ use super::InvalidEncoding;
 use crate::backend::scalar;
 use core::arch::aarch64::*;
 
-/// NEON hex encoder — processes 32 input bytes (producing 64 hex chars) per
-/// main loop iteration using 2x-unrolled table lookup. A single remaining
-/// 16-byte chunk is handled separately, and the final < 16 bytes use an
-/// overlapping NEON read (re-encoding the last 16 bytes) when the tail is
-/// >= 4 bytes and the total input is >= 16 bytes; otherwise scalar is used.
-///
-/// # Safety
-///
-/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len` bytes.
-/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
-/// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
+/// Load the lower- or upper-case hex alphabet into a NEON register.
 #[inline(always)]
 fn hex_lut(upper: bool) -> uint8x16_t {
     let bytes: [u8; 16] = if upper {
@@ -100,10 +90,25 @@ fn hex_lut(upper: bool) -> uint8x16_t {
     unsafe { vld1q_u8(bytes.as_ptr()) }
 }
 
+/// NEON hex encoder — processes 32 input bytes (producing 64 hex chars) per
+/// main loop iteration using 2x-unrolled table lookup. A single remaining
+/// 16-byte chunk is handled separately, and the final < 16 bytes use an
+/// overlapping NEON read (re-encoding the last 16 bytes) when the tail is
+/// >= 4 bytes and the total input is >= 16 bytes; otherwise scalar is used.
+///
+/// # Safety
+///
+/// - `src` must be [valid](core::ptr#safety) for reads of `byte_len` bytes.
+/// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
+/// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
 #[target_feature(enable = "neon")]
 pub unsafe fn encode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize, upper: bool) {
     let lut = hex_lut(upper);
-    let mask_lo = unsafe { vdupq_n_u8(0x0F) };
+    // `vdupq_n_u8` is safe under #[target_feature = "neon"]; same for the
+    // arithmetic / shuffle intrinsics used inside the hot loop. Only the
+    // pointer-touching intrinsics (`vld1q_u8`, `vst1q_u8`) and pointer
+    // arithmetic remain unsafe.
+    let mask_lo = vdupq_n_u8(0x0F);
 
     // Save the original total length for the overlapping-tail heuristic.
     let orig_byte_len = byte_len;
@@ -211,18 +216,20 @@ pub unsafe fn decode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) 
 
     // Hoist all broadcast constants out of the loop so LLVM doesn't need to
     // prove them loop-invariant. These are used by decode_nibbles_with_consts
-    // and the validation step.
-    let c_c6 = unsafe { vdupq_n_u8(0xC6) };
-    let c_six = unsafe { vdupq_n_u8(6) };
-    let c_f0 = unsafe { vdupq_n_u8(0xF0) };
-    let c_df = unsafe { vdupq_n_u8(0xDF) };
-    let c_a = unsafe { vdupq_n_u8(b'A') };
-    let c_ten = unsafe { vdupq_n_u8(10) };
-    let c_validate = unsafe { vdupq_n_u8(0x70) };
+    // and the validation step. `vdupq_n_u8` is safe under #[target_feature].
+    let c_c6 = vdupq_n_u8(0xC6);
+    let c_six = vdupq_n_u8(6);
+    let c_f0 = vdupq_n_u8(0xF0);
+    let c_df = vdupq_n_u8(0xDF);
+    let c_a = vdupq_n_u8(b'A');
+    let c_ten = vdupq_n_u8(10);
+    let c_validate = vdupq_n_u8(0x70);
 
     // NEON: 16 output bytes per iteration (32 hex chars).
     while byte_len >= 16 {
+        // SAFETY: `byte_len >= 16` so `src` is valid for 32 reads.
         let v0 = unsafe { vld1q_u8(src) };
+        // SAFETY: same as above; `src.add(16)` is in bounds.
         let v1 = unsafe { vld1q_u8(src.add(16)) };
 
         let nib0 = decode_nibbles_with_consts(v0, c_c6, c_six, c_f0, c_df, c_a, c_ten);
@@ -232,14 +239,14 @@ pub unsafe fn decode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) 
         // → 112-127 (MSB clear). Invalid (>= 16) → >= 128 (MSB set).
         // Fuse two check vectors with vorrq_u8 BEFORE the horizontal reduce,
         // halving the number of expensive cross-lane vmaxvq_u8 operations.
-        let check0 = unsafe { vqaddq_u8(nib0, c_validate) };
-        let check1 = unsafe { vqaddq_u8(nib1, c_validate) };
-        let combined_check = unsafe { vorrq_u8(check0, check1) };
-        err |= unsafe { vmaxvq_u8(combined_check) } & 0x80;
+        let check0 = vqaddq_u8(nib0, c_validate);
+        let check1 = vqaddq_u8(nib1, c_validate);
+        let combined_check = vorrq_u8(check0, check1);
+        err |= vmaxvq_u8(combined_check) & 0x80;
 
         // Pack: deinterleave hi/lo nibbles, then combine.
-        let deinterleaved = unsafe { vuzpq_u8(nib0, nib1) };
-        let combined = unsafe { vorrq_u8(vshlq_n_u8::<4>(deinterleaved.0), deinterleaved.1) };
+        let deinterleaved = vuzpq_u8(nib0, nib1);
+        let combined = vorrq_u8(vshlq_n_u8::<4>(deinterleaved.0), deinterleaved.1);
 
         // SAFETY: `byte_len >= 16` guarantees src/dst remain in bounds.
         unsafe {
