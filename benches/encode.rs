@@ -65,13 +65,20 @@ fn bench_encode(c: &mut Criterion) {
                 }
                 if std::is_x86_feature_detected!("avx512vbmi") {
                     group.bench_function(BenchmarkId::new(format!("avx512vbmi_{case}"), size), |b| {
-                        b.iter(|| call(x86::encode_avx512, black_box(bufs.next()), black_box(&mut output), upper))
+                        b.iter(|| {
+                            call(
+                                x86::encode_avx512,
+                                black_box(bufs.next()),
+                                black_box(&mut output),
+                                upper,
+                            )
+                        })
                     });
                 }
             }
 
             group.bench_function(BenchmarkId::new(format!("dispatched_{case}"), size), |b| {
-                let out_mu = unsafe { &mut *(output.as_mut_slice() as *mut [u8] as *mut [core::mem::MaybeUninit<u8>]) };
+                let out_mu = common::as_uninit_mut(&mut output);
                 b.iter(|| dispatched_encode(black_box(bufs.next()), black_box(out_mu), upper).unwrap())
             });
         }
