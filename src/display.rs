@@ -75,7 +75,8 @@ pub(crate) fn write_hex_to<const BUF: usize, W: fmt::Write>(input: &[u8], w: &mu
     let mut buf = [MaybeUninit::<u8>::uninit(); BUF];
     let mut chunks = input.chunks_exact(BUF / 2);
 
-    while let Some(chunk) = chunks.next() {
+    // Use `by_ref` so `chunks.remainder()` remains accessible after the loop.
+    for chunk in chunks.by_ref() {
         backend::encode(chunk, &mut buf, upper).expect("buf is correctly sized");
         // SAFETY: backend initialized BUF bytes of valid hex ASCII.
         w.write_str(unsafe { maybe_uninit::assume_init_str(&buf) })?;

@@ -99,7 +99,7 @@ impl<const N: usize> ArrayBuffers<N> {
 }
 
 fn buffer_count(bytes_per_buffer: usize) -> usize {
-    (MAX_ALLOC / bytes_per_buffer.max(1)).max(2).min(MAX_BUFFERS)
+    (MAX_ALLOC / bytes_per_buffer.max(1)).clamp(2, MAX_BUFFERS)
 }
 
 #[allow(dead_code)]
