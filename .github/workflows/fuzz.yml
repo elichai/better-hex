@@ -16,23 +16,22 @@ env:
 
 jobs:
   fuzz-smoke:
-    name: Fuzz smoke (${{ matrix.target }})
-    runs-on: ubuntu-latest
+    name: Fuzz smoke (${{ matrix.target }} on ${{ matrix.platform.arch }})
+    runs-on: ${{ matrix.platform.os }}
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - oracle
-          - encode_oracle
-          - decode_oracle
-          - roundtrip
-          - lengths
-          - hex_str
+        target: [oracle, api, hex_str]
+        platform:
+          - { os: ubuntu-latest, arch: x86_64 }
+          - { os: ubuntu-24.04-arm, arch: aarch64 }
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -57,10 +56,11 @@ jobs:
             echo "seconds=60" >> "$GITHUB_OUTPUT"
           fi
 
-      # cargo-fuzz uses libfuzzer with AddressSanitizer enabled by default
-      # on nightly, so no extra RUSTFLAGS are needed for ASan coverage.
+      # AddressSanitizer catches heap/stack/global out-of-bounds accesses.
+      # --release keeps optimized code paths; --debug-assertions keeps debug assertions and overflow checks.
+      # --careful builds std with extra runtime checks, at the cost of throughput.
       - name: Run fuzzer
         env:
           FUZZ_TARGET: ${{ matrix.target }}
           FUZZ_SECONDS: ${{ steps.duration.outputs.seconds }}
-        run: cargo fuzz run "$FUZZ_TARGET" -- -max_total_time="$FUZZ_SECONDS" -rss_limit_mb=2048
+        run: cargo fuzz run --release --debug-assertions --careful --sanitizer address "$FUZZ_TARGET" -- -max_total_time="$FUZZ_SECONDS" -rss_limit_mb=2048
