@@ -96,7 +96,8 @@ fn bench_decode_alloc(c: &mut Criterion) {
 
     for &size in common::BENCH_SIZES {
         let mut bufs = common::Buffers::new_hex(size);
-        group.throughput(Throughput::Bytes(size as u64));
+        // Decode consumes the hex input, which is twice the decoded byte length.
+        group.throughput(Throughput::Bytes((size * 2) as u64));
 
         group.bench_function(BenchmarkId::new("better_hex", size), |b| {
             b.iter(|| better_hex::decode::<Vec<u8>>(black_box(bufs.next())));
@@ -136,7 +137,8 @@ fn bench_decode_to_slice(c: &mut Criterion) {
     for &size in common::BENCH_SIZES {
         let mut bufs = common::Buffers::new_hex(size);
         let mut dst = vec![0u8; size];
-        group.throughput(Throughput::Bytes(size as u64));
+        // Decode consumes the hex input, which is twice the decoded byte length.
+        group.throughput(Throughput::Bytes((size * 2) as u64));
 
         group.bench_function(BenchmarkId::new("better_hex", size), |b| {
             b.iter(|| {
@@ -169,7 +171,7 @@ fn bench_decode_to_slice(c: &mut Criterion) {
 
 #[cfg(feature = "alloc")]
 fn bench_check(c: &mut Criterion) {
-    let mut group = c.benchmark_group("check");
+    let mut group = c.benchmark_group("check_compare");
 
     for &size in common::BENCH_SIZES {
         let mut bufs = common::Buffers::new_hex(size);
@@ -261,6 +263,7 @@ fn bench_serde_serialize(c: &mut Criterion) {
                     data: Cow::Borrowed(black_box(bufs.next())),
                 };
                 serde_json::to_writer(black_box(&mut out), &val).unwrap();
+                black_box(out.as_slice());
             });
         });
 
@@ -274,6 +277,7 @@ fn bench_serde_serialize(c: &mut Criterion) {
                         data: Cow::Borrowed(black_box(bufs.next())),
                     };
                     serde_json::to_writer(black_box(&mut out), &val).unwrap();
+                    black_box(out.as_slice());
                 });
             });
         }
@@ -289,23 +293,13 @@ fn bench_serde_deserialize(c: &mut Criterion) {
     let mut group = c.benchmark_group("serde_deserialize");
     for &size in common::BENCH_SIZES {
         let mut bufs = common::Buffers::new_hex(size);
-        let hex_len = size * 2;
+        let mut json = common::JsonHexTemplate::new(size * 2);
         group.throughput(Throughput::Bytes(size as u64));
-
-        // Pre-allocate a JSON template: {"data":"<hex>"}
-        // The hex portion is at a fixed offset and always the same length,
-        // so we can just overwrite it each iteration.
-        let prefix = b"{\"data\":\"";
-        let suffix = b"\"}";
-        let mut json_buf = [prefix, &vec![b'0'; hex_len][..], suffix].concat();
-        let hex_start = prefix.len();
-        let hex_end = hex_start + hex_len;
 
         group.bench_function(BenchmarkId::new("better_hex", size), |b| {
             b.iter(|| {
-                json_buf[hex_start..hex_end].copy_from_slice(bufs.next());
-                // SAFETY: json_buf is valid UTF-8 (JSON with hex ASCII content).
-                serde_json::from_slice::<BetterHexWrap>(black_box(&json_buf)).unwrap()
+                let json = json.update(bufs.next());
+                serde_json::from_slice::<BetterHexWrap>(black_box(json)).unwrap()
             });
         });
 
@@ -314,8 +308,8 @@ fn bench_serde_deserialize(c: &mut Criterion) {
             use serde_bench::ConstHexWrap;
             group.bench_function(BenchmarkId::new("const_hex", size), |b| {
                 b.iter(|| {
-                    json_buf[hex_start..hex_end].copy_from_slice(bufs.next());
-                    serde_json::from_slice::<ConstHexWrap>(black_box(&json_buf)).unwrap()
+                    let json = json.update(bufs.next());
+                    serde_json::from_slice::<ConstHexWrap>(black_box(json)).unwrap()
                 });
             });
         }
