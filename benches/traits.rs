@@ -9,7 +9,7 @@ mod common;
 
 #[cfg(feature = "alloc")]
 fn bench_encode(c: &mut Criterion) {
-    let mut group = c.benchmark_group("encode");
+    let mut group = c.benchmark_group("to_hex");
 
     for &size in common::BENCH_SIZES {
         let mut bufs = common::Buffers::new(size);
@@ -17,56 +17,126 @@ fn bench_encode(c: &mut Criterion) {
 
         // encode::<String> — zero-copy via HexTarget
         group.bench_function(BenchmarkId::new("hex_target_string", size), |b| {
-            b.iter(|| {
-                let s: Result<String, _> = better_hex::encode(black_box(bufs.next()));
-                let _ = black_box(s);
-            });
+            b.iter(|| better_hex::encode::<String>(black_box(bufs.next())).unwrap());
         });
     }
 
     group.finish();
 }
 
-// Serde benchmarks — only with serde feature
 #[cfg(all(feature = "alloc", feature = "serde"))]
-fn bench_serde(c: &mut Criterion) {
+mod serde_bench {
     use serde::{Deserialize, Serialize};
 
-    #[derive(Serialize, Deserialize)]
-    struct HexWrap {
+    #[derive(Serialize)]
+    pub struct SliceWrap<'a> {
         #[serde(with = "better_hex::serde")]
-        data: Vec<u8>,
+        pub data: &'a [u8],
     }
 
-    let mut group = c.benchmark_group("serde");
+    #[derive(Deserialize)]
+    pub struct VecWrap {
+        #[serde(with = "better_hex::serde")]
+        pub data: Vec<u8>,
+    }
+
+    #[derive(Serialize)]
+    pub struct ArraySerializeWrap<'a, const N: usize> {
+        #[serde(with = "better_hex::serde")]
+        pub data: &'a [u8; N],
+    }
+
+    #[derive(Deserialize)]
+    pub struct ArrayDeserializeWrap<const N: usize> {
+        #[serde(with = "better_hex::serde")]
+        pub data: [u8; N],
+    }
+}
+
+// Serde benchmarks — only with serde feature.
+#[cfg(all(feature = "alloc", feature = "serde"))]
+fn bench_serde_vec(c: &mut Criterion) {
+    use serde_bench::{SliceWrap, VecWrap};
+
+    let mut group = c.benchmark_group("serde_vec");
 
     for &size in common::BENCH_SIZES {
         let mut bufs = common::Buffers::new(size);
+        let mut hex_bufs = common::Buffers::new_hex(size);
+        let mut json = common::JsonHexTemplate::new(size * 2);
+        let mut out = Vec::with_capacity(size * 2 + 32);
         group.throughput(Throughput::Bytes(size as u64));
 
         group.bench_function(BenchmarkId::new("serialize", size), |b| {
             b.iter(|| {
-                let val = HexWrap {
-                    data: bufs.next().to_vec(),
+                out.clear();
+                let val = SliceWrap {
+                    data: black_box(bufs.next()),
                 };
-                serde_json::to_string(black_box(&val)).unwrap()
+                serde_json::to_writer(black_box(&mut out), black_box(&val)).unwrap();
+                black_box(out.as_slice());
             });
         });
 
-        let json = serde_json::to_string(&HexWrap {
-            data: bufs.next().to_vec(),
-        })
-        .unwrap();
         group.bench_function(BenchmarkId::new("deserialize", size), |b| {
-            b.iter(|| serde_json::from_str::<HexWrap>(black_box(&json)).unwrap());
+            b.iter(|| {
+                let json = json.update(hex_bufs.next());
+                let val = serde_json::from_slice::<VecWrap>(black_box(json)).unwrap();
+                black_box(val.data.as_slice());
+            });
         });
     }
 
     group.finish();
 }
 
-#[cfg(feature = "serde")]
-criterion_group!(benches, bench_encode, bench_serde);
+#[cfg(all(feature = "alloc", feature = "serde"))]
+fn bench_serde_array(c: &mut Criterion) {
+    let mut group = c.benchmark_group("serde_array");
+
+    bench_serde_array_size::<1>(&mut group);
+    bench_serde_array_size::<4>(&mut group);
+    bench_serde_array_size::<16>(&mut group);
+    bench_serde_array_size::<32>(&mut group);
+    bench_serde_array_size::<64>(&mut group);
+    bench_serde_array_size::<256>(&mut group);
+    bench_serde_array_size::<1024>(&mut group);
+
+    group.finish();
+}
+
+#[cfg(all(feature = "alloc", feature = "serde"))]
+fn bench_serde_array_size<const N: usize>(group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>) {
+    use serde_bench::{ArrayDeserializeWrap, ArraySerializeWrap};
+
+    let mut bufs = common::ArrayBuffers::<N>::new();
+    let mut hex_bufs = common::Buffers::new_hex(N);
+    let mut json = common::JsonHexTemplate::new(N * 2);
+    let mut out = Vec::with_capacity(N * 2 + 32);
+    group.throughput(Throughput::Bytes(N as u64));
+
+    group.bench_function(BenchmarkId::new("serialize", N), |b| {
+        b.iter(|| {
+            out.clear();
+            let val = ArraySerializeWrap {
+                data: black_box(bufs.next()),
+            };
+            serde_json::to_writer(black_box(&mut out), black_box(&val)).unwrap();
+            black_box(out.as_slice());
+        });
+    });
+
+    group.bench_function(BenchmarkId::new("deserialize", N), |b| {
+        b.iter(|| {
+            let json = json.update(hex_bufs.next());
+            let val = serde_json::from_slice::<ArrayDeserializeWrap<N>>(black_box(json)).unwrap();
+            black_box(&val.data);
+        });
+    });
+}
+
+#[cfg(all(feature = "alloc", feature = "serde"))]
+criterion_group!(benches, bench_encode, bench_serde_vec, bench_serde_array);
 #[cfg(not(feature = "serde"))]
 criterion_group!(benches, bench_encode);
 criterion_main!(benches);
