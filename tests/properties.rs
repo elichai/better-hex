@@ -192,6 +192,80 @@ proptest! {
         }
     }
 
+    // ── upper-case ───────────────────────────────────────────────────────────
+
+    /// Lower-case oracle has a sibling above; upper-case takes a separate
+    /// SIMD path (different LUT) and is otherwise only tested via fixed-byte
+    /// roundtrips, so make naive parity explicit here.
+    #[test]
+    fn encode_upper_matches_naive(input in proptest::collection::vec(any::<u8>(), 0..512)) {
+        let library: String = better_hex::encode_upper(&input).unwrap();
+        let mut naive = naive_encode_lower(&input);
+        naive.iter_mut().for_each(u8::make_ascii_uppercase);
+        prop_assert_eq!(library.as_bytes(), &naive[..]);
+    }
+
+    /// Roundtrip the upper-case path on its own — the lower-case roundtrip
+    /// above doesn't exercise it.
+    #[test]
+    fn roundtrip_encode_upper_decode(input in proptest::collection::vec(any::<u8>(), 0..512)) {
+        let hex: String = better_hex::encode_upper(&input).unwrap();
+        let decoded: Vec<u8> = better_hex::decode(&hex).unwrap();
+        prop_assert_eq!(&decoded, &input);
+    }
+
+    /// Decode must accept arbitrary mixings of `[a-f]` and `[A-F]` in the
+    /// same input. Random-byte oracle tests above mostly hit the invalid
+    /// path, so mixed *valid* hex isn't well-exercised by them.
+    #[test]
+    fn decode_accepts_mixed_case(
+        input in proptest::collection::vec(any::<u8>(), 0..256),
+        case_mask in proptest::collection::vec(any::<bool>(), 1024),
+    ) {
+        let lower: String = better_hex::encode(&input).unwrap();
+        let upper: String = better_hex::encode_upper(&input).unwrap();
+        let mixed: Vec<u8> = lower
+            .bytes()
+            .zip(upper.bytes())
+            .enumerate()
+            .map(|(i, (lo, up))| if case_mask[i % case_mask.len()] { up } else { lo })
+            .collect();
+        let decoded: Vec<u8> = better_hex::decode(&mixed).unwrap();
+        prop_assert_eq!(decoded, input);
+    }
+
+    // ── const fn vs runtime parity ───────────────────────────────────────────
+    //
+    // The `const fn` paths run the scalar branchless backend exclusively;
+    // the non-`const` runtime APIs dispatch to SIMD. Verify they agree on
+    // arbitrary inputs — a divergence is a real bug.
+
+    #[test]
+    fn const_check_matches_runtime_check(input in proptest::collection::vec(any::<u8>(), 0..256)) {
+        prop_assert_eq!(better_hex::const_check(&input), better_hex::check(&input));
+    }
+
+    #[test]
+    fn const_decode_matches_runtime_decode_array(input in any::<[u8; 32]>()) {
+        let hex: String = better_hex::encode(&input).unwrap();
+        let const_result = better_hex::const_decode_to_array::<32>(hex.as_bytes()).unwrap();
+        let runtime_result = better_hex::decode::<[u8; 32]>(hex.as_bytes()).unwrap();
+        prop_assert_eq!(const_result, runtime_result);
+        prop_assert_eq!(const_result, input);
+    }
+
+    #[test]
+    fn const_encode_matches_runtime_encode(input in any::<[u8; 32]>()) {
+        use better_hex::HexStr;
+        let runtime_lower: HexStr<32> = HexStr::encode_lower(&input);
+        let const_lower = HexStr::<32>::const_encode_lower(&input);
+        prop_assert_eq!(runtime_lower.as_str(), const_lower.as_str());
+
+        let runtime_upper: HexStr<32> = HexStr::encode_upper(&input);
+        let const_upper = HexStr::<32>::const_encode_upper(&input);
+        prop_assert_eq!(runtime_upper.as_str(), const_upper.as_str());
+    }
+
     // ── serde ────────────────────────────────────────────────────────────────
 
     #[test]
@@ -200,6 +274,22 @@ proptest! {
         use serde::{Serialize, Deserialize};
         #[derive(Serialize, Deserialize, PartialEq, Debug)]
         struct W { #[serde(with = "better_hex::serde")] data: Vec<u8> }
+
+        let original = W { data: input };
+        let json = serde_json::to_string(&original).unwrap();
+        let decoded: W = serde_json::from_str(&json).unwrap();
+        prop_assert_eq!(decoded, original);
+    }
+
+    /// `[u8; N]` goes through the alloc-free `serialize_str` fast path on
+    /// the serialize side — different code from the streaming `Vec<u8>`
+    /// path above. Roundtrip verifies both directions.
+    #[test]
+    #[cfg(feature = "serde")]
+    fn serde_roundtrip_array(input in any::<[u8; 32]>()) {
+        use serde::{Serialize, Deserialize};
+        #[derive(Serialize, Deserialize, PartialEq, Debug)]
+        struct W { #[serde(with = "better_hex::serde")] data: [u8; 32] }
 
         let original = W { data: input };
         let json = serde_json::to_string(&original).unwrap();
