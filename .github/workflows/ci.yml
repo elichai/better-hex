@@ -51,16 +51,25 @@ jobs:
             cargo_command: test
             cargo_args: --locked --lib --target x86_64-unknown-linux-gnu
 
-          # Run AVX-512BW tests best-effort: GitHub-hosted runners typically
-          # have Xeon CPUs with AVX-512, but this is not guaranteed, so
-          # allow_failure lets CI stay green if the runner lacks support.
-          - name: Test (x86_64 AVX-512BW impl, best-effort)
+          # Run AVX-512BW tests under qemu-user so they don't depend on
+          # whether the GitHub-hosted runner happens to have Xeon AVX-512.
+          # `Skylake-Server` covers AVX-512F/BW/CD/DQ/VL — sufficient for
+          # the BW path; VBMI is tested separately via Icelake-Server.
+          - name: Test (x86_64 AVX-512BW impl, via qemu)
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             rustflags: -C target-feature=+avx512bw
             cargo_command: test
             cargo_args: --locked --lib --target x86_64-unknown-linux-gnu
-            allow_failure: true
+            qemu_cpu: Skylake-Server
+
+          - name: Test (x86_64 AVX-512 VBMI impl, via qemu)
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            rustflags: -C target-feature=+avx512bw,+avx512vbmi
+            cargo_command: test
+            cargo_args: --locked --lib --target x86_64-unknown-linux-gnu
+            qemu_cpu: Icelake-Server
 
           # Pin macOS 14 to keep this on GitHub's arm64 runner class for NEON.
           - name: Test (aarch64 NEON API)
@@ -111,6 +120,19 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+
+      # For matrix entries with `qemu_cpu` set, install qemu-user-static
+      # and point cargo's runner env var at it so the test binary executes
+      # under emulation with the requested CPU profile (which exposes
+      # features the actual host runner may not have, e.g. AVX-512).
+      - name: Setup qemu runner
+        if: matrix.qemu_cpu != ''
+        env:
+          QEMU_CPU: ${{ matrix.qemu_cpu }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static
+          echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER=qemu-x86_64-static -cpu $QEMU_CPU" >> "$GITHUB_ENV"
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
