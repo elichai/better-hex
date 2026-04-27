@@ -668,18 +668,15 @@ mutually exclusive so at most one contributes. This matches base16ct's
 
 ### Architecture-oracle fuzzing
 
-Each SIMD backend is fuzzed against the naive scalar implementation.
-`#[cfg(fuzzing)]` makes all arch-specific functions accessible.
+Each SIMD backend available on the host is fuzzed against a simple naive
+reference implementation. The `_bench_internals` feature makes the
+semver-exempt backend entry points accessible to the fuzz package.
 
 Fuzz targets:
 
-1. **encode_roundtrip**: `decode(encode(bytes)) == bytes`
-2. **encode_cross_arch**: `generic(bytes) == ssse3(bytes) == avx2(bytes) == neon(bytes) == wasm(bytes)`
-3. **decode_cross_arch**: `generic(hex) == avx2(hex) == neon(hex) == wasm(hex)`
-4. **decode_invalid**: random bytes -> all backends agree on Ok/Err
-5. **check_cross_arch**: all backends agree on valid/invalid
-6. **ct_vs_fast**: `ct::encode(x) == encode(x)`, `ct::decode(x) == decode(x)`
-7. **boundary_lengths**: target SIMD chunk edges (15/16/17, 31/32/33, 63/64/65)
+1. **oracle**: backend encode/decode/check paths agree with the naive reference
+2. **api**: public API roundtrips, fixed-array decode lengths, and slice length errors
+3. **hex_str**: `HexStr<N>` and `PrefixedHexStr<N>` parsing and roundtrips
 
 ### Deterministic edge-case tests
 

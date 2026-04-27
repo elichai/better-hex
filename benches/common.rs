@@ -16,11 +16,6 @@ pub struct Buffers {
     index: usize,
 }
 
-pub struct ArrayBuffers<const N: usize> {
-    buffers: Vec<Box<[u8; N]>>,
-    index: usize,
-}
-
 pub struct JsonHexTemplate {
     buf: Vec<u8>,
     hex_range: Range<usize>,
@@ -74,27 +69,9 @@ impl Buffers {
         self.index = (self.index + 1) % self.buffers.len();
         buf
     }
-}
 
-#[allow(dead_code)]
-impl<const N: usize> ArrayBuffers<N> {
-    pub fn new() -> Self {
-        let mut rng = Xoshiro256PlusPlus::seed_from_u64(SEED);
-        let count = buffer_count(N);
-        let buffers = (0..count)
-            .map(|_| {
-                let mut buf = [0u8; N];
-                rng.fill_bytes(&mut buf);
-                Box::new(buf)
-            })
-            .collect();
-        Self { buffers, index: 0 }
-    }
-
-    pub fn next(&mut self) -> &[u8; N] {
-        let buf = &self.buffers[self.index];
-        self.index = (self.index + 1) % self.buffers.len();
-        buf
+    pub fn next_array<const N: usize>(&mut self) -> &[u8; N] {
+        self.next().as_array().unwrap()
     }
 }
 

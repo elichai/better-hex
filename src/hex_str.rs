@@ -289,8 +289,7 @@ impl<const N: usize, P: Prefix> FromStr for HexStr<N, P> {
         }
         // Input is valid hex — reinterpret as [[u8; 2]; N] and construct.
         // `[u8; N*2]` and `[[u8; 2]; N]` have identical layout (no padding).
-        let bytes: &[[u8; 2]; N] =
-            bytemuck::try_from_bytes(hex_part).expect("length already checked above");
+        let bytes: &[[u8; 2]; N] = bytemuck::try_from_bytes(hex_part).expect("length already checked above");
         Ok(Self {
             inner: RawHexStr {
                 prefix: P::VALUE,

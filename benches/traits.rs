@@ -109,7 +109,7 @@ fn bench_serde_array(c: &mut Criterion) {
 fn bench_serde_array_size<const N: usize>(group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>) {
     use serde_bench::{ArrayDeserializeWrap, ArraySerializeWrap};
 
-    let mut bufs = common::ArrayBuffers::<N>::new();
+    let mut bufs = common::Buffers::new(N);
     let mut hex_bufs = common::Buffers::new_hex(N);
     let mut json = common::JsonHexTemplate::new(N * 2);
     let mut out = Vec::with_capacity(N * 2 + 32);
@@ -119,7 +119,7 @@ fn bench_serde_array_size<const N: usize>(group: &mut criterion::BenchmarkGroup<
         b.iter(|| {
             out.clear();
             let val = ArraySerializeWrap {
-                data: black_box(bufs.next()),
+                data: black_box(bufs.next_array::<N>()),
             };
             serde_json::to_writer(black_box(&mut out), black_box(&val)).unwrap();
             black_box(out.as_slice());

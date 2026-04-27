@@ -29,6 +29,7 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {}
 
 impl From<core::convert::Infallible> for Error {
+    #[inline]
     fn from(v: core::convert::Infallible) -> Self {
         match v {}
     }
