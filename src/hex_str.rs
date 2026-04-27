@@ -46,10 +46,11 @@ unsafe impl<const N: usize, P: Prefix> NoUninit for RawHexStr<N, P> {}
 /// # Type parameters
 ///
 /// - `N`: byte count of the represented value.
-/// - `P`: prefix marker, defaults to [`NoPrefix`]. Use [`WithPrefix`] for a
-///   leading `"0x"`. The prefix is held in a typed field — [`NoPrefix`]
-///   is a ZST, so `HexStr<N, NoPrefix>` has size exactly `2 * N`;
-///   `HexStr<N, WithPrefix>` is `2 * N + 2`.
+/// - `P`: prefix marker, defaults to [`NoPrefix`]. Use
+///   [`WithPrefix`](crate::WithPrefix) for a leading `"0x"`. The prefix
+///   is held in a typed field — [`NoPrefix`] is a ZST, so
+///   `HexStr<N, NoPrefix>` has size exactly `2 * N`;
+///   `HexStr<N, `[`WithPrefix`](crate::WithPrefix)`>` is `2 * N + 2`.
 ///
 /// # Storage layout
 ///
