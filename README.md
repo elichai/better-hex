@@ -6,19 +6,37 @@ Fast, constant-time hex encoding and decoding with SIMD and `const fn`.
 
 ## Features
 
-- **Constant-time** — all operations are constant-time w.r.t. the *content* of valid hex input:
-  - No lookup tables in memory (branchless arithmetic or register-only SIMD LUTs)
-  - No data-dependent branches
-  - Error accumulation without early return
-  - Scope: the input *length* is not secret (loop bounds depend on it), and for
-    `decode` / `check` the *validity* bit (whether any byte was non-hex) is
-    observable via the boolean/`Result` return. Content of valid hex is
-    never leaked.
-- **SIMD acceleration** — x86 (SSSE3 / AVX2 / AVX-512BW), AArch64 (NEON), WASM (SIMD128)
-- **Compile-time** — `const fn` encode, decode, and validation via `const_fn`
-- **Stack hex strings** — `HexStr<N>` / `PrefixedHexStr<N>` with zero overhead (no heap)
-- **Extensible output** — `HexTarget` trait covers `String`, `heapless::String`, `arrayvec::ArrayString`, and downstream types
-- **Serde** — constant-time serialize/deserialize helpers (optional feature)
+- **Constant-time** — every encode, decode, and check operation is
+  constant-time w.r.t. the *content* of valid hex input:
+  - No memory-resident lookup tables — branchless arithmetic on the scalar
+    path, register-only SIMD LUTs on the SIMD paths.
+  - No data-dependent branches; errors accumulate without short-circuit.
+  - Scope: the input *length* is not secret (loop bounds depend on it).
+    For `decode` / `check`, *whether* the input was valid hex is observable
+    via the `Result` / `bool` return — the *content* of an invalid byte is
+    not leaked through timing.
+- **SIMD** — x86 (SSSE3 / AVX2 / AVX-512 BW + VBMI), AArch64 (NEON),
+  WebAssembly (SIMD128). Runtime CPU feature detection on x86; compile-time
+  selection on AArch64 and WASM.
+- **`const fn`** — compile-time `encode`, `decode`, and `check` via the
+  branchless scalar backend.
+- **Stack hex strings** — [`HexStr<N>`] and [`PrefixedHexStr<N>`] hold the
+  hex encoding of `N` input bytes with zero heap allocation and zero
+  per-instance overhead (the `"0x"` marker lives in a ZST field when
+  absent).
+- **Extensible output** — the [`HexTarget`] trait covers `String`,
+  `heapless::String<CAP>`, `arrayvec::ArrayString<CAP>`, and any downstream
+  type, letting SIMD encoders write straight into the target's buffer with
+  no intermediate copy.
+- **Serde** — constant-time hex helpers for `[u8; N]` and `Vec<u8>` fields,
+  in `lower` / `upper` / `prefixed` / `upper_prefixed` variants.
+  Deserialization into a fixed-size array is alloc-free; serialization is
+  alloc-free with serializers that override `Serializer::collect_str`
+  (e.g. `serde_json`, `serde_yaml`).
+
+[`HexStr<N>`]: https://docs.rs/better-hex/latest/better_hex/struct.HexStr.html
+[`PrefixedHexStr<N>`]: https://docs.rs/better-hex/latest/better_hex/type.PrefixedHexStr.html
+[`HexTarget`]: https://docs.rs/better-hex/latest/better_hex/trait.HexTarget.html
 
 ## Quick start
 
@@ -39,6 +57,25 @@ const HEX: HexStr<5> = HexStr::const_encode_lower(b"hello");
 let bytes: Vec<u8> = better_hex::decode(b"68656c6c6f")?;
 let arr: [u8; 5] = better_hex::decode(b"68656c6c6f")?;
 ```
+
+## Comparison with related crates
+
+| | [hex] | [const-hex] | [faster-hex] | [base16ct] | **better-hex** |
+|---|:---:|:---:|:---:|:---:|:---:|
+| SIMD encode / decode / check | — | x86, NEON, WASM | x86 (partial NEON) | — | x86 (incl. AVX-512), NEON, WASM |
+| Constant-time | — | — | — | scalar only | scalar + SIMD (default) |
+| `const fn` encode / decode / check | — | encode | — | — | all three |
+| Stack hex string | — | `Buffer<N>` (2 B prefix overhead) | — | — | `HexStr<N>` (zero overhead) |
+| Extensible output trait | — | — | — | — | `HexTarget` |
+| Alloc-free serde for `[u8; N]` | deserialize only | full¹ | — | n/a | full¹ |
+| `no_std` | yes | yes | yes | yes | yes |
+
+¹ Serialize is alloc-free with serializers that override `Serializer::collect_str` (e.g. `serde_json`, `serde_yaml`); the default `collect_str` formats into a temporary `String`.
+
+[hex]: https://github.com/KokaKiwi/rust-hex
+[const-hex]: https://github.com/danipopes/const-hex
+[faster-hex]: https://github.com/nervosnetwork/faster-hex
+[base16ct]: https://github.com/RustCrypto/formats/tree/master/base16ct
 
 ## Acknowledgments
 

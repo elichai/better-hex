@@ -9,7 +9,18 @@ use core::{fmt, mem::MaybeUninit, ops::Deref, str::FromStr};
 
 /// Raw storage for [`HexStr`].
 ///
-/// Not exposed publicly — `HexStr` wraps this and enforces the hex ASCII invariant.
+/// Not exposed publicly — `HexStr` wraps this and enforces the hex-ASCII
+/// invariant required by [`HexStr::as_str`].
+///
+/// # Why this isn't `bytemuck::Pod` / `Zeroable`
+///
+/// All fields are byte arrays / ZSTs of alignment 1, so this type would
+/// satisfy the `Pod` requirements mechanically. It deliberately does not
+/// derive (or hand-impl) `Pod` or `Zeroable`: doing so would let safe
+/// code mint a `HexStr` from arbitrary bytes via `bytemuck::cast`,
+/// breaking the hex-ASCII invariant and making `from_utf8_unchecked` in
+/// [`HexStr::as_str`] unsound. Only [`NoUninit`] is implemented — that
+/// permits `bytemuck::bytes_of` (read-only) but not `bytemuck::cast`.
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub(crate) struct RawHexStr<const N: usize, P: Prefix> {
@@ -27,14 +38,37 @@ unsafe impl<const N: usize, P: Prefix> NoUninit for RawHexStr<N, P> {}
 
 /// Stack-allocated hex string for `N` input bytes.
 ///
-/// Stores `2*N` hex characters (+ 2 bytes for `"0x"` when using [`WithPrefix`]).
-/// `N` is the **byte count**, not the hex character count.
+/// `N` is the **byte count** of the data being represented, not the length
+/// of the resulting hex string. A `HexStr<32>` represents a 32-byte value
+/// (e.g. a SHA-256 digest) and holds 64 hex characters. The total string
+/// length is `P::LEN + 2 * N` bytes.
 ///
-/// The type parameter `P` defaults to [`NoPrefix`]. Use [`WithPrefix`] to
-/// produce strings with a leading `"0x"` prefix.
+/// # Type parameters
 ///
-/// All constructors guarantee that the stored bytes are valid hex ASCII,
-/// so conversions to `&str` are always safe.
+/// - `N`: byte count of the represented value.
+/// - `P`: prefix marker, defaults to [`NoPrefix`]. Use [`WithPrefix`] for a
+///   leading `"0x"`. The prefix is held in a typed field — [`NoPrefix`]
+///   is a ZST, so `HexStr<N, NoPrefix>` has size exactly `2 * N`;
+///   `HexStr<N, WithPrefix>` is `2 * N + 2`.
+///
+/// # Storage layout
+///
+/// Hex bytes are stored as `[[u8; 2]; N]` rather than the more obvious
+/// `[u8; N * 2]`. Both shapes have identical layout (no padding,
+/// alignment 1), but `[u8; N * 2]` requires the unstable
+/// `generic_const_exprs` feature. The pair shape sidesteps that —
+/// `bytemuck::must_cast` reinterprets between the two when needed.
+///
+/// # Invariant: stored bytes are valid hex ASCII
+///
+/// Every public constructor maintains the invariant that the stored
+/// bytes contain only ASCII characters in `[0-9a-fA-F]` (and that the
+/// prefix, when present, is `b"0x"`). This is what makes
+/// [`as_str`](Self::as_str) sound — it uses `from_utf8_unchecked`, which
+/// would be undefined behavior for non-UTF-8 content. Direct byte
+/// construction is therefore only available through
+/// [`from_hex_unchecked`](Self::from_hex_unchecked), whose `unsafe`
+/// contract is exactly this invariant.
 #[derive(Copy, Clone)]
 pub struct HexStr<const N: usize, P: Prefix = NoPrefix> {
     pub(crate) inner: RawHexStr<N, P>,
