@@ -224,10 +224,13 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     pub fn decode(&self) -> [u8; N] {
         let hex_bytes = self.as_bytes_no_prefix();
         let mut out: [MaybeUninit<u8>; N] = maybe_uninit::uninit_array();
-        let result = backend::decode(hex_bytes, &mut out);
-        debug_assert!(result.is_ok(), "HexStr invariant violated: contained non-hex bytes");
         // SAFETY: all constructors guarantee `inner.bytes` contains valid hex
-        // ASCII, so `backend::decode` always succeeds and initializes all N bytes.
+        // ASCII, so `backend::decode` always returns `Ok` and initializes all
+        // `N` bytes. `unwrap_unchecked` lets LLVM remove the residual `Result`
+        // discriminant check (which would otherwise be a data-dependent branch
+        // visible to constant-time verifiers like Valgrind).
+        unsafe { backend::decode(hex_bytes, &mut out).unwrap_unchecked() };
+        // SAFETY: backend::decode initialized the full output buffer.
         unsafe { maybe_uninit::transpose(out).assume_init() }
     }
 

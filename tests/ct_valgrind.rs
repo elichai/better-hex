@@ -337,6 +337,15 @@ mod avx512_ct {
 }
 
 /// Test HexStr operations with poisoned data at multiple sizes.
+///
+/// `HexStr::from_hex` returns `Option<HexStr<N>>` whose discriminant *is* the
+/// validity bit — making it a publicly-observable result of the operation
+/// (per the CT scope documented in the README). We therefore exercise
+/// validation via `check` / `const_check`, unpoison the resulting bool
+/// (declaring the validity bit observable), and only then perform the
+/// unchecked `HexStr` construction. `HexStr::decode` is exercised directly:
+/// its internal `Result` is discarded behind `unwrap_unchecked`, which lets
+/// the compiler eliminate the residual discriminant branch.
 mod hex_str_ct {
     use super::*;
     use better_hex::HexStr;
@@ -345,21 +354,26 @@ mod hex_str_ct {
         ($n:literal) => {{
             let input: [u8; $n] = core::array::from_fn(|i| (i as u8).wrapping_mul(37));
 
-            // from_hex: poison the hex bytes, construct HexStr.
+            // SIMD-dispatched `check` is CT for valid hex: poison hex,
+            // unpoison only the resulting validity bit before any conditional.
             let mut hex = [0u8; $n * 2];
             better_hex::encode_to_slice(&input, &mut hex).unwrap();
             poison(&hex);
-            let mut result = HexStr::<$n>::from_hex(hex);
-            unpoison(&mut result);
-            assert!(result.is_some(), "from_hex failed at N={}", $n);
+            let mut valid = better_hex::check(&hex);
+            unpoison(&mut valid);
+            assert!(valid, "check failed at N={}", $n);
+            // SAFETY: `hex` was just produced by `encode_to_slice`, valid hex ASCII.
+            let _: HexStr<$n> = unsafe { HexStr::<$n>::from_hex_unchecked(hex) };
 
-            // const_from_hex: same but const path.
+            // const_check goes through the scalar branchless path.
             poison(&hex);
-            let mut result = HexStr::<$n>::const_from_hex(hex);
-            unpoison(&mut result);
-            assert!(result.is_some(), "const_from_hex failed at N={}", $n);
+            let mut valid = better_hex::const_check(&hex);
+            unpoison(&mut valid);
+            assert!(valid, "const_check failed at N={}", $n);
 
             // decode: poison the HexStr internals, decode back.
+            // HexStr::decode uses unwrap_unchecked internally so the residual
+            // dispatch discriminant check is eliminated by the optimizer.
             let hex_str = HexStr::<$n>::encode_lower(&input);
             poison(hex_str.as_bytes());
             let mut decoded = hex_str.decode();
