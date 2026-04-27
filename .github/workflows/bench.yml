@@ -34,11 +34,16 @@ jobs:
           save-if: false
 
       - name: Run benchmarks
+        # Reduced criterion sample-size / measurement-time vs defaults
+        # (100 samples, 5 s measurement, 3 s warmup -> ~8 s per bench).
+        # 10 samples / 2 s / 1 s drops each bench to ~3 s; noise stays
+        # within the 115% alert threshold used downstream.
         run: |
           cargo bench --locked --features _bench_internals,serde \
             --bench encode --bench decode --bench check \
             --bench display --bench traits \
             -- --output-format bencher \
+            --warm-up-time 1 --measurement-time 2 --sample-size 10 \
             | tee bench_output.txt
 
   # Push benchmarks: write permissions for storing results and commenting.
@@ -62,11 +67,16 @@ jobs:
           save-if: true
 
       - name: Run benchmarks
+        # Reduced criterion sample-size / measurement-time vs defaults
+        # (100 samples, 5 s measurement, 3 s warmup -> ~8 s per bench).
+        # 10 samples / 2 s / 1 s drops each bench to ~3 s; noise stays
+        # within the 115% alert threshold used downstream.
         run: |
           cargo bench --locked --features _bench_internals,serde \
             --bench encode --bench decode --bench check \
             --bench display --bench traits \
             -- --output-format bencher \
+            --warm-up-time 1 --measurement-time 2 --sample-size 10 \
             | tee bench_output.txt
 
       - name: Store benchmark result
