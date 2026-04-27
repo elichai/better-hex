@@ -221,11 +221,20 @@ pub(crate) mod test_support {
     const MAX_SIZE: usize = if cfg!(miri) { 64 } else { 512 };
 
     /// Deterministic pseudo-random input bytes for a given size. Always
-    /// returns the same bytes for the same `size`.
+    /// returns the same bytes for the same `size` — fine for one-shot uses.
+    /// In per-size loops use [`fill_input`] with a persistent rng instead so
+    /// each iteration sees uncorrelated bytes.
     pub(crate) fn make_input(size: usize) -> alloc::vec::Vec<u8> {
-        use rand_core::{Rng, SeedableRng};
+        use rand_core::SeedableRng;
         use rand_xoshiro::Xoshiro256PlusPlus;
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
+        fill_input(&mut rng, size)
+    }
+
+    /// Fill `size` fresh bytes from `rng`. Use inside loops so iterations get
+    /// uncorrelated streams instead of overlapping re-seeded prefixes.
+    pub(crate) fn fill_input(rng: &mut rand_xoshiro::Xoshiro256PlusPlus, size: usize) -> alloc::vec::Vec<u8> {
+        use rand_core::Rng;
         let mut buf = alloc::vec![0u8; size];
         rng.fill_bytes(&mut buf);
         buf
@@ -239,7 +248,7 @@ pub(crate) mod test_support {
     }
 
     /// Exercise a SIMD backend's encode/decode/check against the scalar oracle
-    /// for every size in 0..=512.
+    /// for every size in 0..=MAX_SIZE.
     pub(crate) fn exercise_backend<EL, EU, D, C>(encode_lower: EL, encode_upper: EU, decode: D, check: C)
     where
         EL: Fn(&[u8], &mut [MaybeUninit<u8>]),
@@ -247,8 +256,10 @@ pub(crate) mod test_support {
         D: Fn(&[u8], &mut [MaybeUninit<u8>]) -> Result<(), Error>,
         C: Fn(&[u8]) -> bool,
     {
+        use rand_core::SeedableRng;
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
         for size in 0..=MAX_SIZE {
-            let input = make_input(size);
+            let input = fill_input(&mut rng, size);
             let hex_len = size * 2;
             let expected_lower = scalar_encode(&input, false);
             let expected_upper = scalar_encode(&input, true);
@@ -309,10 +320,10 @@ mod boundary_tests {
     /// 16-byte (SSSE3/NEON), 32-byte (AVX2), 64-byte, and 128-byte marks.
     const BOUNDARY_SIZES: [usize; 12] = [15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129];
 
-    fn make_bytes(size: usize) -> Vec<u8> {
-        use rand_core::{Rng, SeedableRng};
-        use rand_xoshiro::Xoshiro256PlusPlus;
-        let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xb0_ba_b0_b0);
+    /// Fill `size` fresh bytes from `rng`. Used inside loops so each
+    /// iteration sees uncorrelated bytes.
+    fn fill_bytes_vec(rng: &mut rand_xoshiro::Xoshiro256PlusPlus, size: usize) -> Vec<u8> {
+        use rand_core::Rng;
         let mut buf = vec![0u8; size];
         rng.fill_bytes(&mut buf);
         buf
@@ -326,8 +337,10 @@ mod boundary_tests {
 
     #[test]
     fn decode_invalid_byte_at_every_position_boundary_sizes() {
+        use rand_core::SeedableRng;
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0xb0_ba_b0_b0);
         for &size in &BOUNDARY_SIZES {
-            let input = make_bytes(size);
+            let input = fill_bytes_vec(&mut rng, size);
             let hex = encode_hex(&input);
             let hex_len = hex.len();
 
@@ -360,8 +373,10 @@ mod boundary_tests {
 
     #[test]
     fn encode_decode_roundtrip_boundary_sizes() {
+        use rand_core::SeedableRng;
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0xb0_ba_b0_b0);
         for &size in &BOUNDARY_SIZES {
-            let input = make_bytes(size);
+            let input = fill_bytes_vec(&mut rng, size);
             let hex_len = size * 2;
 
             // Lower-case roundtrip
@@ -389,10 +404,12 @@ mod boundary_tests {
     /// test still covers every boundary.
     #[test]
     fn decode_invalid_at_every_position_large() {
+        use rand_core::SeedableRng;
         const DECODED_LEN: usize = 256;
         const HEX_LEN: usize = DECODED_LEN * 2;
 
-        let input = make_bytes(DECODED_LEN);
+        let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0xb0_ba_b0_b0);
+        let input = fill_bytes_vec(&mut rng, DECODED_LEN);
         let hex = encode_hex(&input);
         assert_eq!(hex.len(), HEX_LEN);
 

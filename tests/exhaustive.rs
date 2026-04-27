@@ -12,9 +12,17 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 const MAX: usize = if cfg!(miri) { 64 } else { 4096 };
 
 /// Deterministic pseudo-random test input for a given size. Always returns
-/// the same bytes for the same `size`.
+/// the same bytes for the same `size` — fine for one-shot calls. Inside
+/// per-size loops use [`fill_input`] with a persistent rng instead so each
+/// iteration sees uncorrelated bytes.
 fn make_input(size: usize) -> Vec<u8> {
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
+    fill_input(&mut rng, size)
+}
+
+/// Fill `size` fresh bytes from `rng`. Use inside loops so each iteration
+/// gets a different byte stream rather than a re-seeded prefix.
+fn fill_input(rng: &mut Xoshiro256PlusPlus, size: usize) -> Vec<u8> {
     let mut buf = vec![0u8; size];
     rng.fill_bytes(&mut buf);
     buf
@@ -231,8 +239,9 @@ fn hex_str_roundtrip_sizes() {
 #[test]
 fn heapless_all_sizes() {
     const CAP: usize = 1024;
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
     for size in 0..=MAX.min(CAP / 2) {
-        let input = make_input(size);
+        let input = fill_input(&mut rng, size);
         let hex: heapless::String<CAP> = better_hex::encode(&input).unwrap();
         assert_eq!(hex.len(), size * 2);
         let _upper: heapless::String<CAP> = better_hex::encode_upper(&input).unwrap();
@@ -247,8 +256,9 @@ fn heapless_all_sizes() {
 #[test]
 fn arrayvec_all_sizes() {
     const CAP: usize = 1024;
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
     for size in 0..=MAX.min(CAP / 2) {
-        let input = make_input(size);
+        let input = fill_input(&mut rng, size);
         let hex: arrayvec::ArrayString<CAP> = better_hex::encode(&input).unwrap();
         assert_eq!(hex.len(), size * 2);
         let _upper: arrayvec::ArrayString<CAP> = better_hex::encode_upper(&input).unwrap();
@@ -261,7 +271,8 @@ fn arrayvec_all_sizes() {
 
 #[cfg(feature = "serde")]
 mod serde_exhaustive {
-    use super::make_input;
+    use super::{Xoshiro256PlusPlus, fill_input, make_input};
+    use rand_core::SeedableRng;
     use serde::{Deserialize, Serialize};
 
     const MAX: usize = super::MAX;
@@ -286,8 +297,9 @@ mod serde_exhaustive {
 
                 #[test]
                 fn vec_roundtrip() {
+                    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
                     for size in 0..=MAX {
-                        let data = make_input(size);
+                        let data = fill_input(&mut rng, size);
                         let original = V { data };
                         let json = serde_json::to_string(&original)
                             .unwrap_or_else(|e| panic!("serialize failed at size {size}: {e}"));

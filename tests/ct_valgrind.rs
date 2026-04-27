@@ -13,6 +13,8 @@
 #![cfg(feature = "ct-test")]
 
 use crabgrind::memcheck;
+use rand_core::{Rng, SeedableRng};
+use rand_xoshiro::Xoshiro256PlusPlus;
 use std::ffi::c_void;
 
 use better_hex::bench_internals::{InvalidEncoding, scalar};
@@ -44,11 +46,9 @@ type EncodeFn = unsafe fn(*const u8, *mut u8, usize, bool);
 type DecodeFn = unsafe fn(*const u8, *mut u8, usize) -> Result<(), InvalidEncoding>;
 type CheckFn = unsafe fn(&[u8]) -> bool;
 
-/// Deterministic pseudo-random input bytes for a given size.
-fn make_input(size: usize) -> Vec<u8> {
-    use rand_core::{Rng, SeedableRng};
-    use rand_xoshiro::Xoshiro256PlusPlus;
-    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
+/// Fill `size` fresh bytes from `rng`. Used inside loops so each iteration
+/// sees uncorrelated input rather than a re-seeded prefix of the same stream.
+fn fill_input(rng: &mut Xoshiro256PlusPlus, size: usize) -> Vec<u8> {
     let mut buf = vec![0u8; size];
     rng.fill_bytes(&mut buf);
     buf
@@ -56,8 +56,9 @@ fn make_input(size: usize) -> Vec<u8> {
 
 /// Test that an encode function is CT for sizes 0..=512.
 fn test_encode_ct(encode: EncodeFn, upper: bool) {
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
     for size in 0..=512 {
-        let input = make_input(size);
+        let input = fill_input(&mut rng, size);
         let mut output = vec![0u8; size * 2];
 
         poison(&input);
@@ -68,8 +69,9 @@ fn test_encode_ct(encode: EncodeFn, upper: bool) {
 
 /// Test that a decode function is CT for valid inputs at sizes 0..=512.
 fn test_decode_ct(decode: DecodeFn) {
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
     for size in 0..=512 {
-        let input = make_input(size);
+        let input = fill_input(&mut rng, size);
         let hex = better_hex::encode_string(&input);
         let hex_bytes = hex.into_bytes();
         let mut output = vec![0u8; size];
@@ -84,8 +86,9 @@ fn test_decode_ct(decode: DecodeFn) {
 
 /// Test that a decode function processes all bytes (invalid at every position).
 fn test_decode_invalid_ct(decode: DecodeFn) {
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
     for size in 1..=512 {
-        let input = make_input(size);
+        let input = fill_input(&mut rng, size);
         let hex = better_hex::encode_string(&input);
         let valid_hex = hex.into_bytes();
 
@@ -105,8 +108,9 @@ fn test_decode_invalid_ct(decode: DecodeFn) {
 
 /// Test that a check function is CT for sizes 0..=512.
 fn test_check_ct(check: CheckFn) {
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
     for size in 0..=512 {
-        let input = make_input(size);
+        let input = fill_input(&mut rng, size);
         let hex = better_hex::encode_string(&input);
         let hex_bytes = hex.into_bytes();
 
@@ -123,8 +127,9 @@ fn test_check_ct(check: CheckFn) {
 /// would leak the position via timing, and Valgrind would flag the branch
 /// on poisoned data.
 fn test_check_invalid_ct(check: CheckFn) {
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
     for size in 1..=512 {
-        let input = make_input(size);
+        let input = fill_input(&mut rng, size);
         let hex = better_hex::encode_string(&input);
         let valid_hex = hex.into_bytes();
 
@@ -361,8 +366,9 @@ mod hex_str_ct {
     use better_hex::HexStr;
 
     macro_rules! test_hex_str {
-        ($n:literal) => {{
-            let input: [u8; $n] = make_input($n).try_into().unwrap();
+        ($rng:ident, $n:literal) => {{
+            let mut input = [0u8; $n];
+            $rng.fill_bytes(&mut input);
 
             // SIMD-dispatched `check` is CT for valid hex: poison hex,
             // unpoison only the resulting validity bit before any conditional.
@@ -394,12 +400,13 @@ mod hex_str_ct {
 
     #[test]
     fn hex_str_ct() {
-        test_hex_str!(1);
-        test_hex_str!(2);
-        test_hex_str!(4);
-        test_hex_str!(8);
-        test_hex_str!(16);
-        test_hex_str!(32);
-        test_hex_str!(64);
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
+        test_hex_str!(rng, 1);
+        test_hex_str!(rng, 2);
+        test_hex_str!(rng, 4);
+        test_hex_str!(rng, 8);
+        test_hex_str!(rng, 16);
+        test_hex_str!(rng, 32);
+        test_hex_str!(rng, 64);
     }
 }
