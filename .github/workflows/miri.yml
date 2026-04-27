@@ -64,6 +64,17 @@ jobs:
           components: miri
           targets: ${{ matrix.target }}
 
+      # criterion (a dev-dep) pulls `alloca`, which has a C build script.
+      # The cross-compiled i686 and aarch64 matrix entries need the
+      # corresponding host gcc toolchains to produce target objects.
+      - name: Install i686 cross toolchain
+        if: matrix.target == 'i686-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y gcc-multilib
+
+      - name: Install aarch64 cross toolchain
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         env:
@@ -79,6 +90,10 @@ jobs:
       - name: Run tests under Miri
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
+          # cc-rs uses these to find the cross linker / compiler for the
+          # alloca C build script when targeting aarch64.
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
           MIRIFLAGS: >-
             -Zmiri-env-set=PROPTEST_CASES=8
             -Zmiri-env-set=PROPTEST_MAX_SHRINK_ITERS=32
@@ -88,6 +103,8 @@ jobs:
       - name: Run doc-tests under Miri
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
           MIRIFLAGS: >-
             -Zmiri-env-set=PROPTEST_CASES=8
             -Zmiri-env-set=PROPTEST_MAX_SHRINK_ITERS=32
