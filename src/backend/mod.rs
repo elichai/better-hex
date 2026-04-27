@@ -162,10 +162,7 @@ pub fn encode(input: &[u8], output: &mut [MaybeUninit<u8>], upper: bool) -> Resu
 ///
 /// [`HexStr::decode`]: crate::HexStr::decode
 #[inline]
-pub(crate) fn decode_no_length_check(
-    input: &[u8],
-    output: &mut [MaybeUninit<u8>],
-) -> Result<(), InvalidEncoding> {
+pub(crate) fn decode_no_length_check(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), InvalidEncoding> {
     debug_assert_eq!(input.len(), output.len() * 2);
     let src = input.as_ptr();
     let byte_len = output.len();
