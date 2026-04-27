@@ -51,25 +51,28 @@ jobs:
             cargo_command: test
             cargo_args: --locked --lib --target x86_64-unknown-linux-gnu
 
-          # Run AVX-512BW tests under qemu-user so they don't depend on
-          # whether the GitHub-hosted runner happens to have Xeon AVX-512.
-          # `Skylake-Server` covers AVX-512F/BW/CD/DQ/VL — sufficient for
-          # the BW path; VBMI is tested separately via Icelake-Server.
-          - name: Test (x86_64 AVX-512BW impl, via qemu)
+          # Run AVX-512 tests under Intel SDE so coverage doesn't depend on
+          # whether the GitHub-hosted runner happens to have AVX-512.
+          # qemu-user-static (8.2.2 on Ubuntu Noble) advertises AVX-512 in
+          # CPUID but the TCG has no implementations for the instructions
+          # and SIGILLs at runtime — SDE actually emulates them.
+          # `-skx` = Skylake-X (AVX-512 F/CD/BW/DQ/VL); `-icx` = Ice Lake
+          # Server (adds VBMI, VPOPCNTDQ, ...).
+          - name: Test (x86_64 AVX-512BW impl, via Intel SDE)
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             rustflags: -C target-feature=+avx512bw
             cargo_command: test
             cargo_args: --locked --lib --target x86_64-unknown-linux-gnu
-            qemu_cpu: Skylake-Server
+            sde_cpu: skx
 
-          - name: Test (x86_64 AVX-512 VBMI impl, via qemu)
+          - name: Test (x86_64 AVX-512 VBMI impl, via Intel SDE)
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             rustflags: -C target-feature=+avx512bw,+avx512vbmi
             cargo_command: test
             cargo_args: --locked --lib --target x86_64-unknown-linux-gnu
-            qemu_cpu: Icelake-Server
+            sde_cpu: icx
 
           # Pin macOS 14 to keep this on GitHub's arm64 runner class for NEON.
           - name: Test (aarch64 NEON API)
@@ -121,18 +124,21 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # For matrix entries with `qemu_cpu` set, install qemu-user-static
-      # and point cargo's runner env var at it so the test binary executes
-      # under emulation with the requested CPU profile (which exposes
-      # features the actual host runner may not have, e.g. AVX-512).
-      - name: Setup qemu runner
-        if: matrix.qemu_cpu != ''
+      # For matrix entries with `sde_cpu` set, install Intel SDE and point
+      # cargo's runner env var at it so the test binary executes under
+      # emulation with the requested CPU profile (exposing features the
+      # actual host runner may not have, e.g. AVX-512).
+      - name: Setup Intel SDE runner
+        if: matrix.sde_cpu != ''
         env:
-          QEMU_CPU: ${{ matrix.qemu_cpu }}
+          SDE_CPU: ${{ matrix.sde_cpu }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y qemu-user-static
-          echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER=qemu-x86_64-static -cpu $QEMU_CPU" >> "$GITHUB_ENV"
+          SDE_VERSION="sde-external-9.48.0-2024-11-25-lin"
+          wget -q "https://downloadmirror.intel.com/843185/${SDE_VERSION}.tar.xz"
+          tar -xf "${SDE_VERSION}.tar.xz"
+          SDE_DIR="${PWD}/${SDE_VERSION}"
+          echo "${SDE_DIR}" >> "$GITHUB_PATH"
+          echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER=${SDE_DIR}/sde64 -${SDE_CPU} --" >> "$GITHUB_ENV"
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
