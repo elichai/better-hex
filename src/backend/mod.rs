@@ -149,6 +149,42 @@ pub fn encode(input: &[u8], output: &mut [MaybeUninit<u8>], upper: bool) -> Resu
     Ok(())
 }
 
+/// Decode hex `input` into `output` without checking lengths.
+///
+/// `pub(crate)` so internal callers (e.g. [`HexStr::decode`]) can reach the
+/// raw inner [`Result`] without the [`Error`]-mapping `match` that
+/// [`decode`] adds. That match would otherwise be a data-dependent branch
+/// (the validity bit lives in the discriminant), and bypassing it lets
+/// callers like `HexStr::decode` use `unwrap_unchecked` to give the
+/// optimizer enough information to remove the discriminant load entirely.
+///
+/// Caller must guarantee `input.len() == output.len() * 2` — debug-checked.
+///
+/// [`HexStr::decode`]: crate::HexStr::decode
+#[inline]
+pub(crate) fn decode_no_length_check(
+    input: &[u8],
+    output: &mut [MaybeUninit<u8>],
+) -> Result<(), InvalidEncoding> {
+    debug_assert_eq!(input.len(), output.len() * 2);
+    let src = input.as_ptr();
+    let byte_len = output.len();
+    let dst = output.as_mut_ptr().cast::<u8>();
+    // SAFETY: `src` and `dst` derived from valid, non-overlapping slice borrows.
+    // The caller-guaranteed length relationship makes src readable for
+    // `byte_len * 2` bytes and dst writable for `byte_len`. CPU feature
+    // requirements are satisfied by `platform::detect()` only returning a
+    // variant after confirming support.
+    dispatch!(
+        scalar: unsafe { scalar::decode(src, dst, byte_len) },
+        neon: unsafe { neon::decode(src, dst, byte_len) },
+        ssse3: unsafe { x86::decode_ssse3(src, dst, byte_len) },
+        avx2: unsafe { x86::decode_avx2(src, dst, byte_len) },
+        avx512bw: unsafe { x86::decode_avx512(src, dst, byte_len) },
+        wasm: unsafe { wasm::decode(src, dst, byte_len) },
+    )
+}
+
 /// Decode hex `input` into `output`.
 ///
 /// Returns `Ok(())` on success, `Err(InvalidEncoding)` on invalid hex,
@@ -160,21 +196,7 @@ pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error>
             got: input.len(),
         });
     }
-    let src = input.as_ptr();
-    let byte_len = output.len();
-    let dst = output.as_mut_ptr().cast::<u8>();
-    // SAFETY: `src` and `dst` derived from valid, non-overlapping slice borrows.
-    // The length check above guarantees `byte_len = input.len() / 2`, so src
-    // is readable for `byte_len * 2` bytes and dst writable for `byte_len`.
-    dispatch!(
-        scalar: unsafe { scalar::decode(src, dst, byte_len) },
-        neon: unsafe { neon::decode(src, dst, byte_len) },
-        ssse3: unsafe { x86::decode_ssse3(src, dst, byte_len) },
-        avx2: unsafe { x86::decode_avx2(src, dst, byte_len) },
-        avx512bw: unsafe { x86::decode_avx512(src, dst, byte_len) },
-        wasm: unsafe { wasm::decode(src, dst, byte_len) },
-    )
-    .map_err(|InvalidEncoding| Error::InvalidEncoding)
+    decode_no_length_check(input, output).map_err(|InvalidEncoding| Error::InvalidEncoding)
 }
 
 /// Check if every byte in `input` is a valid hex ASCII character.

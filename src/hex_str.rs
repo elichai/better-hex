@@ -224,13 +224,15 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     pub fn decode(&self) -> [u8; N] {
         let hex_bytes = self.as_bytes_no_prefix();
         let mut out: [MaybeUninit<u8>; N] = maybe_uninit::uninit_array();
-        // SAFETY: all constructors guarantee `inner.bytes` contains valid hex
-        // ASCII, so `backend::decode` always returns `Ok` and initializes all
-        // `N` bytes. `unwrap_unchecked` lets LLVM remove the residual `Result`
-        // discriminant check (which would otherwise be a data-dependent branch
-        // visible to constant-time verifiers like Valgrind).
-        unsafe { backend::decode(hex_bytes, &mut out).unwrap_unchecked() };
-        // SAFETY: backend::decode initialized the full output buffer.
+        // SAFETY: `as_bytes_no_prefix` returns exactly `N * 2` bytes (the
+        // length precondition for `decode_no_length_check`); all HexStr
+        // constructors maintain the hex-ASCII invariant, so the inner
+        // `Result` is always `Ok`. Routing through `decode_no_length_check`
+        // and `unwrap_unchecked` lets LLVM eliminate the discriminant load
+        // that would otherwise be a data-dependent branch under Valgrind CT
+        // verification.
+        unsafe { backend::decode_no_length_check(hex_bytes, &mut out).unwrap_unchecked() };
+        // SAFETY: backend::decode_no_length_check initialized the full output buffer.
         unsafe { maybe_uninit::transpose(out).assume_init() }
     }
 
