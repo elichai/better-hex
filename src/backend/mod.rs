@@ -220,11 +220,15 @@ pub(crate) mod test_support {
     // oracle tests don't dominate the Miri wall clock.
     const MAX_SIZE: usize = if cfg!(miri) { 64 } else { 512 };
 
-    /// Deterministic input bytes for a given size.
+    /// Deterministic pseudo-random input bytes for a given size. Always
+    /// returns the same bytes for the same `size`.
     pub(crate) fn make_input(size: usize) -> alloc::vec::Vec<u8> {
-        (0..size)
-            .map(|i| ((i as u8).wrapping_mul(37)).wrapping_add(11))
-            .collect()
+        use rand_core::{Rng, SeedableRng};
+        use rand_xoshiro::Xoshiro256PlusPlus;
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
+        let mut buf = alloc::vec![0u8; size];
+        rng.fill_bytes(&mut buf);
+        buf
     }
 
     fn scalar_encode(input: &[u8], upper: bool) -> alloc::vec::Vec<u8> {
@@ -306,7 +310,12 @@ mod boundary_tests {
     const BOUNDARY_SIZES: [usize; 12] = [15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129];
 
     fn make_bytes(size: usize) -> Vec<u8> {
-        (0..size).map(|i| (i as u8).wrapping_mul(0x9D)).collect()
+        use rand_core::{Rng, SeedableRng};
+        use rand_xoshiro::Xoshiro256PlusPlus;
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xb0_ba_b0_b0);
+        let mut buf = vec![0u8; size];
+        rng.fill_bytes(&mut buf);
+        buf
     }
 
     fn encode_hex(input: &[u8]) -> Vec<u8> {

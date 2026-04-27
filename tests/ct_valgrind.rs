@@ -44,10 +44,20 @@ type EncodeFn = unsafe fn(*const u8, *mut u8, usize, bool);
 type DecodeFn = unsafe fn(*const u8, *mut u8, usize) -> Result<(), InvalidEncoding>;
 type CheckFn = unsafe fn(&[u8]) -> bool;
 
+/// Deterministic pseudo-random input bytes for a given size.
+fn make_input(size: usize) -> Vec<u8> {
+    use rand_core::{Rng, SeedableRng};
+    use rand_xoshiro::Xoshiro256PlusPlus;
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
+    let mut buf = vec![0u8; size];
+    rng.fill_bytes(&mut buf);
+    buf
+}
+
 /// Test that an encode function is CT for sizes 0..=512.
 fn test_encode_ct(encode: EncodeFn, upper: bool) {
     for size in 0..=512 {
-        let input: Vec<u8> = (0..size).map(|i| (i as u8).wrapping_mul(37)).collect();
+        let input = make_input(size);
         let mut output = vec![0u8; size * 2];
 
         poison(&input);
@@ -59,7 +69,7 @@ fn test_encode_ct(encode: EncodeFn, upper: bool) {
 /// Test that a decode function is CT for valid inputs at sizes 0..=512.
 fn test_decode_ct(decode: DecodeFn) {
     for size in 0..=512 {
-        let input: Vec<u8> = (0..size).map(|i| (i as u8).wrapping_mul(37)).collect();
+        let input = make_input(size);
         let hex = better_hex::encode_string(&input);
         let hex_bytes = hex.into_bytes();
         let mut output = vec![0u8; size];
@@ -75,7 +85,7 @@ fn test_decode_ct(decode: DecodeFn) {
 /// Test that a decode function processes all bytes (invalid at every position).
 fn test_decode_invalid_ct(decode: DecodeFn) {
     for size in 1..=512 {
-        let input: Vec<u8> = (0..size).map(|i| (i as u8).wrapping_mul(37)).collect();
+        let input = make_input(size);
         let hex = better_hex::encode_string(&input);
         let valid_hex = hex.into_bytes();
 
@@ -96,7 +106,7 @@ fn test_decode_invalid_ct(decode: DecodeFn) {
 /// Test that a check function is CT for sizes 0..=512.
 fn test_check_ct(check: CheckFn) {
     for size in 0..=512 {
-        let input: Vec<u8> = (0..size).map(|i| (i as u8).wrapping_mul(37)).collect();
+        let input = make_input(size);
         let hex = better_hex::encode_string(&input);
         let hex_bytes = hex.into_bytes();
 
@@ -114,7 +124,7 @@ fn test_check_ct(check: CheckFn) {
 /// on poisoned data.
 fn test_check_invalid_ct(check: CheckFn) {
     for size in 1..=512 {
-        let input: Vec<u8> = (0..size).map(|i| (i as u8).wrapping_mul(37)).collect();
+        let input = make_input(size);
         let hex = better_hex::encode_string(&input);
         let valid_hex = hex.into_bytes();
 
@@ -352,7 +362,7 @@ mod hex_str_ct {
 
     macro_rules! test_hex_str {
         ($n:literal) => {{
-            let input: [u8; $n] = core::array::from_fn(|i| (i as u8).wrapping_mul(37));
+            let input: [u8; $n] = make_input($n).try_into().unwrap();
 
             // SIMD-dispatched `check` is CT for valid hex: poison hex,
             // unpoison only the resulting validity bit before any conditional.

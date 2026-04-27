@@ -9,13 +9,15 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 // Under Miri, the size-loop tests dominate the wall clock. Cap to a size
 // that still covers every SIMD chunk boundary (16/17, 31/32/33, 63/64/65)
 // without paying the interpreter cost for the long tail.
-const MAX: usize = if cfg!(miri) { 64 } else { 512 };
+const MAX: usize = if cfg!(miri) { 64 } else { 4096 };
 
-/// Deterministic test input for a given size.
+/// Deterministic pseudo-random test input for a given size. Always returns
+/// the same bytes for the same `size`.
 fn make_input(size: usize) -> Vec<u8> {
-    (0..size)
-        .map(|i| ((i as u8).wrapping_mul(37)).wrapping_add(11))
-        .collect()
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
+    let mut buf = vec![0u8; size];
+    rng.fill_bytes(&mut buf);
+    buf
 }
 
 // ── Core roundtrips (encode/decode, CT, check, traits, display) ─────────────
@@ -101,7 +103,7 @@ fn roundtrip_all_apis() {
 
 #[test]
 fn single_byte_roundtrip_all_values() {
-    for b in 0u8..=255 {
+    for b in 0u8..=u8::MAX {
         let input = [b];
         let hex: String = better_hex::encode(&input).unwrap();
         let decoded: [u8; 1] = better_hex::decode(&hex).unwrap();
@@ -115,12 +117,9 @@ fn single_byte_roundtrip_all_values() {
 
 #[test]
 fn two_byte_roundtrip_all_values() {
-    // Under Miri, sample every 256th value (256 well-spread inputs) instead
-    // of all 65,536 — full coverage isn't tractable under interpretation but
-    // the spread still catches per-nibble/per-byte boundary issues.
-    let step: usize = if cfg!(miri) { 256 } else { 1 };
-    for ab in (0u32..=u16::MAX as u32).step_by(step) {
-        let input = (ab as u16).to_le_bytes();
+    let end = if cfg!(miri) { u16::MAX / 16 } else { u16::MAX };
+    for ab in 0u16..=end {
+        let input = ab.to_le_bytes();
         let hex: String = better_hex::encode(&input).unwrap();
         let decoded: [u8; 2] = better_hex::decode(&hex).unwrap();
         assert_eq!(decoded, input, "roundtrip mismatch for bytes {input:?}");

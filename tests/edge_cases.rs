@@ -95,12 +95,11 @@ fn decode_processes_all_bytes_proof() {
     // Use a non-trivial input so the decoded bytes are not all zeros.
     const N: usize = 32;
     let input: [u8; N] = {
+        use rand_core::{Rng, SeedableRng};
+        use rand_xoshiro::Xoshiro256PlusPlus;
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
         let mut buf = [0u8; N];
-        let mut i = 0;
-        while i < N {
-            buf[i] = (i as u8).wrapping_mul(0x9D).wrapping_add(0x37);
-            i += 1;
-        }
+        rng.fill_bytes(&mut buf);
         buf
     };
 
