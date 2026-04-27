@@ -220,19 +220,9 @@ pub(crate) mod test_support {
     // oracle tests don't dominate the Miri wall clock.
     const MAX_SIZE: usize = if cfg!(miri) { 64 } else { 512 };
 
-    /// Deterministic pseudo-random input bytes for a given size. Always
-    /// returns the same bytes for the same `size` — fine for one-shot uses.
-    /// In per-size loops use [`fill_input`] with a persistent rng instead so
-    /// each iteration sees uncorrelated bytes.
-    pub(crate) fn make_input(size: usize) -> alloc::vec::Vec<u8> {
-        use rand_core::SeedableRng;
-        use rand_xoshiro::Xoshiro256PlusPlus;
-        let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
-        fill_input(&mut rng, size)
-    }
-
-    /// Fill `size` fresh bytes from `rng`. Use inside loops so iterations get
-    /// uncorrelated streams instead of overlapping re-seeded prefixes.
+    /// Fill `size` fresh bytes from `rng`. Per-size loops thread one rng
+    /// through their iterations so each gets a different byte stream
+    /// rather than a re-seeded prefix.
     pub(crate) fn fill_input(rng: &mut rand_xoshiro::Xoshiro256PlusPlus, size: usize) -> alloc::vec::Vec<u8> {
         use rand_core::Rng;
         let mut buf = alloc::vec![0u8; size];

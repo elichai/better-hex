@@ -9,19 +9,12 @@ use rand_xoshiro::Xoshiro256PlusPlus;
 // Under Miri, the size-loop tests dominate the wall clock. Cap to a size
 // that still covers every SIMD chunk boundary (16/17, 31/32/33, 63/64/65)
 // without paying the interpreter cost for the long tail.
-const MAX: usize = if cfg!(miri) { 64 } else { 4096 };
+const MAX: usize = if cfg!(miri) { 70 } else { 4096 };
 
-/// Deterministic pseudo-random test input for a given size. Always returns
-/// the same bytes for the same `size` — fine for one-shot calls. Inside
-/// per-size loops use [`fill_input`] with a persistent rng instead so each
-/// iteration sees uncorrelated bytes.
-fn make_input(size: usize) -> Vec<u8> {
-    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
-    fill_input(&mut rng, size)
-}
-
-/// Fill `size` fresh bytes from `rng`. Use inside loops so each iteration
-/// gets a different byte stream rather than a re-seeded prefix.
+/// Fill `size` fresh bytes from `rng`. Per-size loops thread one rng
+/// through their iterations so each gets a different byte stream rather
+/// than a re-seeded prefix; sequences of one-shot generic calls do the
+/// same to keep their inputs uncorrelated.
 fn fill_input(rng: &mut Xoshiro256PlusPlus, size: usize) -> Vec<u8> {
     let mut buf = vec![0u8; size];
     rng.fill_bytes(&mut buf);
@@ -172,28 +165,29 @@ fn decode_accepts_exactly_ascii_hex_digits() {
 
 #[test]
 fn from_hex_array_sizes() {
-    fn check<const N: usize>() {
-        let input = make_input(N);
+    fn check<const N: usize>(rng: &mut Xoshiro256PlusPlus) {
+        let input = fill_input(rng, N);
         let hex: String = better_hex::encode(&input).unwrap();
         let decoded: [u8; N] = better_hex::decode(&hex).unwrap();
         assert_eq!(&decoded[..], &input[..]);
     }
-    check::<0>();
-    check::<1>();
-    check::<2>();
-    check::<4>();
-    check::<8>();
-    check::<15>();
-    check::<16>();
-    check::<17>();
-    check::<31>();
-    check::<32>();
-    check::<33>();
-    check::<64>();
-    check::<128>();
-    check::<255>();
-    check::<256>();
-    check::<512>();
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
+    check::<0>(&mut rng);
+    check::<1>(&mut rng);
+    check::<2>(&mut rng);
+    check::<4>(&mut rng);
+    check::<8>(&mut rng);
+    check::<15>(&mut rng);
+    check::<16>(&mut rng);
+    check::<17>(&mut rng);
+    check::<31>(&mut rng);
+    check::<32>(&mut rng);
+    check::<33>(&mut rng);
+    check::<64>(&mut rng);
+    check::<128>(&mut rng);
+    check::<255>(&mut rng);
+    check::<256>(&mut rng);
+    check::<512>(&mut rng);
 }
 
 // ── HexStr<N> roundtrip — representative sizes ─────────────────────────────
@@ -201,8 +195,8 @@ fn from_hex_array_sizes() {
 #[test]
 fn hex_str_roundtrip_sizes() {
     use better_hex::{HexStr, PrefixedHexStr};
-    fn check<const N: usize>() {
-        let input = make_input(N);
+    fn check<const N: usize>(rng: &mut Xoshiro256PlusPlus) {
+        let input = fill_input(rng, N);
         let arr: [u8; N] = input.as_slice().try_into().unwrap();
         let lower: HexStr<N> = HexStr::encode_lower(&arr);
         assert_eq!(lower.decode(), arr);
@@ -216,21 +210,22 @@ fn hex_str_roundtrip_sizes() {
         assert_eq!(p_upper.decode(), arr);
         assert!(p_upper.as_str().starts_with("0x"));
     }
-    check::<0>();
-    check::<1>();
-    check::<2>();
-    check::<4>();
-    check::<8>();
-    check::<15>();
-    check::<16>();
-    check::<17>();
-    check::<31>();
-    check::<32>();
-    check::<33>();
-    check::<64>();
-    check::<128>();
-    check::<255>();
-    check::<256>();
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
+    check::<0>(&mut rng);
+    check::<1>(&mut rng);
+    check::<2>(&mut rng);
+    check::<4>(&mut rng);
+    check::<8>(&mut rng);
+    check::<15>(&mut rng);
+    check::<16>(&mut rng);
+    check::<17>(&mut rng);
+    check::<31>(&mut rng);
+    check::<32>(&mut rng);
+    check::<33>(&mut rng);
+    check::<64>(&mut rng);
+    check::<128>(&mut rng);
+    check::<255>(&mut rng);
+    check::<256>(&mut rng);
 }
 
 // ── heapless ────────────────────────────────────────────────────────────────
@@ -271,7 +266,7 @@ fn arrayvec_all_sizes() {
 
 #[cfg(feature = "serde")]
 mod serde_exhaustive {
-    use super::{Xoshiro256PlusPlus, fill_input, make_input};
+    use super::{Xoshiro256PlusPlus, fill_input};
     use rand_core::SeedableRng;
     use serde::{Deserialize, Serialize};
 
@@ -309,8 +304,8 @@ mod serde_exhaustive {
                     }
                 }
 
-                fn check_arr<const N: usize>() {
-                    let data: [u8; N] = make_input(N).try_into().unwrap();
+                fn check_arr<const N: usize>(rng: &mut Xoshiro256PlusPlus) {
+                    let data: [u8; N] = fill_input(rng, N).try_into().unwrap();
                     let original = A { data };
                     let json = serde_json::to_string(&original).unwrap();
                     let decoded: A<N> = serde_json::from_str(&json).unwrap();
@@ -319,15 +314,16 @@ mod serde_exhaustive {
 
                 #[test]
                 fn array_roundtrip() {
-                    check_arr::<0>();
-                    check_arr::<1>();
-                    check_arr::<4>();
-                    check_arr::<16>();
-                    check_arr::<32>();
-                    check_arr::<64>();
-                    check_arr::<128>();
-                    check_arr::<255>();
-                    check_arr::<256>();
+                    let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
+                    check_arr::<0>(&mut rng);
+                    check_arr::<1>(&mut rng);
+                    check_arr::<4>(&mut rng);
+                    check_arr::<16>(&mut rng);
+                    check_arr::<32>(&mut rng);
+                    check_arr::<64>(&mut rng);
+                    check_arr::<128>(&mut rng);
+                    check_arr::<255>(&mut rng);
+                    check_arr::<256>(&mut rng);
                 }
             }
         };
