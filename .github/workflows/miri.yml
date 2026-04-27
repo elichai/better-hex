@@ -103,6 +103,11 @@ jobs:
       - name: Run doc-tests under Miri
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
+          # rustdoc compiles each doctest with RUSTDOCFLAGS, not RUSTFLAGS,
+          # so the target-feature toggles must be plumbed through both for
+          # the SIMD-enabled matrix entries to actually run their SSSE3 /
+          # AVX2 / NEON paths under Miri.
+          RUSTDOCFLAGS: ${{ matrix.rustflags }}
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
           MIRIFLAGS: >-
