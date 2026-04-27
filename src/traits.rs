@@ -99,6 +99,9 @@ impl<T: ToHex + ?Sized> fmt::Display for HexAdapter<'_, T> {
 
 /// Trait for types that can be constructed from hex-encoded data.
 ///
+/// All built-in implementations accept upper, lower, and mixed case
+/// hex characters (`[0-9a-fA-F]`).
+///
 /// # Examples
 ///
 /// ```rust
@@ -107,7 +110,7 @@ impl<T: ToHex + ?Sized> fmt::Display for HexAdapter<'_, T> {
 /// let bytes = Vec::<u8>::from_hex("deadbeef").unwrap();
 /// assert_eq!(bytes, [0xde, 0xad, 0xbe, 0xef]);
 ///
-/// let arr = <[u8; 4]>::from_hex("deadbeef").unwrap();
+/// let arr = <[u8; 4]>::from_hex("DEADBEEF").unwrap();
 /// assert_eq!(arr, [0xde, 0xad, 0xbe, 0xef]);
 /// ```
 pub trait FromHex: Sized {

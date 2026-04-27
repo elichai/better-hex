@@ -9,6 +9,11 @@ use crate::{backend, maybe_uninit};
 
 /// Decode hex into any type that implements [`FromHex`].
 ///
+/// Accepts hex characters in either case (`[0-9a-fA-F]`), including
+/// arbitrary mixings of upper and lower case in the same input. The
+/// encode side, by contrast, always produces a single canonical case
+/// (see [`encode`](crate::encode) and [`encode_upper`](crate::encode_upper)).
+///
 /// # Examples
 ///
 /// ```rust
@@ -17,12 +22,18 @@ use crate::{backend, maybe_uninit};
 ///
 /// // Decode to fixed-size array
 /// let arr: [u8; 4] = better_hex::decode("deadbeef").unwrap();
+///
+/// // Mixed case is accepted.
+/// let mixed: [u8; 4] = better_hex::decode("DeAdBeEf").unwrap();
+/// assert_eq!(mixed, [0xde, 0xad, 0xbe, 0xef]);
 /// ```
 pub fn decode<T: FromHex>(input: impl AsRef<[u8]>) -> Result<T, T::Error> {
     T::from_hex(input)
 }
 
 /// Decode hex `input` into a caller-provided `output` buffer.
+///
+/// Accepts upper, lower, and mixed case hex characters (`[0-9a-fA-F]`).
 ///
 /// Returns [`Error::InvalidLength`] if `input.len() != output.len() * 2`.
 /// Returns [`Error::InvalidEncoding`] if any byte in `input` is not a valid hex character.
@@ -45,7 +56,11 @@ pub fn decode_to_slice<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a [u8
     Ok(output)
 }
 
-/// Check if `input` is a valid hex string (even length and all hex chars).
+/// Check if `input` is a valid hex string.
+///
+/// Returns `true` iff `input` has even length and every byte is in
+/// `[0-9a-fA-F]`. Both cases and any mix of them are accepted —
+/// validity is purely a function of the byte set, not the case.
 #[inline]
 pub fn check(input: &[u8]) -> bool {
     input.len().is_multiple_of(2) && backend::check(input)

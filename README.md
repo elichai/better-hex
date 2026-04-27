@@ -34,6 +34,21 @@ Fast, constant-time hex encoding and decoding with SIMD and `const fn`.
   alloc-free with serializers that override `Serializer::collect_str`
   (e.g. `serde_json`, `serde_yaml`).
 
+## Decoding case behavior
+
+Encoding produces canonical case — `encode` / `encode_lower` always emit
+`[0-9a-f]`, `encode_upper` always emits `[0-9A-F]`. Decoding is **case-
+insensitive** — `decode`, `check`, `HexStr::from_str`, the `FromHex`
+impls, and the serde `deserialize` paths accept upper, lower, and mixed
+case hex characters in the same input. Each serde submodule's case
+choice (`upper` / `lower` etc.) is the *output* format only; the input
+side is uniform.
+
+```rust
+let bytes: [u8; 4] = better_hex::decode("DeAdBeEf")?;
+assert_eq!(bytes, [0xde, 0xad, 0xbe, 0xef]);
+```
+
 [`HexStr<N>`]: https://docs.rs/better-hex/latest/better_hex/struct.HexStr.html
 [`PrefixedHexStr<N>`]: https://docs.rs/better-hex/latest/better_hex/type.PrefixedHexStr.html
 [`HexTarget`]: https://docs.rs/better-hex/latest/better_hex/trait.HexTarget.html

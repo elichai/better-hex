@@ -141,8 +141,10 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
 
     /// Construct a `HexStr` from a hex byte array.
     ///
-    /// `M` must equal `N * 2` (enforced at compile time). Returns `None` if
-    /// any byte is not valid hex ASCII (`[0-9a-fA-F]`).
+    /// `M` must equal `N * 2` (enforced at compile time). Accepts upper,
+    /// lower, and mixed case (`[0-9a-fA-F]`); the stored string preserves
+    /// whatever case the caller passed in. Returns `None` if any byte is
+    /// not a valid hex character.
     pub fn from_hex<const M: usize>(hex: [u8; M]) -> Option<Self> {
         const { assert!(M == N * 2, "hex input length must equal N * 2") };
         if !crate::check(&hex) {
@@ -178,8 +180,9 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
 
     /// Construct a `HexStr` from a hex byte array at compile time.
     ///
-    /// `M` must equal `N * 2` (enforced at compile time). Returns `None` if
-    /// any byte is not valid hex ASCII.
+    /// `M` must equal `N * 2` (enforced at compile time). Accepts upper,
+    /// lower, and mixed case (`[0-9a-fA-F]`). Returns `None` if any byte
+    /// is not a valid hex character.
     ///
     /// # Performance
     ///
@@ -308,6 +311,11 @@ impl<const N: usize, P: Prefix> FromStr for HexStr<N, P> {
 
     /// Parse a hex string.
     ///
+    /// Accepts upper, lower, and mixed case hex characters
+    /// (`[0-9a-fA-F]`); the stored string preserves the caller's case.
+    /// The `"0x"` prefix on [`PrefixedHexStr`](crate::PrefixedHexStr) is
+    /// matched verbatim (lowercase `x` only).
+    ///
     /// On length mismatch, `Error::InvalidLength::expected` is the
     /// **full** string length including any prefix — so for
     /// `PrefixedHexStr<4>` the expected length is 10 (`"0x"` + 8 hex
@@ -356,6 +364,9 @@ const fn const_encode_pairs<const N: usize>(input: &[u8; N], upper: bool) -> [[u
 
 /// Decode hex at compile time using branchless arithmetic.
 ///
+/// Accepts upper, lower, and mixed case hex characters (`[0-9a-fA-F]`),
+/// matching the runtime [`decode`](crate::decode) family.
+///
 /// Uses error accumulation (no early return on invalid bytes) to remain
 /// constant-time w.r.t. input data values.
 ///
@@ -388,8 +399,9 @@ pub const fn const_decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; 
 
 /// Check hex validity at compile time using branchless arithmetic.
 ///
-/// Returns `true` if `input` has even length and every byte is a valid hex
-/// character (`[0-9a-fA-F]`). Processes all bytes without short-circuiting.
+/// Returns `true` if `input` has even length and every byte is in
+/// `[0-9a-fA-F]`. Both cases and any mix of them are accepted. Processes
+/// all bytes without short-circuiting.
 ///
 /// # Performance
 ///

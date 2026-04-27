@@ -6,12 +6,18 @@
 //!
 //! # Submodules
 //!
-//! | Module | Case | Prefix |
+//! | Module | Serialize case | Prefix |
 //! |---|---|---|
 //! | `better_hex::serde` | lower | no |
 //! | `better_hex::serde::upper` | upper | no |
 //! | `better_hex::serde::prefixed` | lower | `0x` |
 //! | `better_hex::serde::upper_prefixed` | upper | `0x` |
+//!
+//! The case column above only applies to *serialize*. Deserialization
+//! always accepts upper, lower, and mixed case hex
+//! characters (`[0-9a-fA-F]`), regardless of which submodule was used —
+//! pick a submodule based on the wire format you want to *produce*, not
+//! the format you expect to *consume*.
 //!
 //! # Constant-time notes
 //!
