@@ -14,7 +14,11 @@ use core::mem::MaybeUninit;
 
 /// Trait for types that can be hex-encoded.
 ///
-/// Automatically implemented for all types that implement `AsRef<[u8]>`.
+/// Implemented for `[u8; N]`, `[u8]`, and (with `alloc`) `Vec<u8>`,
+/// `Box<[u8]>`, and `Cow<'_, [u8]>`. The `[u8]` impl covers `&[u8]`
+/// callers via auto-deref on method calls. Downstream byte containers
+/// can implement `ToHex` themselves to plug into [`write_hex`],
+/// [`encode_hex`], and the serde [`serialize`] path uniformly.
 ///
 /// # Examples
 ///
@@ -28,6 +32,10 @@ use core::mem::MaybeUninit;
 /// let s: String = [0xde, 0xad_u8].encode_hex().unwrap();
 /// assert_eq!(s, "dead");
 /// ```
+///
+/// [`write_hex`]: ToHex::write_hex
+/// [`encode_hex`]: ToHex::encode_hex
+/// [`serialize`]: ToHex::serialize
 pub trait ToHex {
     /// Write hex encoding into any [`fmt::Write`] sink.
     fn write_hex<W: fmt::Write>(&self, w: &mut W, upper: bool) -> fmt::Result;
@@ -138,17 +146,135 @@ pub trait HexTarget: Sized {
     fn encode_hex_upper(bytes: &[u8]) -> Result<Self, Self::Error>;
 }
 
-impl<S: AsRef<[u8]>> ToHex for S {
+impl<const N: usize> ToHex for [u8; N] {
+    #[inline]
     fn write_hex<W: fmt::Write>(&self, w: &mut W, upper: bool) -> fmt::Result {
-        crate::display::write_hex_to::<{ crate::display::DEFAULT_BUF }, _>(self.as_ref(), w, upper)
+        crate::display::write_hex_to::<{ crate::display::DEFAULT_BUF }, _>(self, w, upper)
     }
-
+    #[inline]
     fn encode_hex<T: HexTarget>(&self) -> Result<T, T::Error> {
-        T::encode_hex(self.as_ref())
+        T::encode_hex(self)
+    }
+    #[inline]
+    fn encode_hex_upper<T: HexTarget>(&self) -> Result<T, T::Error> {
+        T::encode_hex_upper(self)
     }
 
+    /// Fast path: stack-encode into a [`HexStr<N, P>`](crate::HexStr) and
+    /// hand a complete `&str` to `serialize_str`. Alloc-free regardless of
+    /// the serializer's `collect_str` implementation.
+    #[cfg(feature = "serde")]
+    #[inline]
+    fn serialize<S, const PREFIX: bool>(&self, serializer: S, upper: bool) -> Result<S::Ok, S::Error>
+    where
+        S: ::serde::Serializer,
+    {
+        if PREFIX {
+            let hex = if upper {
+                HexStr::<N, crate::WithPrefix>::encode_upper(self)
+            } else {
+                HexStr::<N, crate::WithPrefix>::encode_lower(self)
+            };
+            serializer.serialize_str(hex.as_str())
+        } else {
+            let hex = if upper {
+                HexStr::<N>::encode_upper(self)
+            } else {
+                HexStr::<N>::encode_lower(self)
+            };
+            serializer.serialize_str(hex.as_str())
+        }
+    }
+}
+
+impl ToHex for [u8] {
+    #[inline]
+    fn write_hex<W: fmt::Write>(&self, w: &mut W, upper: bool) -> fmt::Result {
+        crate::display::write_hex_to::<{ crate::display::DEFAULT_BUF }, _>(self, w, upper)
+    }
+    #[inline]
+    fn encode_hex<T: HexTarget>(&self) -> Result<T, T::Error> {
+        T::encode_hex(self)
+    }
+    #[inline]
     fn encode_hex_upper<T: HexTarget>(&self) -> Result<T, T::Error> {
-        T::encode_hex_upper(self.as_ref())
+        T::encode_hex_upper(self)
+    }
+}
+
+/// Reference forwarding so `&[u8]`, `&[u8; N]`, `&Vec<u8>` etc. all
+/// implement [`ToHex`] — and a `&[u8; N]` field still hits the fixed-size
+/// [`serialize`](ToHex::serialize) fast path through the inner `[u8; N]`
+/// impl.
+impl<U: ToHex + ?Sized> ToHex for &U {
+    #[inline]
+    fn write_hex<W: fmt::Write>(&self, w: &mut W, upper: bool) -> fmt::Result {
+        <U as ToHex>::write_hex(*self, w, upper)
+    }
+    #[inline]
+    fn encode_hex<T: HexTarget>(&self) -> Result<T, T::Error> {
+        <U as ToHex>::encode_hex(*self)
+    }
+    #[inline]
+    fn encode_hex_upper<T: HexTarget>(&self) -> Result<T, T::Error> {
+        <U as ToHex>::encode_hex_upper(*self)
+    }
+
+    #[cfg(feature = "serde")]
+    #[inline]
+    fn serialize<S, const PREFIX: bool>(&self, serializer: S, upper: bool) -> Result<S::Ok, S::Error>
+    where
+        S: ::serde::Serializer,
+    {
+        <U as ToHex>::serialize::<S, PREFIX>(*self, serializer, upper)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl ToHex for alloc::vec::Vec<u8> {
+    #[inline]
+    fn write_hex<W: fmt::Write>(&self, w: &mut W, upper: bool) -> fmt::Result {
+        <[u8] as ToHex>::write_hex(self, w, upper)
+    }
+    #[inline]
+    fn encode_hex<T: HexTarget>(&self) -> Result<T, T::Error> {
+        <[u8] as ToHex>::encode_hex(self)
+    }
+    #[inline]
+    fn encode_hex_upper<T: HexTarget>(&self) -> Result<T, T::Error> {
+        <[u8] as ToHex>::encode_hex_upper(self)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl ToHex for alloc::boxed::Box<[u8]> {
+    #[inline]
+    fn write_hex<W: fmt::Write>(&self, w: &mut W, upper: bool) -> fmt::Result {
+        <[u8] as ToHex>::write_hex(self, w, upper)
+    }
+    #[inline]
+    fn encode_hex<T: HexTarget>(&self) -> Result<T, T::Error> {
+        <[u8] as ToHex>::encode_hex(self)
+    }
+    #[inline]
+    fn encode_hex_upper<T: HexTarget>(&self) -> Result<T, T::Error> {
+        <[u8] as ToHex>::encode_hex_upper(self)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl ToHex for alloc::borrow::Cow<'_, [u8]> {
+    #[inline]
+    fn write_hex<W: fmt::Write>(&self, w: &mut W, upper: bool) -> fmt::Result {
+        <[u8] as ToHex>::write_hex(self, w, upper)
+    }
+    #[inline]
+    fn encode_hex<T: HexTarget>(&self) -> Result<T, T::Error> {
+        <[u8] as ToHex>::encode_hex(self)
+    }
+    #[inline]
+    fn encode_hex_upper<T: HexTarget>(&self) -> Result<T, T::Error> {
+        <[u8] as ToHex>::encode_hex_upper(self)
     }
 }
 

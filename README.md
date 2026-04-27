@@ -67,10 +67,10 @@ let arr: [u8; 5] = better_hex::decode(b"68656c6c6f")?;
 | `const fn` encode / decode / check | — | encode | — | — | all three |
 | Stack hex string | — | `Buffer<N>` (2 B prefix overhead) | — | — | `HexStr<N>` (zero overhead) |
 | Extensible output trait | — | — | — | — | `HexTarget` |
-| Alloc-free serde for `[u8; N]` | deserialize only | full¹ | — | n/a | full¹ |
+| Alloc-free serde for `[u8; N]` | deserialize only | full¹ | — | n/a | **full** |
 | `no_std` | yes | yes | yes | yes | yes |
 
-¹ Serialize is alloc-free with serializers that override `Serializer::collect_str` (e.g. `serde_json`, `serde_yaml`); the default `collect_str` formats into a temporary `String`.
+¹ const-hex serialize is alloc-free with serializers that override `Serializer::collect_str` (e.g. `serde_json`, `serde_yaml`); the default `collect_str` formats into a temporary `String`. better-hex's `[u8; N]` path stack-encodes into a `HexStr<N>` and calls `serialize_str` directly, so it is alloc-free regardless of the serializer.
 
 [hex]: https://github.com/KokaKiwi/rust-hex
 [const-hex]: https://github.com/danipopes/const-hex
