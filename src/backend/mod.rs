@@ -216,7 +216,9 @@ pub(crate) mod test_support {
     use crate::error::Error;
     use core::mem::MaybeUninit;
 
-    const MAX_SIZE: usize = 512;
+    // Cap to a SIMD-boundary-covering size under Miri so the cross-backend
+    // oracle tests don't dominate the Miri wall clock.
+    const MAX_SIZE: usize = if cfg!(miri) { 64 } else { 512 };
 
     /// Deterministic input bytes for a given size.
     pub(crate) fn make_input(size: usize) -> alloc::vec::Vec<u8> {

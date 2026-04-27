@@ -6,7 +6,10 @@ use better_hex::{FromHex, HexTarget, ToHex};
 use rand_core::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 
-const MAX: usize = 512;
+// Under Miri, the size-loop tests dominate the wall clock. Cap to a size
+// that still covers every SIMD chunk boundary (16/17, 31/32/33, 63/64/65)
+// without paying the interpreter cost for the long tail.
+const MAX: usize = if cfg!(miri) { 64 } else { 512 };
 
 /// Deterministic test input for a given size.
 fn make_input(size: usize) -> Vec<u8> {
@@ -112,8 +115,12 @@ fn single_byte_roundtrip_all_values() {
 
 #[test]
 fn two_byte_roundtrip_all_values() {
-    for ab in 0u16..=u16::MAX {
-        let input = ab.to_le_bytes();
+    // Under Miri, sample every 256th value (256 well-spread inputs) instead
+    // of all 65,536 — full coverage isn't tractable under interpretation but
+    // the spread still catches per-nibble/per-byte boundary issues.
+    let step: usize = if cfg!(miri) { 256 } else { 1 };
+    for ab in (0u32..=u16::MAX as u32).step_by(step) {
+        let input = (ab as u16).to_le_bytes();
         let hex: String = better_hex::encode(&input).unwrap();
         let decoded: [u8; 2] = better_hex::decode(&hex).unwrap();
         assert_eq!(decoded, input, "roundtrip mismatch for bytes {input:?}");
