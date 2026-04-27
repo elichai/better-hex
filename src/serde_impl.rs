@@ -47,26 +47,11 @@
 //! # }
 //! ```
 
+use crate::ToHex;
 use core::fmt;
 use serde::{Deserializer, Serializer, de};
 
 // ── shared helpers ──────────────────────────────────────────────────────────
-
-/// Display adapter for `collect_str`. Const generics select case and prefix.
-struct HexDisplayAdapter<'a, const PREFIX: bool> {
-    data: &'a [u8],
-    upper: bool,
-}
-
-impl<const PREFIX: bool> fmt::Display for HexDisplayAdapter<'_, PREFIX> {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if PREFIX {
-            f.write_str("0x")?;
-        }
-        crate::display::write_hex_to::<{ crate::display::DEFAULT_BUF }, _>(self.data, f, self.upper)
-    }
-}
 
 /// Serde visitor. Const generic selects prefix stripping.
 struct HexVisitor<T, const PREFIX: bool>(core::marker::PhantomData<T>);
@@ -101,11 +86,8 @@ fn strip_prefix<const PREFIX: bool>(s: &[u8]) -> Result<&[u8], &'static str> {
 // ── default: lowercase, no prefix ───────────────────────────────────────────
 
 /// Serialize bytes as lowercase hex (no prefix).
-pub fn serialize<T: AsRef<[u8]>, S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
-    serializer.collect_str(&HexDisplayAdapter::<false> {
-        data: value.as_ref(),
-        upper: false,
-    })
+pub fn serialize<T: ToHex + ?Sized, S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
+    value.serialize::<_, false>(serializer, false)
 }
 
 /// Deserialize bytes from a hex string (no prefix).
@@ -119,14 +101,12 @@ pub fn deserialize<'de, T: crate::FromHex, D: Deserializer<'de>>(deserializer: D
 ///
 /// Use as `#[serde(with = "better_hex::serde::upper")]`.
 pub mod upper {
+    use crate::ToHex;
     use serde::{Deserializer, Serializer};
 
     /// Serialize bytes as uppercase hex (no prefix).
-    pub fn serialize<T: AsRef<[u8]>, S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(&super::HexDisplayAdapter::<false> {
-            data: value.as_ref(),
-            upper: true,
-        })
+    pub fn serialize<T: ToHex + ?Sized, S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
+        value.serialize::<_, false>(serializer, true)
     }
 
     /// Deserialize bytes from a hex string (no prefix).
@@ -143,14 +123,12 @@ pub mod upper {
 /// incorrect prefix is not leaked, but whether the prefix is correct IS
 /// observable (the `"0x"` prefix is a public format marker).
 pub mod prefixed {
+    use crate::ToHex;
     use serde::{Deserializer, Serializer};
 
     /// Serialize bytes as lowercase hex with a `"0x"` prefix.
-    pub fn serialize<T: AsRef<[u8]>, S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(&super::HexDisplayAdapter::<true> {
-            data: value.as_ref(),
-            upper: false,
-        })
+    pub fn serialize<T: ToHex + ?Sized, S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
+        value.serialize::<_, true>(serializer, false)
     }
 
     /// Deserialize bytes from a `"0x"`-prefixed hex string.
@@ -168,14 +146,12 @@ pub mod prefixed {
 ///
 /// See [`prefixed`] for constant-time notes on prefix validation.
 pub mod upper_prefixed {
+    use crate::ToHex;
     use serde::{Deserializer, Serializer};
 
     /// Serialize bytes as uppercase hex with a `"0x"` prefix.
-    pub fn serialize<T: AsRef<[u8]>, S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(&super::HexDisplayAdapter::<true> {
-            data: value.as_ref(),
-            upper: true,
-        })
+    pub fn serialize<T: ToHex + ?Sized, S: Serializer>(value: &T, serializer: S) -> Result<S::Ok, S::Error> {
+        value.serialize::<_, true>(serializer, true)
     }
 
     /// Deserialize bytes from a `"0x"`-prefixed hex string.

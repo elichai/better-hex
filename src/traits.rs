@@ -37,6 +37,56 @@ pub trait ToHex {
 
     /// Encode to uppercase hex into any [`HexTarget`] (zero-copy).
     fn encode_hex_upper<T: HexTarget>(&self) -> Result<T, T::Error>;
+
+    /// Serialize as a hex string via serde.
+    ///
+    /// `PREFIX` selects `"0x"` prefixing (compile-time); `upper` selects
+    /// uppercase vs lowercase digits (runtime).
+    ///
+    /// Default body: `collect_str` over an adapter that calls
+    /// [`write_hex`](Self::write_hex). Alloc-free with serializers that
+    /// override `Serializer::collect_str` (e.g. `serde_json`,
+    /// `serde_yaml`); the default `collect_str` falls back to a temporary
+    /// `String`. Implementors with a known compile-time hex length can
+    /// override this to stack-encode and call `serialize_str` directly,
+    /// avoiding any allocation regardless of serializer.
+    ///
+    /// Asymmetry note: [`encode_hex`](Self::encode_hex) carries prefix
+    /// info in the *target* type ([`HexStr<N, WithPrefix>`](crate::HexStr)
+    /// includes it; `String` / `ArrayString` etc. do not). `serialize`
+    /// has nowhere to compose the prefix at the call site, so it takes
+    /// the prefix as a `const PREFIX` parameter instead.
+    #[cfg(feature = "serde")]
+    fn serialize<S, const PREFIX: bool>(&self, serializer: S, upper: bool) -> Result<S::Ok, S::Error>
+    where
+        S: ::serde::Serializer,
+    {
+        serializer.collect_str(&HexAdapter::<Self> {
+            value: self,
+            upper,
+            prefix: PREFIX,
+        })
+    }
+}
+
+/// `Display` adapter used by the default [`ToHex::serialize`] body —
+/// streams hex (with optional `"0x"` prefix) through `collect_str`.
+#[cfg(feature = "serde")]
+struct HexAdapter<'a, T: ToHex + ?Sized> {
+    value: &'a T,
+    upper: bool,
+    prefix: bool,
+}
+
+#[cfg(feature = "serde")]
+impl<T: ToHex + ?Sized> fmt::Display for HexAdapter<'_, T> {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.prefix {
+            f.write_str("0x")?;
+        }
+        self.value.write_hex(f, self.upper)
+    }
 }
 
 /// Trait for types that can be constructed from hex-encoded data.
