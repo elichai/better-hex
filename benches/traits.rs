@@ -98,9 +98,7 @@ fn bench_serde_array(c: &mut Criterion) {
     bench_serde_array_size::<4>(&mut group);
     bench_serde_array_size::<16>(&mut group);
     bench_serde_array_size::<32>(&mut group);
-    bench_serde_array_size::<64>(&mut group);
     bench_serde_array_size::<256>(&mut group);
-    bench_serde_array_size::<1024>(&mut group);
 
     group.finish();
 }

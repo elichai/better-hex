@@ -43,7 +43,7 @@ jobs:
             --bench encode --bench decode --bench check \
             --bench display --bench traits \
             -- --output-format bencher \
-            --warm-up-time 1 --measurement-time 2 --sample-size 10 \
+            --warm-up-time 1 --measurement-time 2 --sample-size 10 --noplot \
             | tee bench_output.txt
 
   # Push benchmarks: write permissions for storing results and commenting.
@@ -76,7 +76,7 @@ jobs:
             --bench encode --bench decode --bench check \
             --bench display --bench traits \
             -- --output-format bencher \
-            --warm-up-time 1 --measurement-time 2 --sample-size 10 \
+            --warm-up-time 1 --measurement-time 2 --sample-size 10 --noplot \
             | tee bench_output.txt
 
       - name: Store benchmark result
