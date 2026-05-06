@@ -1,3 +1,6 @@
 [toolchain]
-channel = "nightly"
+# Pinned to a specific nightly so a broken nightly upstream can't break CI or
+# local fuzzing runs. Bump deliberately; fuzz.sh and .github/workflows/fuzz.yml
+# both read the channel from this file, so changing it here is enough.
+channel = "nightly-2026-05-01"
 components = ["rust-src"]

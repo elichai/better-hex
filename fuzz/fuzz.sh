@@ -59,14 +59,15 @@ else
 fi
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-cd "$SCRIPT_DIR/.."
+# Run from inside fuzz/ so rustup picks up fuzz/rust-toolchain.toml and uses
+# the pinned nightly. cargo-fuzz finds the workspace via --manifest-path, so it
+# works fine from here — running from the workspace root would bypass the
+# toolchain file (rustup walks up from cwd, not from the manifest dir).
+cd "$SCRIPT_DIR"
 
-# `+nightly` is explicit so the script works from cwd's that don't see
-# fuzz/rust-toolchain.toml — cargo-fuzz must run from the workspace root,
-# but the toolchain file lives inside fuzz/.
 for target in "${TARGETS[@]}"; do
     echo "==> fuzz: $target (${SECONDS_PER_TARGET}s)"
-    cargo +nightly fuzz run \
+    cargo fuzz run \
         --release \
         --debug-assertions \
         --careful \
