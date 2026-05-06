@@ -16,6 +16,12 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Needed so scheduled / post-merge runs can push corpus additions back to the
+# `fuzz-corpus` orphan branch. Pull-request events keep their default
+# read-only token regardless (the push step is gated below).
+permissions:
+  contents: write
+
 jobs:
   fuzz-smoke:
     name: Fuzz smoke (${{ matrix.target }} on ${{ matrix.platform.arch }})
@@ -29,6 +35,25 @@ jobs:
           - { os: ubuntu-24.04-arm, arch: aarch64 }
     steps:
       - uses: actions/checkout@v4
+
+      # The corpus lives on an orphan branch (no shared history with main).
+      # We check it out into a sibling directory and copy seeds in before
+      # fuzzing. Adding `path:` keeps it from clobbering the main checkout.
+      - name: Checkout fuzz-corpus
+        uses: actions/checkout@v4
+        with:
+          ref: fuzz-corpus
+          path: fuzz-corpus
+          fetch-depth: 1
+
+      - name: Stage seed corpus
+        env:
+          FUZZ_TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p "fuzz/corpus/$FUZZ_TARGET"
+          # libFuzzer filenames are sha1(content), so cp -n is a free dedup.
+          cp -n "fuzz-corpus/$FUZZ_TARGET/"* "fuzz/corpus/$FUZZ_TARGET/" 2>/dev/null || true
+          echo "seeded $FUZZ_TARGET with $(ls "fuzz/corpus/$FUZZ_TARGET" | wc -l) inputs"
 
       # Stable is used to build cargo-fuzz itself; cargo-fuzz fails to build
       # on nightly. The pinned nightly in fuzz/rust-toolchain.toml is what runs
@@ -67,3 +92,46 @@ jobs:
           FUZZ_TARGET: ${{ matrix.target }}
           FUZZ_SECONDS: ${{ steps.duration.outputs.seconds }}
         run: ./fuzz/fuzz.sh "$FUZZ_TARGET"
+
+      # Push any new corpus inputs found during this run back to the
+      # fuzz-corpus orphan branch. Gated to schedule + post-merge-to-main on
+      # the canonical repo so fork PRs and feature branches stay read-only.
+      # Each matrix job pushes only its own target subdir; the rebase loop
+      # handles racing matrix jobs cleanly because libFuzzer's sha1 filenames
+      # mean different jobs touch disjoint files.
+      - name: Push corpus additions to fuzz-corpus
+        if: |
+          github.repository == 'elichai/better-hex' &&
+          (github.event_name == 'schedule' ||
+           (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+        env:
+          FUZZ_TARGET: ${{ matrix.target }}
+          FUZZ_ARCH: ${{ matrix.platform.arch }}
+          RUN_ID: ${{ github.run_id }}
+        working-directory: fuzz-corpus
+        run: |
+          set -euo pipefail
+          cp -n "../fuzz/corpus/$FUZZ_TARGET/"* "$FUZZ_TARGET/" 2>/dev/null || true
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "$FUZZ_TARGET/"
+          if git diff --cached --quiet; then
+            echo "no new $FUZZ_TARGET corpus inputs from this run"
+            exit 0
+          fi
+          added=$(git diff --cached --name-only | wc -l | tr -d ' ')
+          git commit -m "corpus($FUZZ_TARGET, $FUZZ_ARCH): +$added inputs from CI run $RUN_ID"
+          # Pull-rebase-push retry handles the 6 parallel matrix jobs racing
+          # on the same branch. SHA1 filenames mean different jobs add
+          # disjoint files, so rebases never conflict at the content level.
+          for attempt in 1 2 3 4 5 6; do
+            if git push origin fuzz-corpus; then
+              echo "pushed on attempt $attempt"
+              exit 0
+            fi
+            echo "push rejected on attempt $attempt — fetching and rebasing"
+            git fetch origin fuzz-corpus
+            git rebase origin/fuzz-corpus
+          done
+          echo "::error::failed to push corpus after 6 attempts" >&2
+          exit 1
