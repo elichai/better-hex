@@ -211,7 +211,8 @@ pub unsafe fn encode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize, 
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[target_feature(enable = "neon")]
-pub unsafe fn decode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> Result<(), InvalidEncoding> {
+#[doc(hidden)]
+pub unsafe fn decode_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> u8 {
     let mut err: u8 = 0;
 
     // Hoist all broadcast constants out of the loop so LLVM doesn't need to
@@ -262,11 +263,17 @@ pub unsafe fn decode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) 
         err |= unsafe { scalar::decode_inner(src, dst, byte_len) };
     }
 
-    if err != 0 {
-        return Err(InvalidEncoding);
-    }
+    err
+}
 
-    Ok(())
+#[target_feature(enable = "neon")]
+pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
+    // SAFETY: forwarded from caller.
+    if unsafe { decode_inner(src, dst, byte_len) } != 0 {
+        Err(InvalidEncoding)
+    } else {
+        Ok(())
+    }
 }
 
 /// Decode a 16-byte NEON vector of hex ASCII characters into nibble values,
@@ -303,8 +310,9 @@ fn decode_nibbles_with_consts(
 /// valid, every lane is 0xFF; we reduce with `vminvq_u8` to check.
 ///
 /// Processes all chunks without early exit (constant-time).
-pub fn check(mut input: &[u8]) -> bool {
-    let mut all_valid = true;
+#[doc(hidden)]
+pub fn check_inner(mut input: &[u8]) -> u8 {
+    let mut err: u8 = 0;
 
     while input.len() >= 16 {
         // SAFETY: `input.len() >= 16` so the pointer is valid for 16 reads.
@@ -323,13 +331,20 @@ pub fn check(mut input: &[u8]) -> bool {
         let is_lower = unsafe { vandq_u8(ge_a_lower, le_f_lower) };
 
         let valid = unsafe { vorrq_u8(vorrq_u8(is_digit, is_upper), is_lower) };
-        all_valid &= unsafe { vminvq_u8(valid) } == 0xFF;
+        // `vminvq_u8(valid)` is 0xFF iff every lane is 0xFF (all valid),
+        // 0 iff any lane is 0 (any invalid). Bitwise NOT inverts to
+        // accumulator semantics: 0 if all valid, 0xFF if any invalid.
+        err |= !unsafe { vminvq_u8(valid) };
 
         // SAFETY: `input.len() >= 16` checked above.
         input = unsafe { input.get_unchecked(16..) };
     }
 
-    all_valid & scalar::check(input)
+    err | scalar::check_inner(input) as u8
+}
+
+pub fn check(input: &[u8]) -> bool {
+    check_inner(input) == 0
 }
 
 #[cfg(test)]

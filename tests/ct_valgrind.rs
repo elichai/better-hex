@@ -1,7 +1,12 @@
 //! Valgrind-based constant-time verification.
 //!
-//! Calls backend functions directly (bypassing the dispatch `map_err`)
-//! with poisoned input. Any data-dependent branch triggers a Valgrind error.
+//! Calls backend `*_inner` functions directly with poisoned input, then
+//! unpoisons the *raw error accumulator* before any comparison. The public
+//! `*_inner` contract: returns 0 iff all input bytes are valid hex, nonzero
+//! otherwise. The validity bit is the documented public CT scope (see the
+//! README) — by unpoisoning the accumulator at the test boundary we declare
+//! it observable, which lets memcheck flag *only* genuine content-dependent
+//! branches inside the SIMD code paths.
 //!
 //! Run with:
 //! ```sh
@@ -16,8 +21,9 @@ use crabgrind::memcheck;
 use rand_core::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256PlusPlus;
 use std::ffi::c_void;
+use std::fmt::Debug;
 
-use better_hex::bench_internals::{InvalidEncoding, scalar};
+use better_hex::bench_internals::scalar;
 
 #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
 use better_hex::bench_internals::neon;
@@ -42,10 +48,6 @@ fn unpoison<T: ?Sized>(val: &mut T) {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-type EncodeFn = unsafe fn(*const u8, *mut u8, usize, bool);
-type DecodeFn = unsafe fn(*const u8, *mut u8, usize) -> Result<(), InvalidEncoding>;
-type CheckFn = unsafe fn(&[u8]) -> bool;
-
 /// Fill `size` fresh bytes from `rng`. Used inside loops so each iteration
 /// sees uncorrelated input rather than a re-seeded prefix of the same stream.
 fn fill_input(rng: &mut Xoshiro256PlusPlus, size: usize) -> Vec<u8> {
@@ -55,7 +57,10 @@ fn fill_input(rng: &mut Xoshiro256PlusPlus, size: usize) -> Vec<u8> {
 }
 
 /// Test that an encode function is CT for sizes 0..=512.
-fn test_encode_ct(encode: EncodeFn, upper: bool) {
+fn test_encode_ct<F>(encode: F, upper: bool)
+where
+    F: Fn(*const u8, *mut u8, usize, bool),
+{
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
     for size in 0..=512 {
         let input = fill_input(&mut rng, size);
@@ -63,12 +68,21 @@ fn test_encode_ct(encode: EncodeFn, upper: bool) {
 
         poison(&input);
         poison(&output);
-        unsafe { encode(input.as_ptr(), output.as_mut_ptr(), size, upper) };
+        encode(input.as_ptr(), output.as_mut_ptr(), size, upper);
     }
 }
 
-/// Test that a decode function is CT for valid inputs at sizes 0..=512.
-fn test_decode_ct(decode: DecodeFn) {
+/// Test that a `decode_inner` is CT for valid inputs at sizes 0..=512.
+///
+/// Calls the inner directly; `decode_inner` returns the raw error accumulator
+/// (`u8`/`i32`/`u64` depending on backend). We unpoison it, then assert
+/// `accum == T::default()` (i.e. zero) — declaring the validity bit
+/// observable while keeping the input-content bits poisoned.
+fn test_decode_ct<F, T>(decode: F)
+where
+    F: Fn(*const u8, *mut u8, usize) -> T,
+    T: PartialEq + Default + Copy + Debug,
+{
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
     for size in 0..=512 {
         let input = fill_input(&mut rng, size);
@@ -78,14 +92,18 @@ fn test_decode_ct(decode: DecodeFn) {
 
         poison(&hex_bytes);
         poison(&output);
-        let mut res = unsafe { decode(hex_bytes.as_ptr(), output.as_mut_ptr(), size) };
-        unpoison(&mut res);
-        res.unwrap();
+        let mut accum = decode(hex_bytes.as_ptr(), output.as_mut_ptr(), size);
+        unpoison(&mut accum);
+        assert_eq!(accum, T::default(), "decode_inner reported error on valid input of size {size}");
     }
 }
 
-/// Test that a decode function processes all bytes (invalid at every position).
-fn test_decode_invalid_ct(decode: DecodeFn) {
+/// Test that a `decode_inner` processes all bytes (invalid at every position).
+fn test_decode_invalid_ct<F, T>(decode: F)
+where
+    F: Fn(*const u8, *mut u8, usize) -> T,
+    T: PartialEq + Default + Copy + Debug,
+{
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
     for size in 1..=512 {
         let input = fill_input(&mut rng, size);
@@ -99,15 +117,23 @@ fn test_decode_invalid_ct(decode: DecodeFn) {
 
             poison(&hex_bytes);
             poison(&output);
-            let mut res = unsafe { decode(hex_bytes.as_ptr(), output.as_mut_ptr(), size) };
-            unpoison(&mut res);
-            res.unwrap_err();
+            let mut accum = decode(hex_bytes.as_ptr(), output.as_mut_ptr(), size);
+            unpoison(&mut accum);
+            assert_ne!(
+                accum,
+                T::default(),
+                "decode_inner missed invalid byte at pos {corrupt_pos} (size {size})"
+            );
         }
     }
 }
 
-/// Test that a check function is CT for sizes 0..=512.
-fn test_check_ct(check: CheckFn) {
+/// Test that a `check_inner` is CT for sizes 0..=512.
+fn test_check_ct<F, T>(check: F)
+where
+    F: Fn(&[u8]) -> T,
+    T: PartialEq + Default + Copy + Debug,
+{
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
     for size in 0..=512 {
         let input = fill_input(&mut rng, size);
@@ -115,18 +141,22 @@ fn test_check_ct(check: CheckFn) {
         let hex_bytes = hex.into_bytes();
 
         poison(&hex_bytes);
-        let mut valid = unsafe { check(&hex_bytes) };
-        unpoison(&mut valid);
-        assert!(valid, "check failed on valid input of size {}", size);
+        let mut accum = check(&hex_bytes);
+        unpoison(&mut accum);
+        assert_eq!(accum, T::default(), "check_inner reported error on valid input of size {size}");
     }
 }
 
-/// Test that a check function processes all bytes (invalid at every position).
+/// Test that a `check_inner` processes all bytes (invalid at every position).
 ///
 /// A short-circuit implementation that returns on the first invalid byte
 /// would leak the position via timing, and Valgrind would flag the branch
 /// on poisoned data.
-fn test_check_invalid_ct(check: CheckFn) {
+fn test_check_invalid_ct<F, T>(check: F)
+where
+    F: Fn(&[u8]) -> T,
+    T: PartialEq + Default + Copy + Debug,
+{
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
     for size in 1..=512 {
         let input = fill_input(&mut rng, size);
@@ -138,41 +168,45 @@ fn test_check_invalid_ct(check: CheckFn) {
             hex_bytes[corrupt_pos] = 0xFF;
 
             poison(&hex_bytes);
-            let mut valid = unsafe { check(&hex_bytes) };
-            unpoison(&mut valid);
-            assert!(!valid, "check accepted invalid byte at pos {corrupt_pos} (size {size})");
+            let mut accum = check(&hex_bytes);
+            unpoison(&mut accum);
+            assert_ne!(
+                accum,
+                T::default(),
+                "check_inner accepted invalid byte at pos {corrupt_pos} (size {size})"
+            );
         }
     }
 }
 
 #[test]
 fn scalar_encode_lower() {
-    test_encode_ct(scalar::encode, false);
+    test_encode_ct(|src, dst, len, upper| unsafe { scalar::encode(src, dst, len, upper) }, false);
 }
 
 #[test]
 fn scalar_encode_upper() {
-    test_encode_ct(scalar::encode, true);
+    test_encode_ct(|src, dst, len, upper| unsafe { scalar::encode(src, dst, len, upper) }, true);
 }
 
 #[test]
 fn scalar_decode() {
-    test_decode_ct(scalar::decode);
+    test_decode_ct(|src, dst, len| unsafe { scalar::decode_inner(src, dst, len) });
 }
 
 #[test]
 fn scalar_decode_invalid() {
-    test_decode_invalid_ct(scalar::decode);
+    test_decode_invalid_ct(|src, dst, len| unsafe { scalar::decode_inner(src, dst, len) });
 }
 
 #[test]
 fn scalar_check() {
-    test_check_ct(scalar::check);
+    test_check_ct(scalar::check_inner);
 }
 
 #[test]
 fn scalar_check_invalid() {
-    test_check_invalid_ct(scalar::check);
+    test_check_invalid_ct(scalar::check_inner);
 }
 
 #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
@@ -181,32 +215,32 @@ mod neon_ct {
 
     #[test]
     fn encode_lower() {
-        test_encode_ct(neon::encode, false);
+        test_encode_ct(|src, dst, len, upper| unsafe { neon::encode(src, dst, len, upper) }, false);
     }
 
     #[test]
     fn encode_upper() {
-        test_encode_ct(neon::encode, true);
+        test_encode_ct(|src, dst, len, upper| unsafe { neon::encode(src, dst, len, upper) }, true);
     }
 
     #[test]
     fn decode() {
-        test_decode_ct(neon::decode);
+        test_decode_ct(|src, dst, len| unsafe { neon::decode_inner(src, dst, len) });
     }
 
     #[test]
     fn decode_invalid() {
-        test_decode_invalid_ct(neon::decode);
+        test_decode_invalid_ct(|src, dst, len| unsafe { neon::decode_inner(src, dst, len) });
     }
 
     #[test]
     fn check() {
-        test_check_ct(neon::check);
+        test_check_ct(neon::check_inner);
     }
 
     #[test]
     fn check_invalid() {
-        test_check_invalid_ct(neon::check);
+        test_check_invalid_ct(neon::check_inner);
     }
 }
 
@@ -221,37 +255,37 @@ mod ssse3_ct {
     #[test]
     fn encode_lower() {
         if has_ssse3() {
-            test_encode_ct(x86::encode_ssse3, false);
+            test_encode_ct(|src, dst, len, upper| unsafe { x86::encode_ssse3(src, dst, len, upper) }, false);
         }
     }
     #[test]
     fn encode_upper() {
         if has_ssse3() {
-            test_encode_ct(x86::encode_ssse3, true);
+            test_encode_ct(|src, dst, len, upper| unsafe { x86::encode_ssse3(src, dst, len, upper) }, true);
         }
     }
     #[test]
     fn decode() {
         if has_ssse3() {
-            test_decode_ct(x86::decode_ssse3);
+            test_decode_ct(|src, dst, len| unsafe { x86::decode_ssse3_inner(src, dst, len) });
         }
     }
     #[test]
     fn decode_invalid() {
         if has_ssse3() {
-            test_decode_invalid_ct(x86::decode_ssse3);
+            test_decode_invalid_ct(|src, dst, len| unsafe { x86::decode_ssse3_inner(src, dst, len) });
         }
     }
     #[test]
     fn check() {
         if has_ssse3() {
-            test_check_ct(x86::check_ssse3);
+            test_check_ct(|input| unsafe { x86::check_ssse3_inner(input) });
         }
     }
     #[test]
     fn check_invalid() {
         if has_ssse3() {
-            test_check_invalid_ct(x86::check_ssse3);
+            test_check_invalid_ct(|input| unsafe { x86::check_ssse3_inner(input) });
         }
     }
 }
@@ -267,37 +301,37 @@ mod avx2_ct {
     #[test]
     fn encode_lower() {
         if has_avx2() {
-            test_encode_ct(x86::encode_avx2, false);
+            test_encode_ct(|src, dst, len, upper| unsafe { x86::encode_avx2(src, dst, len, upper) }, false);
         }
     }
     #[test]
     fn encode_upper() {
         if has_avx2() {
-            test_encode_ct(x86::encode_avx2, true);
+            test_encode_ct(|src, dst, len, upper| unsafe { x86::encode_avx2(src, dst, len, upper) }, true);
         }
     }
     #[test]
     fn decode() {
         if has_avx2() {
-            test_decode_ct(x86::decode_avx2);
+            test_decode_ct(|src, dst, len| unsafe { x86::decode_avx2_inner(src, dst, len) });
         }
     }
     #[test]
     fn decode_invalid() {
         if has_avx2() {
-            test_decode_invalid_ct(x86::decode_avx2);
+            test_decode_invalid_ct(|src, dst, len| unsafe { x86::decode_avx2_inner(src, dst, len) });
         }
     }
     #[test]
     fn check() {
         if has_avx2() {
-            test_check_ct(x86::check_avx2);
+            test_check_ct(|input| unsafe { x86::check_avx2_inner(input) });
         }
     }
     #[test]
     fn check_invalid() {
         if has_avx2() {
-            test_check_invalid_ct(x86::check_avx2);
+            test_check_invalid_ct(|input| unsafe { x86::check_avx2_inner(input) });
         }
     }
 }
@@ -316,37 +350,37 @@ mod avx512_ct {
     #[test]
     fn encode_lower() {
         if has_avx512vbmi() {
-            test_encode_ct(x86::encode_avx512, false);
+            test_encode_ct(|src, dst, len, upper| unsafe { x86::encode_avx512(src, dst, len, upper) }, false);
         }
     }
     #[test]
     fn encode_upper() {
         if has_avx512vbmi() {
-            test_encode_ct(x86::encode_avx512, true);
+            test_encode_ct(|src, dst, len, upper| unsafe { x86::encode_avx512(src, dst, len, upper) }, true);
         }
     }
     #[test]
     fn decode() {
         if has_avx512bw() {
-            test_decode_ct(x86::decode_avx512);
+            test_decode_ct(|src, dst, len| unsafe { x86::decode_avx512_inner(src, dst, len) });
         }
     }
     #[test]
     fn decode_invalid() {
         if has_avx512bw() {
-            test_decode_invalid_ct(x86::decode_avx512);
+            test_decode_invalid_ct(|src, dst, len| unsafe { x86::decode_avx512_inner(src, dst, len) });
         }
     }
     #[test]
     fn check() {
         if has_avx512bw() {
-            test_check_ct(x86::check_avx512);
+            test_check_ct(|input| unsafe { x86::check_avx512_inner(input) });
         }
     }
     #[test]
     fn check_invalid() {
         if has_avx512bw() {
-            test_check_invalid_ct(x86::check_avx512);
+            test_check_invalid_ct(|input| unsafe { x86::check_avx512_inner(input) });
         }
     }
 }

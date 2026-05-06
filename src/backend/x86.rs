@@ -319,7 +319,8 @@ unsafe fn decode_chunk_128(
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[inline(always)]
-unsafe fn decode_ssse3_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> i32 {
+#[doc(hidden)]
+pub unsafe fn decode_ssse3_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> i32 {
     // SAFETY: all intrinsics below require SSSE3, guaranteed by #[target_feature].
     unsafe {
         let delta_check = decode_delta_check_128();
@@ -427,7 +428,8 @@ unsafe fn decode_chunk_256(
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[inline(always)]
-unsafe fn decode_avx2_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> i32 {
+#[doc(hidden)]
+pub unsafe fn decode_avx2_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> i32 {
     // SAFETY: all intrinsics below require AVX2 (implies SSSE3),
     // guaranteed by #[target_feature].
     unsafe {
@@ -502,13 +504,14 @@ pub unsafe fn decode_avx2(src: *const u8, dst: *mut u8, byte_len: usize) -> Resu
 ///
 /// - The CPU must support SSSE3 (caller must have `#[target_feature(enable = "ssse3")]`).
 #[inline(always)]
-unsafe fn check_ssse3_inner(mut input: &[u8]) -> bool {
+#[doc(hidden)]
+pub unsafe fn check_ssse3_inner(mut input: &[u8]) -> i32 {
     // SAFETY: all intrinsics below require SSSE3, guaranteed by #[target_feature].
     unsafe {
         let delta_check = decode_delta_check_128();
         let one = _mm_set1_epi8(1);
         let mask_hi = _mm_set1_epi8(0x0F);
-        let mut all_valid = true;
+        let mut err_accum: i32 = 0;
 
         while input.len() >= 16 {
             let chunk = _mm_loadu_si128(input.as_ptr().cast());
@@ -517,13 +520,13 @@ unsafe fn check_ssse3_inner(mut input: &[u8]) -> bool {
             let hash_key = _mm_and_si128(_mm_srli_epi16(vm1, 4), mask_hi);
             let check = _mm_add_epi8(vm1, _mm_shuffle_epi8(delta_check, hash_key));
 
-            all_valid &= _mm_movemask_epi8(check) == 0;
+            err_accum |= _mm_movemask_epi8(check);
 
             // SAFETY: `input.len() >= 16` checked above.
             input = input.get_unchecked(16..);
         }
 
-        all_valid & scalar::check(input)
+        err_accum | scalar::check_inner(input) as i32
     }
 }
 
@@ -538,7 +541,7 @@ unsafe fn check_ssse3_inner(mut input: &[u8]) -> bool {
 #[target_feature(enable = "ssse3")]
 pub unsafe fn check_ssse3(input: &[u8]) -> bool {
     // SAFETY: caller guarantees SSSE3.
-    unsafe { check_ssse3_inner(input) }
+    unsafe { check_ssse3_inner(input) == 0 }
 }
 
 /// Check whether every byte in `input` is a valid hex ASCII character,
@@ -556,7 +559,8 @@ pub unsafe fn check_ssse3(input: &[u8]) -> bool {
 ///
 /// - The CPU must support AVX2 (caller must have `#[target_feature(enable = "avx2")]`).
 #[inline(always)]
-unsafe fn check_avx2_inner(mut input: &[u8]) -> bool {
+#[doc(hidden)]
+pub unsafe fn check_avx2_inner(mut input: &[u8]) -> i32 {
     // SAFETY: all intrinsics below require AVX2, guaranteed by #[target_feature].
     unsafe {
         let delta_check = _mm256_broadcastsi128_si256(decode_delta_check_128());
@@ -577,7 +581,7 @@ unsafe fn check_avx2_inner(mut input: &[u8]) -> bool {
             input = input.get_unchecked(32..);
         }
 
-        (err_accum == 0) & check_ssse3_inner(input)
+        err_accum | check_ssse3_inner(input)
     }
 }
 
@@ -592,7 +596,7 @@ unsafe fn check_avx2_inner(mut input: &[u8]) -> bool {
 #[target_feature(enable = "avx2")]
 pub unsafe fn check_avx2(input: &[u8]) -> bool {
     // SAFETY: caller guarantees AVX2.
-    unsafe { check_avx2_inner(input) }
+    unsafe { check_avx2_inner(input) == 0 }
 }
 
 /// Hex-encode `input` into `output` using AVX-512 VBMI for the hot loop.
@@ -745,7 +749,8 @@ unsafe fn decode_chunk_512(
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[inline(always)]
-unsafe fn decode_avx512_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> u64 {
+#[doc(hidden)]
+pub unsafe fn decode_avx512_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> u64 {
     // SAFETY: all intrinsics below require AVX-512BW (implies AVX-512F),
     // guaranteed by #[target_feature].
     unsafe {
@@ -820,13 +825,14 @@ pub unsafe fn decode_avx512(src: *const u8, dst: *mut u8, byte_len: usize) -> Re
 ///
 /// - The CPU must support AVX-512BW (caller must have `#[target_feature(enable = "avx512bw")]`).
 #[inline(always)]
-unsafe fn check_avx512_inner(mut input: &[u8]) -> bool {
+#[doc(hidden)]
+pub unsafe fn check_avx512_inner(mut input: &[u8]) -> u64 {
     // SAFETY: all intrinsics below require AVX-512BW, guaranteed by #[target_feature].
     unsafe {
         let delta_check = _mm512_broadcast_i32x4(decode_delta_check_128());
         let one = _mm512_set1_epi8(1);
         let mask_hi = _mm512_set1_epi8(0x0F);
-        let mut all_valid = true;
+        let mut err_accum: u64 = 0;
 
         while input.len() >= 64 {
             let chunk = _mm512_loadu_si512(input.as_ptr().cast());
@@ -835,13 +841,14 @@ unsafe fn check_avx512_inner(mut input: &[u8]) -> bool {
             let hash_key = _mm512_and_si512(_mm512_srli_epi16(vm1, 4), mask_hi);
             let check = _mm512_add_epi8(vm1, _mm512_shuffle_epi8(delta_check, hash_key));
 
-            all_valid &= _mm512_movepi8_mask(check) == 0;
+            err_accum |= _mm512_movepi8_mask(check);
 
             // SAFETY: `input.len() >= 64` checked above.
             input = input.get_unchecked(64..);
         }
 
-        all_valid & check_avx2_inner(input)
+        // Cast through u32 to avoid sign-extending a negative i32 accumulator.
+        err_accum | check_avx2_inner(input) as u32 as u64
     }
 }
 
@@ -856,7 +863,7 @@ unsafe fn check_avx512_inner(mut input: &[u8]) -> bool {
 #[target_feature(enable = "avx512bw")]
 pub unsafe fn check_avx512(input: &[u8]) -> bool {
     // SAFETY: caller guarantees AVX-512BW.
-    unsafe { check_avx512_inner(input) }
+    unsafe { check_avx512_inner(input) == 0 }
 }
 
 #[cfg(test)]

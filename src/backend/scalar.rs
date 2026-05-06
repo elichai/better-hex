@@ -165,12 +165,15 @@ pub const unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Res
     }
 }
 
-/// Constant-time hex validator.
+/// Constant-time hex validator returning the raw error accumulator.
 ///
-/// Returns `true` iff every byte in `input` is a valid hex ASCII character
-/// (`[0-9a-fA-F]`). Examines all bytes without short-circuiting.
+/// Returns `0` iff every byte in `input` is a valid hex ASCII character.
+/// Used by SIMD backends to compose tail validation, and by CT tests to
+/// observe the validity bit only after explicit unpoisoning (avoiding an
+/// internal `== 0` branch on poisoned data).
 #[inline]
-pub const fn check(mut input: &[u8]) -> bool {
+#[doc(hidden)]
+pub const fn check_inner(mut input: &[u8]) -> u16 {
     let mut err: u16 = 0;
     while let Some((&byte, rest)) = input.split_first() {
         // `decode_nibble` returns 0..=15 for valid bytes and a value with
@@ -179,7 +182,16 @@ pub const fn check(mut input: &[u8]) -> bool {
         err |= decode_nibble(byte) >> 8;
         input = rest;
     }
-    err == 0
+    err
+}
+
+/// Constant-time hex validator.
+///
+/// Returns `true` iff every byte in `input` is a valid hex ASCII character
+/// (`[0-9a-fA-F]`). Examines all bytes without short-circuiting.
+#[inline]
+pub const fn check(input: &[u8]) -> bool {
+    check_inner(input) == 0
 }
 
 #[cfg(test)]

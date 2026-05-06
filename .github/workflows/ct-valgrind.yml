@@ -3,8 +3,8 @@
 # Marks input data as "uninitialized", then runs encode/decode/check.
 # Any data-dependent branch or memory access triggers a Valgrind error.
 #
-# NOTE: This only covers the x86 scalar and SIMD paths (whatever the
-# GitHub Actions runner supports). NEON and WASM are not tested here.
+# Covers x86 scalar/SSSE3/AVX2/AVX-512 (Intel runner) and aarch64 NEON
+# (GitHub-hosted ARM runner). WASM is not tested here.
 name: CT Verification (Valgrind)
 
 on:
@@ -17,8 +17,16 @@ env:
 
 jobs:
   ct-valgrind:
-    name: Constant-time verification
-    runs-on: ubuntu-latest
+    name: Constant-time verification (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runs-on: ubuntu-latest
+          - arch: aarch64
+            runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,5 +52,4 @@ jobs:
             --error-exitcode=1 \
             --leak-check=no \
             --errors-for-leak-kinds=none \
-            --suppressions=tests/ct_valgrind.supp \
             $TEST_BIN
