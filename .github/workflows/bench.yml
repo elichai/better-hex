@@ -15,11 +15,19 @@ jobs:
   # PR benchmarks: read-only, no publishing. Ensures benchmarks compile
   # and runs them, but does not store results or comment.
   benchmark-pr:
-    name: Performance check (PR)
+    name: Performance check (PR, ${{ matrix.arch }})
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runs-on }}
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runs-on: ubuntu-latest
+          - arch: aarch64
+            runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,13 +56,33 @@ jobs:
 
   # Push benchmarks: write permissions for storing results and commenting.
   # Only runs on trusted code (merged to main).
+  #
+  # x86_64 history lives at `dev/bench/` (legacy path, dashboard URL
+  # already linked from the gh-pages root redirect). aarch64 history
+  # lives at `dev/bench/aarch64/`. Each arch has its own `data.js` and
+  # `index.html`, so the regression-alert threshold compares like-for-like.
   benchmark-push:
-    name: Performance check (push)
+    name: Performance check (push, ${{ matrix.arch }})
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runs-on }}
     permissions:
       contents: write
       pull-requests: write
+    strategy:
+      fail-fast: false
+      # Serialize the gh-pages writes — both jobs push to the same branch,
+      # so running them in parallel races on `git push` to `gh-pages`.
+      max-parallel: 1
+      matrix:
+        include:
+          - arch: x86_64
+            runs-on: ubuntu-latest
+            bench_dir: dev/bench
+            bench_name: better-hex Benchmarks (x86_64)
+          - arch: aarch64
+            runs-on: ubuntu-24.04-arm
+            bench_dir: dev/bench/aarch64
+            bench_name: better-hex Benchmarks (aarch64)
     steps:
       - uses: actions/checkout@v4
 
@@ -82,7 +110,7 @@ jobs:
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
         with:
-          name: better-hex Benchmarks
+          name: ${{ matrix.bench_name }}
           tool: cargo
           output-file-path: bench_output.txt
           auto-push: true
@@ -90,4 +118,4 @@ jobs:
           alert-threshold: '115%'
           fail-on-alert: false
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          benchmark-data-dir-path: dev/bench
+          benchmark-data-dir-path: ${{ matrix.bench_dir }}

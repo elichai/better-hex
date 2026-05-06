@@ -74,19 +74,19 @@ jobs:
             cargo_args: --locked --lib --target x86_64-unknown-linux-gnu
             sde_cpu: icx
 
-          # Pin macOS 14 to keep this on GitHub's arm64 runner class for NEON.
+          # GitHub's arm64 Linux runners (Cobalt) for NEON coverage.
           - name: Test (aarch64 NEON API)
-            os: macos-14
-            target: aarch64-apple-darwin
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
             cargo_command: test
-            cargo_args: --locked --target aarch64-apple-darwin
+            cargo_args: --locked --target aarch64-unknown-linux-gnu
 
           - name: Test (aarch64 NEON impl)
-            os: macos-14
-            target: aarch64-apple-darwin
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
             rustflags: -C target-feature=+neon
             cargo_command: test
-            cargo_args: --locked --lib --target aarch64-apple-darwin
+            cargo_args: --locked --lib --target aarch64-unknown-linux-gnu
 
           - name: Test (x86_64 optional features)
             os: ubuntu-latest
@@ -95,10 +95,10 @@ jobs:
             cargo_args: --locked --target x86_64-unknown-linux-gnu --features serde,heapless,arrayvec
 
           - name: Test (aarch64 optional features)
-            os: macos-14
-            target: aarch64-apple-darwin
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
             cargo_command: test
-            cargo_args: --locked --target aarch64-apple-darwin --features serde,heapless,arrayvec
+            cargo_args: --locked --target aarch64-unknown-linux-gnu --features serde,heapless,arrayvec
 
           # The no-alloc configuration cannot run the integration test suite
           # because many tests intentionally use alloc-only APIs. Keep this as
