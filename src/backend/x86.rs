@@ -51,13 +51,13 @@ use crate::backend::scalar;
 
 #[inline(always)]
 unsafe fn hex_lut(upper: bool) -> __m128i {
-    unsafe {
-        if upper {
-            _mm_loadu_si128(b"0123456789ABCDEF".as_ptr().cast())
-        } else {
-            _mm_loadu_si128(b"0123456789abcdef".as_ptr().cast())
-        }
-    }
+    let lo = i64::from_le_bytes(*b"01234567");
+    let hi = if upper {
+        i64::from_le_bytes(*b"89ABCDEF")
+    } else {
+        i64::from_le_bytes(*b"89abcdef")
+    };
+    unsafe { _mm_set_epi64x(hi, lo) }
 }
 
 /// Hex-encode `input` into `output` using SSSE3 `pshufb` for the hot loop.
