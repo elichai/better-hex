@@ -312,7 +312,12 @@ fn decode_nibbles_with_consts(
 /// Processes all chunks without early exit (constant-time).
 #[doc(hidden)]
 pub fn check_inner(mut input: &[u8]) -> u8 {
-    let mut err: u8 = 0;
+    // AND-accumulate the per-chunk `valid` vectors across iterations.
+    // Lane i of `acc_valid` stays 0xFF iff every chunk had lane i = 0xFF;
+    // any 0 lane in any chunk poisons the corresponding lane to 0 here.
+    // The horizontal reduce + polarity flip happens once at function exit
+    // instead of every iteration.
+    let mut acc_valid = unsafe { vdupq_n_u8(0xFF) };
 
     while input.len() >= 16 {
         // SAFETY: `input.len() >= 16` so the pointer is valid for 16 reads.
@@ -331,15 +336,15 @@ pub fn check_inner(mut input: &[u8]) -> u8 {
         let is_lower = unsafe { vandq_u8(ge_a_lower, le_f_lower) };
 
         let valid = unsafe { vorrq_u8(vorrq_u8(is_digit, is_upper), is_lower) };
-        // `vminvq_u8(valid)` is 0xFF iff every lane is 0xFF (all valid),
-        // 0 iff any lane is 0 (any invalid). Bitwise NOT inverts to
-        // accumulator semantics: 0 if all valid, 0xFF if any invalid.
-        err |= !unsafe { vminvq_u8(valid) };
+        acc_valid = unsafe { vandq_u8(acc_valid, valid) };
 
         // SAFETY: `input.len() >= 16` checked above.
         input = unsafe { input.get_unchecked(16..) };
     }
 
+    // `vminvq_u8(acc_valid) == 0xFF` iff every lane stayed valid across
+    // every chunk. Bitwise NOT flips to error semantics (0 = ok).
+    let err = !unsafe { vminvq_u8(acc_valid) };
     err | scalar::check_inner(input) as u8
 }
 
