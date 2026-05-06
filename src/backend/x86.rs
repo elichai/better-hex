@@ -381,10 +381,16 @@ pub unsafe fn decode_ssse3(src: *const u8, dst: *mut u8, byte_len: usize) -> Res
 /// Decode a single 256-bit register (32 hex chars → 16 output bytes) using
 /// the Lemire algorithm, AVX2 variant.
 ///
-/// Same as [`decode_chunk_128`] but for 256-bit AVX2 registers.
-/// Returns `(packed_bytes, check_vector)`. The `packed_bytes` has the 16
-/// decoded bytes after a lane-crossing permute fixup. Caller ORs check
-/// vectors then does a single `_mm256_movemask_epi8`.
+/// Returns `(packed16, check_vector)` where `packed16` holds 16 valid i16
+/// values (one per output byte) ready to be packed and stored by the caller;
+/// `check` has MSB set per invalid input byte.
+///
+/// The `vpackuswb` + `vpermq` lane fixup is hoisted to the caller so two
+/// chunks' worth of `packed16` can be packed together with one `vpackuswb`
+/// (using both source operands meaningfully, instead of the wasteful
+/// self-pairing `pack(p, p)` form), fixed up with one `vpermq`, and stored
+/// as one 256-bit store. This halves the cross-lane fixup count and the
+/// store-port pressure per output 32-byte block.
 ///
 /// # Safety
 ///
@@ -407,11 +413,8 @@ unsafe fn decode_chunk_256(
         let nibbles = _mm256_add_epi8(vm1, _mm256_shuffle_epi8(delta_rebase, hash_key));
 
         let packed16 = _mm256_maddubs_epi16(nibbles, weights);
-        let packed8 = _mm256_packus_epi16(packed16, packed16);
-        // Fix cross-lane ordering from packuswb.
-        let result = _mm256_permute4x64_epi64(packed8, 0b_11_01_10_00);
 
-        (result, check)
+        (packed16, check)
     }
 }
 
@@ -445,14 +448,20 @@ pub unsafe fn decode_avx2_inner(mut src: *const u8, mut dst: *mut u8, mut byte_l
             let chunk0 = _mm256_loadu_si256(src.cast());
             let chunk1 = _mm256_loadu_si256(src.add(32).cast());
 
-            let (decoded0, check0) = decode_chunk_256(chunk0, delta_check, delta_rebase, one, mask_hi, weights);
-            let (decoded1, check1) = decode_chunk_256(chunk1, delta_check, delta_rebase, one, mask_hi, weights);
+            let (packed16_0, check0) = decode_chunk_256(chunk0, delta_check, delta_rebase, one, mask_hi, weights);
+            let (packed16_1, check1) = decode_chunk_256(chunk1, delta_check, delta_rebase, one, mask_hi, weights);
 
             let combined_check = _mm256_or_si256(check0, check1);
             err_accum |= _mm256_movemask_epi8(combined_check);
 
-            _mm_storeu_si128(dst.cast(), _mm256_castsi256_si128(decoded0));
-            _mm_storeu_si128(dst.add(16).cast(), _mm256_castsi256_si128(decoded1));
+            // Combine two chunks' packed16 into one full 32-byte output:
+            //   packus(p0, p1) lane 0: [pack(p0_lane0), pack(p1_lane0)] = [c0_lo_8b, c1_lo_8b]
+            //   packus(p0, p1) lane 1: [pack(p0_lane1), pack(p1_lane1)] = [c0_hi_8b, c1_hi_8b]
+            //   permute4x64(combined, 0b_11_01_10_00): qwords (0, 2, 1, 3) →
+            //     [c0_lo_8b, c0_hi_8b, c1_lo_8b, c1_hi_8b] = c0 (16B) followed by c1 (16B).
+            let combined = _mm256_packus_epi16(packed16_0, packed16_1);
+            let result = _mm256_permute4x64_epi64(combined, 0b_11_01_10_00);
+            _mm256_storeu_si256(dst.cast(), result);
 
             src = src.add(64);
             dst = dst.add(32);
