@@ -131,9 +131,9 @@ where
 }
 
 /// Test that a `check_inner` is CT for sizes 0..=512.
-fn test_check_ct<F, T>(check: F)
+#[inline(always)]
+fn test_check_ct<T>(check: unsafe fn(&[u8]) -> T)
 where
-    F: Fn(&[u8]) -> T,
     T: PartialEq + Default + Copy + Debug,
 {
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
@@ -145,7 +145,7 @@ where
         let hex_bytes = hex.into_bytes();
 
         poison(&hex_bytes);
-        let mut accum = check(&hex_bytes);
+        let mut accum = unsafe { check(&hex_bytes) };
         unpoison(&mut accum);
         assert_eq!(
             accum,
