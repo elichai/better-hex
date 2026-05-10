@@ -213,8 +213,6 @@ pub unsafe fn encode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize, 
 #[target_feature(enable = "neon")]
 #[doc(hidden)]
 pub unsafe fn decode_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> u8 {
-    let mut err: u8 = 0;
-
     // Hoist all broadcast constants out of the loop so LLVM doesn't need to
     // prove them loop-invariant. These are used by decode_nibbles_with_consts
     // and the validation step. `vdupq_n_u8` is safe under #[target_feature].
@@ -225,6 +223,13 @@ pub unsafe fn decode_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: u
     let c_a = vdupq_n_u8(b'A');
     let c_ten = vdupq_n_u8(10);
     let c_validate = vdupq_n_u8(0x70);
+
+    // OR-accumulate per-iter check vectors and reduce once at exit, replacing
+    // the per-iter cross-lane `vmaxvq_u8` with a single-cycle `orr.16b`.
+    // Do NOT mirror this on x86 — `pmovmskb` runs on a port disjoint from
+    // the SIMD ALU on Zen, where the same transform regresses; see the
+    // module-level note in backend/x86.rs.
+    let mut acc_check = vdupq_n_u8(0);
 
     // NEON: 16 output bytes per iteration (32 hex chars).
     while byte_len >= 16 {
@@ -238,12 +243,10 @@ pub unsafe fn decode_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: u
 
         // Validate: saturating add with 0x70 (112). Valid nibbles (0-15)
         // → 112-127 (MSB clear). Invalid (>= 16) → >= 128 (MSB set).
-        // Fuse two check vectors with vorrq_u8 BEFORE the horizontal reduce,
-        // halving the number of expensive cross-lane vmaxvq_u8 operations.
         let check0 = vqaddq_u8(nib0, c_validate);
         let check1 = vqaddq_u8(nib1, c_validate);
         let combined_check = vorrq_u8(check0, check1);
-        err |= vmaxvq_u8(combined_check) & 0x80;
+        acc_check = vorrq_u8(acc_check, combined_check);
 
         // Pack: deinterleave hi/lo nibbles, then combine.
         let deinterleaved = vuzpq_u8(nib0, nib1);
@@ -257,6 +260,8 @@ pub unsafe fn decode_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: u
         }
         byte_len -= 16;
     }
+
+    let mut err = vmaxvq_u8(acc_check) & 0x80;
 
     if byte_len > 0 {
         // SAFETY: same pointer validity as above.
@@ -312,11 +317,11 @@ fn decode_nibbles_with_consts(
 /// Processes all chunks without early exit (constant-time).
 #[doc(hidden)]
 pub fn check_inner(mut input: &[u8]) -> u8 {
-    // AND-accumulate the per-chunk `valid` vectors across iterations.
-    // Lane i of `acc_valid` stays 0xFF iff every chunk had lane i = 0xFF;
-    // any 0 lane in any chunk poisons the corresponding lane to 0 here.
-    // The horizontal reduce + polarity flip happens once at function exit
-    // instead of every iteration.
+    // AND-accumulate per-iter `valid` vectors and reduce once at exit:
+    // lane i of `acc_valid` stays 0xFF iff every chunk had lane i = 0xFF.
+    // Do NOT mirror this on x86 — `pmovmskb` runs on a port disjoint from
+    // the SIMD ALU on Zen, where the same transform regresses; see the
+    // module-level note in backend/x86.rs.
     let mut acc_valid = unsafe { vdupq_n_u8(0xFF) };
 
     while input.len() >= 16 {
