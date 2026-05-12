@@ -150,6 +150,12 @@ jobs:
       - name: cargo ${{ matrix.cargo_command }}
         env:
           RUSTFLAGS: ${{ matrix.rustflags || '' }}
+          # Enforce -D warnings on doctest compilation too. rustdoc compiles
+          # each doctest with RUSTDOCFLAGS (not RUSTFLAGS), so warnings like
+          # broken intra-doc links or unused imports in doc examples would
+          # otherwise only surface in the dedicated Docs job (which builds
+          # `cargo doc` but does not run doctests).
+          RUSTDOCFLAGS: "-D warnings"
         run: cargo ${{ matrix.cargo_command }} ${{ matrix.cargo_args }}
 
   test-wasm:
@@ -179,6 +185,9 @@ jobs:
         env:
           CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
           RUSTFLAGS: "-C target-feature=+simd128"
+          # Enforce -D warnings on doctest compilation here as well; see the
+          # matching note on the main test step.
+          RUSTDOCFLAGS: "-C target-feature=+simd128 -D warnings"
         run: cargo test --locked --target wasm32-wasip1 --no-default-features --features alloc,serde,heapless,arrayvec
 
   clippy:
