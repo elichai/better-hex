@@ -92,6 +92,71 @@ let arr: [u8; 5] = better_hex::decode(b"68656c6c6f")?;
 [faster-hex]: https://github.com/nervosnetwork/faster-hex
 [base16ct]: https://github.com/RustCrypto/formats/tree/master/base16ct
 
+## Testing
+
+### Fuzzing
+
+Three [cargo-fuzz] targets in `fuzz/fuzz_targets/` cover the public API:
+
+- **`oracle`** — differential fuzzing against `hex`, `const-hex`, `faster-hex`,
+  and `base16ct`. Any disagreement on encode / decode / check output (modulo
+  documented case-folding behavior) is a bug.
+- **`api`** — round-trip and invariant checks across `encode`, `decode`,
+  `check`, the `FromHex` / `ToHex` traits, and the `HexTarget` adapters
+  (`String`, `heapless::String`, `arrayvec::ArrayString`).
+- **`hex_str`** — `HexStr<N>` and `PrefixedHexStr<N>` construction, parsing,
+  display, and serde round-trips.
+
+Run locally with `./fuzz/fuzz.sh` (defaults to 60 s per target; configurable
+via `FUZZ_SECONDS`). The script runs `cargo fuzz` in `--release` with
+`--debug-assertions`, `--careful` (extra std instrumentation), and
+`--sanitizer address` so local and CI runs stay byte-identical.
+
+CI fuzzes every PR and push to `main` for 60 s/target on both `x86_64` and
+`aarch64` Linux. A scheduled run every three days does a 5-minute campaign
+per target.
+
+The seed corpus lives on the orphan branch [`fuzz-corpus`][corpus-branch] —
+no shared history with `main`, one directory per target, libFuzzer's
+content-addressed (sha1) filenames so concurrent matrix jobs never collide.
+Scheduled and post-merge runs push newly-discovered inputs back to that
+branch; PR runs stay read-only. To work with the corpus locally:
+
+```bash
+git fetch origin fuzz-corpus
+git worktree add ../better-hex-corpus fuzz-corpus
+cp -n ../better-hex-corpus/oracle/* fuzz/corpus/oracle/
+./fuzz/fuzz.sh oracle
+```
+
+[cargo-fuzz]: https://github.com/rust-fuzz/cargo-fuzz
+[corpus-branch]: https://github.com/elichai/better-hex/tree/fuzz-corpus
+
+### Miri
+
+Every PR runs the test suite under [Miri] to catch UB, out-of-bounds reads
+from SIMD loads/stores, provenance violations, and unsoundness in `unsafe`
+blocks. The matrix exercises each backend directly by toggling
+`-C target-feature` so Miri actually interprets the SSSE3 / AVX2 / NEON code
+paths rather than the scalar fallback:
+
+| Target                          | Features                          |
+|---------------------------------|-----------------------------------|
+| `x86_64-unknown-linux-gnu`      | scalar (via `disable-simd`)       |
+| `x86_64-unknown-linux-gnu`      | `+ssse3`                          |
+| `x86_64-unknown-linux-gnu`      | `+avx2`                           |
+| `i686-unknown-linux-gnu`        | `+ssse3`                          |
+| `aarch64-unknown-linux-gnu`     | `+neon` (cross-interpreted)       |
+
+AVX-512 is intentionally excluded — Miri aborts on
+`_mm512_permutexvar_epi64` used in `encode_avx512`. WASM is covered by the
+regular CI workflow instead; Miri only promises Linux/macOS/Windows targets.
+
+Both `cargo miri test` and `cargo miri test --doc` run with proptest tuned
+for Miri's slow interpreter (`PROPTEST_CASES=8`).
+
+[Miri]: https://github.com/rust-lang/miri
+
 ## Acknowledgments
 
 This crate builds on algorithms, ideas, and API design from the following
