@@ -31,6 +31,12 @@ pub fn encode_to_slice_upper<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&
 
 /// Encode bytes to lowercase hex into any [`HexTarget`].
 ///
+/// Dispatches to the SIMD backend matching the running CPU (x86 runtime
+/// feature detection; AArch64 / WASM compile-time selection). With the
+/// `disable-simd` feature, or on targets without a SIMD backend, falls
+/// back to the constant-time scalar path. See the
+/// [crate-level performance note](crate#performance-const-fn-vs-runtime-apis).
+///
 /// # Examples
 ///
 /// ```rust
@@ -42,6 +48,8 @@ pub fn encode<T: HexTarget>(input: &[u8]) -> Result<T, T::Error> {
 }
 
 /// Encode bytes to uppercase hex into any [`HexTarget`].
+///
+/// Same SIMD dispatch as [`encode`]; only the digit case differs.
 ///
 /// # Examples
 ///

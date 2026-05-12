@@ -5,12 +5,23 @@ mod sealed {
     pub trait Sealed {}
 }
 
-/// A zero-sized prefix marker (no "0x" prefix).
+/// A zero-sized prefix marker indicating no `"0x"` prefix.
+///
+/// This is the default second generic parameter of [`HexStr<N>`](crate::HexStr),
+/// so callers rarely name `NoPrefix` directly — `HexStr<N>` already means
+/// `HexStr<N, NoPrefix>`. The type exists primarily so the prefix can be
+/// expressed in the type system at zero runtime cost (it occupies no bytes).
 #[derive(Debug, Copy, Clone, PartialEq, Eq, NoUninit, Zeroable)]
 #[repr(transparent)]
 pub struct NoPrefix;
 
-/// A prefix marker that stores the "0x" prefix.
+/// A prefix marker that stores the two-byte `"0x"` prefix inline.
+///
+/// Callers typically use the [`PrefixedHexStr<N>`](crate::PrefixedHexStr)
+/// type alias rather than spelling `HexStr<N, WithPrefix>` directly. The
+/// stored prefix bytes are part of the contiguous string buffer, so
+/// [`as_str`](crate::HexStr::as_str) returns the `"0x…"` form with no
+/// extra concatenation.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, NoUninit, Zeroable)]
 #[repr(transparent)]
 pub struct WithPrefix(pub(crate) [u8; 2]);
@@ -31,6 +42,7 @@ pub trait Prefix: sealed::Sealed + NoUninit + Copy + 'static {
     /// View the prefix as a `MaybeUninit<u8>` slice for initialization of
     /// uninitialized buffers (e.g., writing prefix bytes into a `MaybeUninit`
     /// output before the hex content).
+    #[doc(hidden)]
     fn bytes(&self) -> &[MaybeUninit<u8>] {
         let bytes: &[u8] = bytemuck::bytes_of(self);
         debug_assert_eq!(bytes.len(), Self::LEN);

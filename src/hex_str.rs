@@ -158,6 +158,12 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     ///
     /// `M` must equal `N * 2` (enforced at compile time).
     ///
+    /// Implementation note: this is a layout-only cast (`bytemuck::must_cast`
+    /// from `[u8; M]` to `[[u8; 2]; N]`), so the `const` form costs the same
+    /// as the runtime form — no scalar-vs-SIMD distinction applies, unlike
+    /// the encoding / decoding const fns. The cost is the safety obligation
+    /// below.
+    ///
     /// # Safety
     ///
     /// Every byte in `hex` must be valid hex ASCII (`[0-9a-fA-F]`).

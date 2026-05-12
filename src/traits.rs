@@ -48,6 +48,8 @@ pub trait ToHex {
 
     /// Serialize as a hex string via serde.
     ///
+    /// Only available with the `serde` feature.
+    ///
     /// `PREFIX` selects `"0x"` prefixing (compile-time); `upper` selects
     /// uppercase vs lowercase digits (runtime).
     ///
@@ -102,6 +104,21 @@ impl<T: ToHex + ?Sized> fmt::Display for HexAdapter<'_, T> {
 /// All built-in implementations accept upper, lower, and mixed case
 /// hex characters (`[0-9a-fA-F]`).
 ///
+/// # Built-in implementations
+///
+/// - `[u8; N]` — always available.
+/// - `Vec<u8>` — with the `alloc` feature.
+/// - `Cow<'_, [u8]>` — with the `alloc` feature. Always returns
+///   [`Cow::Owned`](alloc::borrow::Cow::Owned) wrapping a freshly-decoded
+///   `Vec<u8>`; the borrowed variant is never produced because decoding
+///   inherently allocates fresh output bytes (the hex input is twice as
+///   long as the decoded output and is consumed as a byte stream, so there
+///   is nothing to borrow from).
+/// - `heapless::Vec<u8, N>` — with the `heapless` feature. Returns
+///   [`Error::InvalidLength`] if the decoded length exceeds capacity `N`.
+/// - `arrayvec::ArrayVec<u8, N>` — with the `arrayvec` feature. Returns
+///   [`Error::InvalidLength`] if the decoded length exceeds capacity `N`.
+///
 /// # Examples
 ///
 /// ```rust
@@ -126,20 +143,41 @@ pub trait FromHex: Sized {
 /// Each implementor manages its own internal buffer. The SIMD encode path
 /// writes directly into the target's memory — no intermediate copies.
 ///
+/// See the [crate-level features table](crate#cargo-features) for the
+/// full list of built-in implementors and the feature gating each one
+/// (`HexStr<N, P>`, `String`, `heapless::String<CAP>`,
+/// `arrayvec::ArrayString<CAP>`).
+///
+/// Most callers will not invoke this trait directly — the free functions
+/// [`encode`](crate::encode) / [`encode_upper`](crate::encode_upper) and
+/// [`ToHex::encode_hex`] dispatch through it with `T` inferred from the
+/// binding type.
+///
 /// # Examples
 ///
 /// ```rust
-/// use better_hex::HexTarget;
-///
-/// let s = String::encode_hex(&[0xde, 0xad]).unwrap();
+/// // Typical call site — type is inferred from the binding.
+/// let s: String = better_hex::encode(&[0xde, 0xad]).unwrap();
 /// assert_eq!(s, "dead");
 ///
-/// let s = String::encode_hex_upper(&[0xde, 0xad]).unwrap();
+/// let s: String = better_hex::encode_upper(&[0xde, 0xad]).unwrap();
 /// assert_eq!(s, "DEAD");
+///
+/// // Calling the trait method directly also works.
+/// use better_hex::HexTarget;
+/// let s = String::encode_hex(&[0xde, 0xad]).unwrap();
+/// assert_eq!(s, "dead");
 /// ```
 pub trait HexTarget: Sized {
-    /// Error returned when the target cannot hold the encoded output
-    /// (e.g., fixed-capacity buffer too small).
+    /// Error returned when the target cannot hold the encoded output.
+    ///
+    /// For dynamically-sized implementors backed by allocation (`String`),
+    /// this is [`core::convert::Infallible`] — construction cannot fail
+    /// (allocator OOM still panics in `alloc`, as elsewhere). For
+    /// fixed-capacity implementors (`heapless::String<CAP>`,
+    /// `arrayvec::ArrayString<CAP>`, `HexStr<N, P>`), this is the crate
+    /// [`Error`](crate::Error), and overflow surfaces as
+    /// [`Error::InvalidLength`](crate::Error::InvalidLength).
     type Error;
 
     /// Encode `bytes` as lowercase hex into a new instance of `Self`.

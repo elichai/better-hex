@@ -28,6 +28,27 @@
 //! typical inputs.
 //! - **Extensible** — [`HexTarget`] trait for custom output types
 //!
+//! # Cargo features
+//!
+//! | Feature        | Default | Enables                                                                                                                  |
+//! |----------------|:-------:|--------------------------------------------------------------------------------------------------------------------------|
+//! | `std`          |   yes   | Pulls in `alloc` and links `std`. Required for `Error: std::error::Error`.                                               |
+//! | `alloc`        | (via `std`) | `String` / `Vec<u8>` / `Box<[u8]>` / `Cow<'_, [u8]>` impls of [`ToHex`], [`FromHex`], and (for `String`) [`HexTarget`]. |
+//! | `serde`        |   no    | `Serialize` / `Deserialize` helpers under [`serde`] for `[u8; N]` and `Vec<u8>` fields, plus [`ToHex::serialize`].       |
+//! | `heapless`     |   no    | `heapless::Vec<u8, N>` ([`FromHex`]) and `heapless::String<CAP>` ([`HexTarget`]).                                        |
+//! | `arrayvec`     |   no    | `arrayvec::ArrayVec<u8, N>` ([`FromHex`]) and `arrayvec::ArrayString<CAP>` ([`HexTarget`]).                              |
+//! | `disable-simd` |   no    | Force the scalar branchless backend on every target. Useful for size-constrained builds and Miri.                        |
+//!
+//! [`HexTarget`] implementors by feature (this is the full list — `HexStr<N, P>`
+//! is always available; the others are gated):
+//!
+//! | Type                          | Feature    | Error type                          |
+//! |-------------------------------|------------|-------------------------------------|
+//! | [`HexStr<N, P>`][HexStr]      | always     | [`Error`]                           |
+//! | `String`                      | `alloc`    | `core::convert::Infallible`         |
+//! | `heapless::String<CAP>`       | `heapless` | [`Error`] (`InvalidLength` on overflow) |
+//! | `arrayvec::ArrayString<CAP>`  | `arrayvec` | [`Error`] (`InvalidLength` on overflow) |
+//!
 //! # Acknowledgments
 //!
 //! Algorithms and API design draw from the following sources:

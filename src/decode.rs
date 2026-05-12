@@ -14,6 +14,12 @@ use crate::{backend, maybe_uninit};
 /// encode side, by contrast, always produces a single canonical case
 /// (see [`encode`](crate::encode) and [`encode_upper`](crate::encode_upper)).
 ///
+/// Dispatches to the SIMD backend matching the running CPU (x86 runtime
+/// feature detection; AArch64 / WASM compile-time selection), falling back
+/// to the constant-time scalar path with `disable-simd` or on targets
+/// without a SIMD backend. See the
+/// [crate-level performance note](crate#performance-const-fn-vs-runtime-apis).
+///
 /// # Examples
 ///
 /// ```rust
@@ -34,6 +40,7 @@ pub fn decode<T: FromHex>(input: impl AsRef<[u8]>) -> Result<T, T::Error> {
 /// Decode hex `input` into a caller-provided `output` buffer.
 ///
 /// Accepts upper, lower, and mixed case hex characters (`[0-9a-fA-F]`).
+/// Uses the same SIMD-dispatched backend as [`decode`].
 ///
 /// Returns [`Error::InvalidLength`] if `input.len() != output.len() * 2`.
 /// Returns [`Error::InvalidEncoding`] if any byte in `input` is not a valid hex character.
@@ -61,6 +68,10 @@ pub fn decode_to_slice<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a [u8
 /// Returns `true` iff `input` has even length and every byte is in
 /// `[0-9a-fA-F]`. Both cases and any mix of them are accepted —
 /// validity is purely a function of the byte set, not the case.
+///
+/// Dispatches to the same SIMD backend as [`decode`]; see the
+/// [crate-level performance note](crate#performance-const-fn-vs-runtime-apis).
+/// For compile-time validation use [`const_check`](crate::const_check).
 #[inline]
 pub fn check(input: &[u8]) -> bool {
     input.len().is_multiple_of(2) && backend::check(input)
