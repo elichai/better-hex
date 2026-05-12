@@ -67,6 +67,7 @@ pub trait ToHex {
     /// has nowhere to compose the prefix at the call site, so it takes
     /// the prefix as a `const PREFIX` parameter instead.
     #[cfg(feature = "serde")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
     fn serialize<S, const PREFIX: bool>(&self, serializer: S, upper: bool) -> Result<S::Ok, S::Error>
     where
         S: ::serde::Serializer,
@@ -272,6 +273,7 @@ impl<U: ToHex + ?Sized> ToHex for &U {
 }
 
 #[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 impl ToHex for alloc::vec::Vec<u8> {
     #[inline]
     fn write_hex<W: fmt::Write>(&self, w: &mut W, upper: bool) -> fmt::Result {
@@ -288,6 +290,7 @@ impl ToHex for alloc::vec::Vec<u8> {
 }
 
 #[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 impl ToHex for alloc::boxed::Box<[u8]> {
     #[inline]
     fn write_hex<W: fmt::Write>(&self, w: &mut W, upper: bool) -> fmt::Result {
@@ -304,6 +307,7 @@ impl ToHex for alloc::boxed::Box<[u8]> {
 }
 
 #[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 impl ToHex for alloc::borrow::Cow<'_, [u8]> {
     #[inline]
     fn write_hex<W: fmt::Write>(&self, w: &mut W, upper: bool) -> fmt::Result {
@@ -320,6 +324,7 @@ impl ToHex for alloc::borrow::Cow<'_, [u8]> {
 }
 
 #[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 impl FromHex for alloc::vec::Vec<u8> {
     type Error = Error;
 
@@ -329,6 +334,7 @@ impl FromHex for alloc::vec::Vec<u8> {
 }
 
 #[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 impl<'a> FromHex for alloc::borrow::Cow<'a, [u8]> {
     type Error = Error;
 
@@ -346,6 +352,7 @@ impl<const N: usize> FromHex for [u8; N] {
 }
 
 #[cfg(feature = "heapless")]
+#[cfg_attr(docsrs, doc(cfg(feature = "heapless")))]
 impl<const N: usize> FromHex for heapless::Vec<u8, N> {
     type Error = Error;
 
@@ -359,6 +366,7 @@ impl<const N: usize> FromHex for heapless::Vec<u8, N> {
 }
 
 #[cfg(feature = "arrayvec")]
+#[cfg_attr(docsrs, doc(cfg(feature = "arrayvec")))]
 impl<const N: usize> FromHex for arrayvec::ArrayVec<u8, N> {
     type Error = Error;
 
@@ -372,6 +380,7 @@ impl<const N: usize> FromHex for arrayvec::ArrayVec<u8, N> {
 }
 
 #[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 impl HexTarget for alloc::string::String {
     /// `String` allocation is infallible (barring OOM which panics).
     type Error = core::convert::Infallible;
@@ -385,6 +394,7 @@ impl HexTarget for alloc::string::String {
 }
 
 #[cfg(feature = "heapless")]
+#[cfg_attr(docsrs, doc(cfg(feature = "heapless")))]
 impl<const CAP: usize> HexTarget for heapless::String<CAP> {
     type Error = crate::error::Error;
     fn encode_hex(bytes: &[u8]) -> Result<Self, Self::Error> {
@@ -396,6 +406,7 @@ impl<const CAP: usize> HexTarget for heapless::String<CAP> {
 }
 
 #[cfg(feature = "arrayvec")]
+#[cfg_attr(docsrs, doc(cfg(feature = "arrayvec")))]
 impl<const CAP: usize> HexTarget for arrayvec::ArrayString<CAP> {
     type Error = crate::error::Error;
 

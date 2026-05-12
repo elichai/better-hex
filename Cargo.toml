@@ -6,6 +6,13 @@ autobenches = false
 license = "MIT OR Apache-2.0"
 description = "Fast hex encoding/decoding with SIMD, const fn, and constant-time support"
 
+# docs.rs builds nightly + --all-features and sets `--cfg docsrs` so the
+# `#[cfg_attr(docsrs, doc(cfg(...)))]` annotations on feature-gated items
+# render "Available on crate feature `…` only" badges.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 default = ["std"]
 std = ["alloc"]

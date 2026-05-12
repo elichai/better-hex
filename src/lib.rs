@@ -1,5 +1,6 @@
 #![no_std]
 #![warn(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 //! Fast, constant-time hex encoding and decoding with SIMD and `const fn`.
 //!
 //! # Features
@@ -99,12 +100,14 @@ mod traits;
 pub mod serde_impl;
 
 #[cfg(feature = "serde")]
+#[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 #[doc(inline)]
 pub use serde_impl as serde;
 
 pub use decode::{check, decode, decode_to_slice};
 pub use display::{HexDisplay, display};
 #[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 pub use encode::encode_string;
 pub use encode::{encode, encode_to_slice, encode_to_slice_upper, encode_upper};
 pub use error::Error;

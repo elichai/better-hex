@@ -72,6 +72,7 @@ pub fn encode_upper<T: HexTarget>(input: &[u8]) -> Result<T, T::Error> {
 /// assert_eq!(s, "dead");
 /// ```
 #[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 pub fn encode_string(input: &[u8]) -> alloc::string::String {
     let Ok(s) = encode(input);
     s
