@@ -75,10 +75,10 @@ pub unsafe fn encode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize, 
 
             v128_store(dst.cast(), out0);
             v128_store(dst.add(16).cast(), out1);
-        }
 
-        src = src.add(16);
-        dst = dst.add(32);
+            src = src.add(16);
+            dst = dst.add(32);
+        }
         byte_len -= 16;
     }
 
@@ -119,12 +119,14 @@ pub unsafe fn decode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) 
         let lo = u8x16_shuffle::<1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31>(nibbles0, nibbles1);
         let packed = v128_or(u8x16_shl(hi, 4), lo);
 
+        // SAFETY: `byte_len >= 16`, so `dst` is valid for 16 writes here, and
+        // advancing `src` by 32 / `dst` by 16 keeps both in bounds for the
+        // remaining `byte_len - 16` iterations (caller's contract).
         unsafe {
             v128_store(dst.cast(), packed);
+            src = src.add(32);
+            dst = dst.add(16);
         }
-
-        src = src.add(32);
-        dst = dst.add(16);
         byte_len -= 16;
     }
 
