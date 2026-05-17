@@ -48,10 +48,13 @@
 //!
 //! 4. **Validate**: `vqaddq_u8(nibbles, splat(0x70))` — saturating add of 112.
 //!    Valid nibbles (0-15) become 112-127 (MSB clear). Invalid nibbles (>= 16)
-//!    saturate or wrap to >= 128 (MSB set). Check the max element with
-//!    `vmaxvq_u8`; if the high bit is set, there is at least one invalid
-//!    character. In that case, fall back to scalar decoding for exact error
-//!    position reporting.
+//!    saturate to >= 128 (MSB set). The high bits are reduced with `vmaxvq_u8`
+//!    across the whole input; if any byte ends with MSB set the function
+//!    returns [`InvalidEncoding`]. The public API surfaces only a yes/no
+//!    result — no per-byte error position — so the SIMD pass keeps decoding
+//!    all chunks without short-circuiting (constant-time over the valid path).
+//!    Scalar is only invoked for the trailing `byte_len % 16` bytes that
+//!    don't fill a full 16-byte chunk.
 //!
 //! 5. **Pack**: Use `vuzpq_u8` to deinterleave odd/even nibbles (hi nibbles
 //!    and lo nibbles into separate vectors), then `(hi << 4) | lo` to combine

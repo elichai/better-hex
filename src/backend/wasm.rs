@@ -15,10 +15,13 @@
 //! Uses a branchless variant of the Mula–Langdale nibble-decode approach:
 //! two parallel paths (digit and alpha) produce candidate nibble values,
 //! merged via `u8x16_min`. Validation detects out-of-range nibbles via
-//! saturating addition. On failure, the scalar backend is invoked on the
-//! remaining input to produce a precise error. Nibbles are
-//! packed by deinterleaving (shuffle to separate even/odd positions), then
-//! shifting and ORing.
+//! saturating addition; error bits are OR-accumulated across the whole
+//! input and the function returns [`InvalidEncoding`] (with no position) if
+//! anything tripped — the SIMD pass keeps decoding all chunks rather than
+//! short-circuiting on first failure. Scalar is only invoked on the
+//! trailing `byte_len % 16` bytes that don't fill a 16-byte chunk. Nibbles
+//! are packed by deinterleaving (shuffle to separate even/odd positions),
+//! then shifting and ORing.
 //!
 //! # Validation (`check`)
 //!
