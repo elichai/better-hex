@@ -38,8 +38,22 @@ jobs:
             rustflags: -C target-feature=+avx2
             cargo_args: --target x86_64-unknown-linux-gnu --features serde,heapless,arrayvec --lib --tests
 
-          # Deliberately stop at AVX2 here. Miri aborts on the AVX-512
-          # `_mm512_permutexvar_epi64` path used by `encode_avx512`.
+          # AVX-512BW exercises `decode_avx512` and `check_avx512`; the encode
+          # path falls back to AVX2 at this tier (VBMI is required for the
+          # `vpermi2b` interleave).
+          - name: Miri (x86_64 AVX-512BW impl)
+            target: x86_64-unknown-linux-gnu
+            rustflags: -C target-feature=+avx512bw
+            cargo_args: --target x86_64-unknown-linux-gnu --features serde,heapless,arrayvec --lib --tests
+
+          # AVX-512 VBMI additionally exercises `encode_avx512`, which uses
+          # `_mm512_permutex2var_epi8` (vpermi2b). Miri added support for this
+          # intrinsic in nightly-2026-05-16; older nightlies abort here.
+          - name: Miri (x86_64 AVX-512 VBMI impl)
+            target: x86_64-unknown-linux-gnu
+            rustflags: -C target-feature=+avx512vbmi
+            cargo_args: --target x86_64-unknown-linux-gnu --features serde,heapless,arrayvec --lib --tests
+
           # Cover the 32-bit x86 backend as a distinct target.
           - name: Miri (i686 SSSE3 impl)
             target: i686-unknown-linux-gnu
@@ -106,7 +120,7 @@ jobs:
           # rustdoc compiles each doctest with RUSTDOCFLAGS, not RUSTFLAGS,
           # so the target-feature toggles must be plumbed through both for
           # the SIMD-enabled matrix entries to actually run their SSSE3 /
-          # AVX2 / NEON paths under Miri.
+          # AVX2 / AVX-512BW / AVX-512 VBMI / NEON paths under Miri.
           RUSTDOCFLAGS: ${{ matrix.rustflags }}
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc

@@ -137,20 +137,23 @@ cp -n ../better-hex-corpus/oracle/* fuzz/corpus/oracle/
 Every PR runs the test suite under [Miri] to catch UB, out-of-bounds reads
 from SIMD loads/stores, provenance violations, and unsoundness in `unsafe`
 blocks. The matrix exercises each backend directly by toggling
-`-C target-feature` so Miri actually interprets the SSSE3 / AVX2 / NEON code
-paths rather than the scalar fallback:
+`-C target-feature` so Miri actually interprets the SSSE3 / AVX2 / AVX-512BW
+/ AVX-512 VBMI / NEON code paths rather than the scalar fallback:
 
 | Target                          | Features                          |
 |---------------------------------|-----------------------------------|
 | `x86_64-unknown-linux-gnu`      | scalar (via `disable-simd`)       |
 | `x86_64-unknown-linux-gnu`      | `+ssse3`                          |
 | `x86_64-unknown-linux-gnu`      | `+avx2`                           |
+| `x86_64-unknown-linux-gnu`      | `+avx512bw`                       |
+| `x86_64-unknown-linux-gnu`      | `+avx512vbmi`                     |
 | `i686-unknown-linux-gnu`        | `+ssse3`                          |
 | `aarch64-unknown-linux-gnu`     | `+neon` (cross-interpreted)       |
 
-AVX-512 is intentionally excluded — Miri aborts on
-`_mm512_permutexvar_epi64` used in `encode_avx512`. WASM is covered by the
-regular CI workflow instead; Miri only promises Linux/macOS/Windows targets.
+The AVX-512 VBMI entry requires nightly-2026-05-16 or newer; earlier Miri
+versions abort on `_mm512_permutex2var_epi8` (`vpermi2b`). WASM is covered
+by the regular CI workflow instead; Miri only promises Linux/macOS/Windows
+targets.
 
 Both `cargo miri test` and `cargo miri test --doc` run with proptest tuned
 for Miri's slow interpreter (`PROPTEST_CASES=8`).
