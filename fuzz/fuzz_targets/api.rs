@@ -1,4 +1,7 @@
-#![no_main]
+#![cfg_attr(not(miri), no_main)]
+
+#[cfg(miri)]
+mod miri_replay;
 
 use better_hex::{Error, const_check, const_decode_to_array, decode_to_slice, encode_to_slice, encode_to_slice_upper};
 use libfuzzer_sys::arbitrary::{self, Arbitrary};
@@ -104,4 +107,9 @@ fn encode(data: &[u8], upper: bool) -> Vec<u8> {
 
 fn checked_hex_len(data: &[u8]) -> usize {
     data.len().checked_mul(2).expect("hex length overflow")
+}
+
+#[cfg(miri)]
+fn main() {
+    miri_replay::replay("corpus/api");
 }
