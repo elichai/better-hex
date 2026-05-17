@@ -98,9 +98,12 @@ let arr: [u8; 5] = better_hex::decode(b"68656c6c6f")?;
 
 Three [cargo-fuzz] targets in `fuzz/fuzz_targets/` cover the public API:
 
-- **`oracle`** — differential fuzzing against `hex`, `const-hex`, `faster-hex`,
-  and `base16ct`. Any disagreement on encode / decode / check output (modulo
-  documented case-folding behavior) is a bug.
+- **`oracle`** — cross-backend differential fuzzing. Every SIMD tier the host
+  CPU exposes (SSSE3 / AVX2 / AVX-512BW / AVX-512 VBMI on x86, NEON on
+  aarch64) plus the runtime-dispatched API are checked against an in-fuzz
+  scalar naïve encoder / decoder for every input. Any disagreement on
+  encode, decode, or check output (modulo documented case-folding behavior)
+  is a bug.
 - **`api`** — round-trip and invariant checks across `encode`, `decode`,
   `check`, the `FromHex` / `ToHex` traits, and the `HexTarget` adapters
   (`String`, `heapless::String`, `arrayvec::ArrayString`).
