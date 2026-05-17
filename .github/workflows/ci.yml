@@ -184,9 +184,12 @@ jobs:
       - name: cargo test (WASM + simd128)
         env:
           CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime
-          RUSTFLAGS: "-C target-feature=+simd128"
-          # Enforce -D warnings on doctest compilation here as well; see the
-          # matching note on the main test step.
+          # Enforce -D warnings on the wasm backend itself, not just doctest
+          # compilation. The SIMD128 path lives entirely in
+          # `src/backend/wasm.rs` and is never exercised by the x86/aarch64
+          # test matrix, so wasm-only lints (e.g. `unsafe_op_in_unsafe_fn` on
+          # pointer-arithmetic shims) would otherwise stay invisible to CI.
+          RUSTFLAGS: "-C target-feature=+simd128 -D warnings"
           RUSTDOCFLAGS: "-C target-feature=+simd128 -D warnings"
         run: cargo test --locked --target wasm32-wasip1 --no-default-features --features alloc,serde,heapless,arrayvec
 
