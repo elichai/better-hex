@@ -129,3 +129,105 @@ jobs:
             -Zmiri-env-set=PROPTEST_MAX_SHRINK_ITERS=32
             -Zmiri-env-set=PROPTEST_DISABLE_FAILURE_PERSISTENCE=1
         run: cargo miri test --locked --target ${{ matrix.target }} --features serde,heapless,arrayvec --doc
+
+  # Replay the persisted fuzz corpus through each `fuzz_target!` body under
+  # Miri. Each fuzz bin keeps `#![cfg_attr(not(miri), no_main)]` and adds a
+  # `#[cfg(miri)] fn main` that iterates `$MIRI_CORPUS_DIR` and feeds every
+  # file to the macro-generated `rust_fuzzer_test_input` symbol. This is
+  # additive coverage over the proptest matrix above: real corpus seeds
+  # (regressions, libFuzzer-discovered edges) exercised under Miri's UB
+  # checker. -Zmiri-disable-isolation is required for `std::fs` access.
+  miri-fuzz:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    continue-on-error: false
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # AVX-512 VBMI activates the highest x86 tier at compile time
+          # (dispatched -> `encode_avx512`) and Miri's CPUID shim reports
+          # ssse3/avx2/avx512* as available, so every per-tier branch in
+          # `oracle.rs` fires.
+          - name: Miri fuzz corpus (x86_64 AVX-512 VBMI)
+            target: x86_64-unknown-linux-gnu
+            rustflags: -C target-feature=+avx512vbmi
+          - name: Miri fuzz corpus (aarch64 NEON)
+            target: aarch64-unknown-linux-gnu
+            rustflags: -C target-feature=+neon
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The corpus lives on the `fuzz-corpus` orphan branch (no shared history
+      # with main). Same checkout pattern as fuzz.yml; `path:` keeps it out of
+      # the main worktree.
+      - name: Checkout fuzz-corpus
+        uses: actions/checkout@v4
+        with:
+          ref: fuzz-corpus
+          path: fuzz-corpus
+          fetch-depth: 1
+
+      - name: Stage seed corpus
+        run: |
+          set -euo pipefail
+          for t in oracle api hex_str; do
+            mkdir -p "fuzz/corpus/$t"
+            # libFuzzer filenames are sha1(content), so cp -n is a free dedup.
+            cp -n "fuzz-corpus/$t/"* "fuzz/corpus/$t/" 2>/dev/null || true
+            echo "seeded $t with $(ls "fuzz/corpus/$t" | wc -l) inputs"
+          done
+
+      - name: Install Rust nightly with Miri
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+          targets: ${{ matrix.target }}
+
+      # libfuzzer-sys's `link_libfuzzer` default feature unconditionally
+      # builds its C++ sources via build.rs (even under `cargo miri`, which
+      # never actually links them), so the cross g++ is required in addition
+      # to the gcc the upper `miri` job uses. The build artifact is harmless
+      # — miri interprets the Rust side and ignores the C++ static lib.
+      - name: Install aarch64 cross toolchain
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        with:
+          workspaces: fuzz -> fuzz/target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Setup Miri
+        working-directory: fuzz
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        # fuzz/rust-toolchain.toml pins a nightly that may lag behind the one
+        # we just installed; `+nightly` forces the latest with miri component.
+        run: cargo +nightly miri setup --target ${{ matrix.target }}
+
+      - name: Replay fuzz corpus under Miri
+        working-directory: fuzz
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+          MIRI_TARGET: ${{ matrix.target }}
+          # -Zmiri-disable-isolation lets `std::fs::read_dir` / `read` reach
+          # the host filesystem so the corpus driver can iterate input files.
+          # MIRI_CORPUS_DIR overrides the default `corpus/<target>` path so
+          # the bin always uses an absolute, hermetic location.
+          MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-env-forward=MIRI_CORPUS_DIR
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+        run: |
+          set -euo pipefail
+          for target in oracle api hex_str; do
+            echo "::group::Replaying $target corpus under Miri"
+            MIRI_CORPUS_DIR="$PWD/corpus/$target" \
+              cargo +nightly miri run --locked --bin "$target" --target "$MIRI_TARGET"
+            echo "::endgroup::"
+          done
