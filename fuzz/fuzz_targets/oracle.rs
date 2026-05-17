@@ -1,4 +1,7 @@
-#![no_main]
+#![cfg_attr(not(miri), no_main)]
+
+#[cfg(miri)]
+mod miri_replay;
 
 mod oracle_support;
 
@@ -116,3 +119,8 @@ fuzz_target!(|data: &[u8]| {
         });
     }
 });
+
+#[cfg(miri)]
+fn main() {
+    miri_replay::replay("corpus/oracle");
+}

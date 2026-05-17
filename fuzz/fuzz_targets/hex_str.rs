@@ -1,4 +1,7 @@
-#![no_main]
+#![cfg_attr(not(miri), no_main)]
+
+#[cfg(miri)]
+mod miri_replay;
 
 use better_hex::{HexStr, PrefixedHexStr};
 use core::str::FromStr;
@@ -60,3 +63,8 @@ fuzz_target!(|data: &str| {
     test_prefixed_hex_str!(16);
     test_prefixed_hex_str!(32);
 });
+
+#[cfg(miri)]
+fn main() {
+    miri_replay::replay("corpus/hex_str");
+}
