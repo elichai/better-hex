@@ -150,10 +150,8 @@ blocks. The matrix exercises each backend directly by toggling
 | `i686-unknown-linux-gnu`        | `+ssse3`                          |
 | `aarch64-unknown-linux-gnu`     | `+neon` (cross-interpreted)       |
 
-The AVX-512 VBMI entry requires nightly-2026-05-16 or newer; earlier Miri
-versions abort on `_mm512_permutex2var_epi8` (`vpermi2b`). WASM is covered
-by the regular CI workflow instead; Miri only promises Linux/macOS/Windows
-targets.
+WASM is covered by the regular CI workflow instead; Miri only promises
+Linux/macOS/Windows targets.
 
 Both `cargo miri test` and `cargo miri test --doc` run with proptest tuned
 for Miri's slow interpreter (`PROPTEST_CASES=8`).
