@@ -202,9 +202,14 @@ pub unsafe fn encode_avx2(src: *const u8, dst: *mut u8, byte_len: usize, upper: 
 /// and set for invalid ones.
 ///
 /// The table entries are derived by analyzing which `vm1 >> 4` buckets the
-/// three valid hex ranges (`'0'-'9'`, `'A'-'F'`, `'a'-'f'`) hash into after
-/// the subtract-one step, then choosing constants that place valid chars in
-/// the non-negative (MSB-clear) range of signed i8 arithmetic.
+/// valid hex ranges hash into after the subtract-one step. The digits
+/// straddle two buckets — `'0'` (vm1 = 0x2F) lands in bucket 2 alone,
+/// while `'1'`–`'9'` (vm1 = 0x30..0x38) all share bucket 3. Uppercase
+/// `'A'`–`'F'` (vm1 = 0x40..0x45) go to bucket 4 and lowercase `'a'`–`'f'`
+/// (vm1 = 0x60..0x65) to bucket 6 — four occupied buckets total. The
+/// constants are then chosen so that the valid chars in each bucket end
+/// up MSB-clear (signed i8 non-negative) and every other byte that hashes
+/// into those buckets ends up MSB-set.
 ///
 /// # Safety
 ///
@@ -214,14 +219,17 @@ unsafe fn decode_delta_check_128() -> __m128i {
     // SAFETY: caller guarantees SSSE3.
     unsafe {
         _mm_setr_epi8(
-            -16,  // hash 0
-            -32,  // hash 1
-            -47,  // hash 2 — unused bucket, set to reject
-            71,   // hash 3 — digits '0'-'9' map here (vm1 = 0x2F..0x38)
+            -16,  // hash 0 — no valid char hashes here
+            -32,  // hash 1 — no valid char hashes here
+            -47,  // hash 2 — digit '0' alone (vm1 = 0x2F)
+            71,   // hash 3 — digits '1'-'9' (vm1 = 0x30..0x38)
             58,   // hash 4 — uppercase 'A'-'F' (vm1 = 0x40..0x45)
-            -96,  // hash 5
+            -96,  // hash 5 — no valid char hashes here
             26,   // hash 6 — lowercase 'a'-'f' (vm1 = 0x60..0x65)
-            -128, // hash 7
+            -128, // hash 7 — no valid char hashes here
+            // Hashes 8-15 receive bytes with vm1 high nibble >= 8 (i.e.
+            // input bytes >= 0x81, all invalid). Entry 0 leaves `check = vm1`,
+            // whose MSB is already set there — rejection is automatic.
             0, 0, 0, 0, 0, 0, 0, 0,
         )
     }
@@ -234,7 +242,9 @@ unsafe fn decode_delta_check_128() -> __m128i {
 /// hex characters.
 ///
 /// - Digits `'0'-'9'`: `vm1` is `0x2F..0x38`, we need result `0..9`,
-///   so delta = `-(0x30 - 1)` = `-47` = `-48 + 1`.
+///   so delta = `-(0x30 - 1)` = `-47` = `-48 + 1`. Because `vm1 >> 4`
+///   straddles two values here, the same delta is written into both
+///   bucket 2 (digit `'0'` alone) and bucket 3 (digits `'1'`–`'9'`).
 /// - Uppercase `'A'-'F'`: `vm1` is `0x40..0x45`, we need `10..15`,
 ///   so delta = `-(0x41 - 1) + 10` = `-54` = `-55 + 1`.
 /// - Lowercase `'a'-'f'`: `vm1` is `0x60..0x65`, we need `10..15`,
@@ -250,8 +260,8 @@ unsafe fn decode_delta_rebase_128() -> __m128i {
         _mm_setr_epi8(
             0,
             0,
-            -48 + 1, // hash 2: digits '0'-'7' (vm1 high nibble = 2)
-            -48 + 1, // hash 3: digits '8'-'9' (vm1 high nibble = 3)
+            -48 + 1, // hash 2: digit '0' alone (vm1 = 0x2F)
+            -48 + 1, // hash 3: digits '1'-'9' (vm1 = 0x30..0x38)
             -55 + 1, // hash 4: uppercase 'A'-'F'
             0,
             -87 + 1, // hash 6: lowercase 'a'-'f'
