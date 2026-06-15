@@ -1,0 +1,25 @@
+# Dependabot keeps third-party dependencies current.
+#   * cargo          — crate dependencies in Cargo.toml / Cargo.lock
+#   * github-actions — action refs pinned in .github/workflows/*
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    # Batch non-breaking bumps into one PR; major bumps stay separate so they
+    # get individual review.
+    groups:
+      cargo-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"
