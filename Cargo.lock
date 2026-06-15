@@ -58,7 +58,7 @@ checksum = "fd307490d624467aa6f74b0eabb77633d1f758a7b25f12bceb0b22e08d9726f6"
 
 [[package]]
 name = "better-hex"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "arrayvec",
  "base16ct",
