@@ -1,0 +1,101 @@
+# Release automation for better-hex via release-plz.
+#
+# On every push to main, release-plz runs two idempotent commands:
+#   * release-pr — opens/updates a single "release PR" that bumps the version
+#     (using cargo-semver-checks to turn a detected API break into the right
+#     bump) and writes the changelog. Nothing publishes until you merge it.
+#   * release    — once a merged version is ahead of crates.io, tags it, creates
+#     the GitHub Release, and publishes to crates.io.
+# Both are no-ops when there is nothing to do, so ordinary pushes don't release.
+#
+# Publishing uses crates.io Trusted Publishing (OIDC) — no stored token. This
+# needs a one-time setup, plus a manual first publish:
+#   1. Trusted publishers can only be configured on a crate that already exists,
+#      so publish 1.0.0 once by hand (`cargo publish`, with a temporary API
+#      token). Confirm the `better-hex` name is free first.
+#   2. Then crates.io -> better-hex -> Settings -> Trusted Publishing -> add a
+#      GitHub publisher: owner `elichai`, repo `better-hex`, workflow
+#      `publish.yml`. From the next release on, this workflow publishes itself.
+#
+# NOTE: third-party actions are referenced by tag, matching ci.yml. For a
+# security-sensitive crate consider pinning to commit SHAs + Dependabot.
+name: Release-plz
+
+on:
+  push:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Publishes any crate whose Cargo.toml version is ahead of crates.io, then
+  # tags + creates the GitHub Release. Self-gating: a no-op until a release-PR
+  # merge bumps the version past what's published.
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push tags + create GitHub Releases
+      id-token: write # crates.io Trusted Publishing (OIDC)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # release-plz needs full history
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Authenticate to crates.io (OIDC)
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Run release-plz
+        uses: release-plz/action@v0
+        with:
+          command: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # release-plz invokes `cargo publish`, which reads this env var.
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
+  # Maintains the version-bump + changelog PR. Runs cargo-semver-checks so a
+  # breaking API change is reflected in the proposed version.
+  release-pr:
+    name: Release PR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the release-PR branch
+      pull-requests: write # open/update the release PR
+    # Serialize PR-updating runs so concurrent pushes don't race on the branch.
+    concurrency:
+      group: release-plz-pr
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      # release-plz compares the public API against the last published version
+      # via cargo-semver-checks. Install it explicitly so the check always runs
+      # (the first 1.0.0 release has no baseline, so it only bites from 1.0.1).
+      - name: Install cargo-semver-checks
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks
+
+      - name: Run release-plz
+        uses: release-plz/action@v0
+        with:
+          command: release-pr
+        env:
+          # The default GITHUB_TOKEN works, but PRs it opens will NOT trigger CI
+          # (GitHub suppresses workflow runs for GITHUB_TOKEN-authored events).
+          # To get CI on the release PR, create a PAT / GitHub App token secret
+          # and reference it here instead, e.g. ${{ secrets.RELEASE_PLZ_TOKEN }}.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
