@@ -51,28 +51,10 @@ jobs:
             cargo_command: test
             cargo_args: --locked --lib --target x86_64-unknown-linux-gnu
 
-          # Run AVX-512 tests under Intel SDE so coverage doesn't depend on
-          # whether the GitHub-hosted runner happens to have AVX-512.
-          # qemu-user-static (8.2.2 on Ubuntu Noble) advertises AVX-512 in
-          # CPUID but the TCG has no implementations for the instructions
-          # and SIGILLs at runtime — SDE actually emulates them.
-          # `-skx` = Skylake-X (AVX-512 F/CD/BW/DQ/VL); `-icx` = Ice Lake
-          # Server (adds VBMI, VPOPCNTDQ, ...).
-          - name: Test (x86_64 AVX-512BW impl, via Intel SDE)
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            rustflags: -C target-feature=+avx512bw
-            cargo_command: test
-            cargo_args: --locked --lib --target x86_64-unknown-linux-gnu
-            sde_cpu: skx
-
-          - name: Test (x86_64 AVX-512 VBMI impl, via Intel SDE)
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            rustflags: -C target-feature=+avx512bw,+avx512vbmi
-            cargo_command: test
-            cargo_args: --locked --lib --target x86_64-unknown-linux-gnu
-            sde_cpu: icx
+          # AVX-512BW / AVX-512 VBMI impls are exercised under Miri instead of
+          # natively (see miri.yml). They are not run on real/emulated hardware
+          # here: GitHub runners don't guarantee AVX-512, QEMU's TCG SIGILLs on
+          # the instructions, and Intel SDE downloads are bot-gated from CI.
 
           # GitHub's arm64 Linux runners (Cobalt) for NEON coverage.
           - name: Test (aarch64 NEON API)
@@ -123,22 +105,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      # For matrix entries with `sde_cpu` set, install Intel SDE and point
-      # cargo's runner env var at it so the test binary executes under
-      # emulation with the requested CPU profile (exposing features the
-      # actual host runner may not have, e.g. AVX-512).
-      - name: Setup Intel SDE runner
-        if: matrix.sde_cpu != ''
-        env:
-          SDE_CPU: ${{ matrix.sde_cpu }}
-        run: |
-          SDE_VERSION="sde-external-9.48.0-2024-11-25-lin"
-          wget -q "https://downloadmirror.intel.com/843185/${SDE_VERSION}.tar.xz"
-          tar -xf "${SDE_VERSION}.tar.xz"
-          SDE_DIR="${PWD}/${SDE_VERSION}"
-          echo "${SDE_DIR}" >> "$GITHUB_PATH"
-          echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER=${SDE_DIR}/sde64 -${SDE_CPU} --" >> "$GITHUB_ENV"
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
