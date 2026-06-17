@@ -70,7 +70,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Rust nightly with Miri
         uses: dtolnay/rust-toolchain@nightly
@@ -158,13 +158,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # The corpus lives on the `fuzz-corpus` orphan branch (no shared history
       # with main). Same checkout pattern as fuzz.yml; `path:` keeps it out of
       # the main worktree.
       - name: Checkout fuzz-corpus
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: fuzz-corpus
           path: fuzz-corpus
