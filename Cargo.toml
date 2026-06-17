@@ -5,6 +5,9 @@ edition = "2024"
 autobenches = false
 license = "MIT OR Apache-2.0"
 description = "Fast hex encoding/decoding with SIMD, const fn, and constant-time support"
+repository = "https://github.com/elichai/better-hex"
+keywords = ["hex", "encoding", "simd", "no-std", "constant-time"]
+categories = ["encoding", "no-std"]
 
 # docs.rs builds nightly + --all-features and sets `--cfg docsrs` so the
 # `#[cfg_attr(docsrs, doc(cfg(...)))]` annotations on feature-gated items
