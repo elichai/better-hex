@@ -106,11 +106,11 @@ fn roundtrip_all_apis() {
 fn single_byte_roundtrip_all_values() {
     for b in 0u8..=u8::MAX {
         let input = [b];
-        let hex: String = better_hex::encode(&input).unwrap();
+        let hex: String = better_hex::encode(input).unwrap();
         let decoded: [u8; 1] = better_hex::decode(&hex).unwrap();
         assert_eq!(decoded, input, "roundtrip mismatch for byte 0x{b:02x}");
 
-        let hex_upper: String = better_hex::encode_upper(&input).unwrap();
+        let hex_upper: String = better_hex::encode_upper(input).unwrap();
         let decoded_upper: [u8; 1] = better_hex::decode(&hex_upper).unwrap();
         assert_eq!(decoded_upper, input, "roundtrip (upper) mismatch for byte 0x{b:02x}");
     }
@@ -121,7 +121,7 @@ fn two_byte_roundtrip_all_values() {
     let end = if cfg!(miri) { u16::MAX / 16 } else { u16::MAX };
     for ab in 0u16..=end {
         let input = ab.to_le_bytes();
-        let hex: String = better_hex::encode(&input).unwrap();
+        let hex: String = better_hex::encode(input).unwrap();
         let decoded: [u8; 2] = better_hex::decode(&hex).unwrap();
         assert_eq!(decoded, input, "roundtrip mismatch for bytes {input:?}");
     }
@@ -149,12 +149,12 @@ fn decode_accepts_exactly_ascii_hex_digits() {
             "second-position byte 0x{b:02x} acceptance mismatch",
         );
         assert_eq!(
-            better_hex::check(&first_pos),
+            better_hex::check(first_pos),
             expected_ok,
             "check mismatch for first-position byte 0x{b:02x}",
         );
         assert_eq!(
-            better_hex::check(&second_pos),
+            better_hex::check(second_pos),
             expected_ok,
             "check mismatch for second-position byte 0x{b:02x}",
         );

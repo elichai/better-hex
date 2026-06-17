@@ -182,10 +182,10 @@ pub trait HexTarget: Sized {
     type Error;
 
     /// Encode `bytes` as lowercase hex into a new instance of `Self`.
-    fn encode_hex(bytes: &[u8]) -> Result<Self, Self::Error>;
+    fn encode_hex(bytes: impl AsRef<[u8]>) -> Result<Self, Self::Error>;
 
     /// Encode `bytes` as uppercase hex into a new instance of `Self`.
-    fn encode_hex_upper(bytes: &[u8]) -> Result<Self, Self::Error>;
+    fn encode_hex_upper(bytes: impl AsRef<[u8]>) -> Result<Self, Self::Error>;
 }
 
 impl<const N: usize> ToHex for [u8; N] {
@@ -384,12 +384,12 @@ impl<const N: usize> FromHex for arrayvec::ArrayVec<u8, N> {
 impl HexTarget for alloc::string::String {
     /// `String` allocation is infallible (barring OOM which panics).
     type Error = core::convert::Infallible;
-    fn encode_hex(bytes: &[u8]) -> Result<Self, Self::Error> {
+    fn encode_hex(bytes: impl AsRef<[u8]>) -> Result<Self, Self::Error> {
         // String::new() never fails, so unwrap is safe.
-        Ok(to_hex_container(bytes, false).expect("Should never fail"))
+        Ok(to_hex_container(bytes.as_ref(), false).expect("Should never fail"))
     }
-    fn encode_hex_upper(bytes: &[u8]) -> Result<Self, Self::Error> {
-        Ok(to_hex_container(bytes, true).expect("Should never fail"))
+    fn encode_hex_upper(bytes: impl AsRef<[u8]>) -> Result<Self, Self::Error> {
+        Ok(to_hex_container(bytes.as_ref(), true).expect("Should never fail"))
     }
 }
 
@@ -397,11 +397,11 @@ impl HexTarget for alloc::string::String {
 #[cfg_attr(docsrs, doc(cfg(feature = "heapless")))]
 impl<const CAP: usize> HexTarget for heapless::String<CAP> {
     type Error = crate::error::Error;
-    fn encode_hex(bytes: &[u8]) -> Result<Self, Self::Error> {
-        to_hex_container(bytes, false)
+    fn encode_hex(bytes: impl AsRef<[u8]>) -> Result<Self, Self::Error> {
+        to_hex_container(bytes.as_ref(), false)
     }
-    fn encode_hex_upper(bytes: &[u8]) -> Result<Self, Self::Error> {
-        to_hex_container(bytes, true)
+    fn encode_hex_upper(bytes: impl AsRef<[u8]>) -> Result<Self, Self::Error> {
+        to_hex_container(bytes.as_ref(), true)
     }
 }
 
@@ -410,24 +410,24 @@ impl<const CAP: usize> HexTarget for heapless::String<CAP> {
 impl<const CAP: usize> HexTarget for arrayvec::ArrayString<CAP> {
     type Error = crate::error::Error;
 
-    fn encode_hex(bytes: &[u8]) -> Result<Self, Self::Error> {
-        to_hex_container(bytes, false)
+    fn encode_hex(bytes: impl AsRef<[u8]>) -> Result<Self, Self::Error> {
+        to_hex_container(bytes.as_ref(), false)
     }
 
-    fn encode_hex_upper(bytes: &[u8]) -> Result<Self, Self::Error> {
-        to_hex_container(bytes, true)
+    fn encode_hex_upper(bytes: impl AsRef<[u8]>) -> Result<Self, Self::Error> {
+        to_hex_container(bytes.as_ref(), true)
     }
 }
 
 impl<const N: usize, P: Prefix> HexTarget for HexStr<N, P> {
     type Error = crate::error::Error;
 
-    fn encode_hex(bytes: &[u8]) -> Result<Self, Self::Error> {
-        to_hex_container(bytes, false)
+    fn encode_hex(bytes: impl AsRef<[u8]>) -> Result<Self, Self::Error> {
+        to_hex_container(bytes.as_ref(), false)
     }
 
-    fn encode_hex_upper(bytes: &[u8]) -> Result<Self, Self::Error> {
-        to_hex_container(bytes, true)
+    fn encode_hex_upper(bytes: impl AsRef<[u8]>) -> Result<Self, Self::Error> {
+        to_hex_container(bytes.as_ref(), true)
     }
 }
 
