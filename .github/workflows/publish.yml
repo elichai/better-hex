@@ -49,10 +49,10 @@ jobs:
 
       - name: Authenticate to crates.io (OIDC)
         id: auth
-        uses: rust-lang/crates-io-auth-action@v1
+        uses: rust-lang/crates-io-auth-action@v1.0.5
 
       - name: Run release-plz
-        uses: release-plz/action@v0
+        uses: release-plz/action@v0.5
         with:
           command: release
         env:
@@ -90,7 +90,7 @@ jobs:
           tool: cargo-semver-checks
 
       - name: Run release-plz
-        uses: release-plz/action@v0
+        uses: release-plz/action@v0.5
         with:
           command: release-pr
         env:
