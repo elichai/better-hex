@@ -94,8 +94,9 @@ jobs:
         with:
           command: release-pr
         env:
-          # The default GITHUB_TOKEN works, but PRs it opens will NOT trigger CI
-          # (GitHub suppresses workflow runs for GITHUB_TOKEN-authored events).
-          # To get CI on the release PR, create a PAT / GitHub App token secret
-          # and reference it here instead, e.g. ${{ secrets.RELEASE_PLZ_TOKEN }}.
+          # Default GITHUB_TOKEN — no PAT or GitHub App token needed. Caveat:
+          # GitHub suppresses workflow runs for GITHUB_TOKEN-authored events, so
+          # `on: pull_request` CI won't run on the release PR automatically. To
+          # run it, manually close and reopen the release PR.
+          # https://release-plz.dev/docs/github/token
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
