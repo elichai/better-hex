@@ -1,0 +1,30 @@
+#!/bin/sh
+# Pre-commit gate: rustfmt + clippy, mirroring the CI "Format" and "Clippy" jobs.
+# Enable once per clone with:  git config core.hooksPath .githooks
+# Bypass for a single commit with:  git commit --no-verify
+set -eu
+
+# Operate on whichever checkout is committing (works from the main repo and
+# from any linked worktree).
+cd "$(git rev-parse --show-toplevel)"
+
+# Skip unless Rust-relevant files are staged (.rs / Cargo.toml / Cargo.lock).
+if ! git diff --cached --name-only --diff-filter=ACM \
+    | grep -qE '\.rs$|(^|/)Cargo\.(toml|lock)$'; then
+    echo "pre-commit: no Rust changes staged — skipping fmt/clippy"
+    exit 0
+fi
+
+echo "pre-commit: cargo fmt --all --check"
+if ! cargo fmt --all -- --check; then
+    echo "✗ rustfmt: run 'cargo fmt --all' to fix, then re-stage." >&2
+    exit 1
+fi
+
+echo "pre-commit: cargo clippy -D warnings"
+if ! cargo clippy --locked --all-targets --features serde,heapless,arrayvec -- -D warnings; then
+    echo "✗ clippy: resolve the warnings above (or 'git commit --no-verify' to skip)." >&2
+    exit 1
+fi
+
+echo "✓ pre-commit checks passed"

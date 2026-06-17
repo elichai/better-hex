@@ -161,6 +161,19 @@ for Miri's slow interpreter (`PROPTEST_CASES=8`).
 
 [Miri]: https://github.com/rust-lang/miri
 
+## Development
+
+A pre-commit hook in [`.githooks/`](.githooks/) runs `cargo fmt --check` and
+`cargo clippy -D warnings` (mirroring the CI `Format` and `Clippy` jobs) before
+each commit. Enable it once per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+It only runs when Rust files are staged; bypass a single commit with
+`git commit --no-verify`.
+
 ## Acknowledgments
 
 This crate builds on algorithms, ideas, and API design from the following
