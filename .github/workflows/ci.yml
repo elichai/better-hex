@@ -160,8 +160,39 @@ jobs:
         run: cargo test --locked --target wasm32-wasip1 --no-default-features --features alloc,serde,heapless,arrayvec
 
   clippy:
-    name: Clippy
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # x86_64 covers the SSSE3 / AVX2 / AVX-512BW / AVX-512 VBMI backends:
+          # `src/backend/x86.rs` is gated only on `target_arch`, not on any
+          # `target_feature`, so the whole module (every `#[target_feature]`
+          # function) is type-checked without RUSTFLAGS toggles.
+          - name: Clippy (x86_64)
+            target: x86_64-unknown-linux-gnu
+            cargo_args: --all-targets --features serde,heapless,arrayvec
+
+          # 32-bit x86 reuses the same arch-gated `src/backend/x86.rs`.
+          - name: Clippy (i686)
+            target: i686-unknown-linux-gnu
+            cargo_args: --all-targets --features serde,heapless,arrayvec
+
+          # NEON is baseline on aarch64 (target_feature="neon" is on by
+          # default), so `src/backend/neon.rs` is linted without RUSTFLAGS.
+          - name: Clippy (aarch64 NEON)
+            target: aarch64-unknown-linux-gnu
+            cargo_args: --all-targets --features serde,heapless,arrayvec
+
+          # wasm32 is no_std (no `std` feature) and `simd128` is not a default
+          # target-feature, so `src/backend/wasm.rs` only compiles with
+          # `+simd128`. `--all-targets` would pull std-only tests/benches, so
+          # lint the library surface only with the no_std-compatible features.
+          - name: Clippy (wasm32 SIMD128)
+            target: wasm32-unknown-unknown
+            rustflags: -C target-feature=+simd128
+            cargo_args: --lib --no-default-features --features alloc,serde,heapless,arrayvec
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -170,14 +201,26 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+          targets: ${{ matrix.target }}
+
+      # `--all-targets` pulls in benches/tests whose dev-dep chain (criterion ->
+      # alloca) has a C build script; the 32-bit cross build needs the multilib
+      # headers (`gnu/stubs-32.h`). Same install the Miri i686 job uses.
+      - name: Install i686 cross toolchain
+        if: matrix.target == 'i686-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y gcc-multilib
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags || '' }}
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: cargo clippy
-        run: cargo clippy --locked --all-targets --features serde,heapless,arrayvec -- -D warnings
+      - name: cargo clippy (${{ matrix.target }})
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags || '' }}
+        run: cargo clippy --locked --target ${{ matrix.target }} ${{ matrix.cargo_args }} -- -D warnings
 
   fmt:
     name: Format
