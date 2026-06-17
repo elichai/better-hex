@@ -17,16 +17,16 @@ fn encode_to_slice_inner<'a>(input: &[u8], output: &'a mut [u8], upper: bool) ->
 ///
 /// Returns [`Error::InvalidLength`] if `output.len() != input.len() * 2`.
 #[inline]
-pub fn encode_to_slice<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a mut str, Error> {
-    encode_to_slice_inner(input, output, false)
+pub fn encode_to_slice(input: impl AsRef<[u8]>, output: &mut [u8]) -> Result<&mut str, Error> {
+    encode_to_slice_inner(input.as_ref(), output, false)
 }
 
 /// Encode bytes to uppercase hex into `output`. Returns the hex string.
 ///
 /// Returns [`Error::InvalidLength`] if `output.len() != input.len() * 2`.
 #[inline]
-pub fn encode_to_slice_upper<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a mut str, Error> {
-    encode_to_slice_inner(input, output, true)
+pub fn encode_to_slice_upper(input: impl AsRef<[u8]>, output: &mut [u8]) -> Result<&mut str, Error> {
+    encode_to_slice_inner(input.as_ref(), output, true)
 }
 
 /// Encode bytes to lowercase hex into any [`HexTarget`].
@@ -43,7 +43,7 @@ pub fn encode_to_slice_upper<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&
 /// let s: String = better_hex::encode(&[0xde, 0xad]).unwrap();
 /// assert_eq!(s, "dead");
 /// ```
-pub fn encode<T: HexTarget>(input: &[u8]) -> Result<T, T::Error> {
+pub fn encode<T: HexTarget>(input: impl AsRef<[u8]>) -> Result<T, T::Error> {
     T::encode_hex(input)
 }
 
@@ -57,7 +57,7 @@ pub fn encode<T: HexTarget>(input: &[u8]) -> Result<T, T::Error> {
 /// let s: String = better_hex::encode_upper(&[0xde, 0xad]).unwrap();
 /// assert_eq!(s, "DEAD");
 /// ```
-pub fn encode_upper<T: HexTarget>(input: &[u8]) -> Result<T, T::Error> {
+pub fn encode_upper<T: HexTarget>(input: impl AsRef<[u8]>) -> Result<T, T::Error> {
     T::encode_hex_upper(input)
 }
 
@@ -73,7 +73,7 @@ pub fn encode_upper<T: HexTarget>(input: &[u8]) -> Result<T, T::Error> {
 /// ```
 #[cfg(feature = "alloc")]
 #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
-pub fn encode_string(input: &[u8]) -> alloc::string::String {
+pub fn encode_string(input: impl AsRef<[u8]>) -> alloc::string::String {
     let Ok(s) = encode(input);
     s
 }

@@ -147,7 +147,7 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     /// not a valid hex character.
     pub fn from_hex<const M: usize>(hex: [u8; M]) -> Option<Self> {
         const { assert!(M == N * 2, "hex input length must equal N * 2") };
-        if !crate::check(&hex) {
+        if !crate::check(hex.as_slice()) {
             return None;
         }
         // SAFETY: `crate::check` confirmed all bytes are valid hex ASCII.

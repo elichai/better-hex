@@ -53,13 +53,13 @@ pub fn decode<T: FromHex>(input: impl AsRef<[u8]>) -> Result<T, T::Error> {
 /// constant-time behavior w.r.t. input data values. Callers must not rely
 /// on `output` contents after a failed decode.
 #[inline]
-pub fn decode_to_slice<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a [u8], Error> {
+pub fn decode_to_slice(input: impl AsRef<[u8]>, output: &mut [u8]) -> Result<&[u8], Error> {
     // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`; the pointer cast
     // preserves the slice length. Treating initialized `u8` as `MaybeUninit<u8>`
     // is always valid (widening the validity invariant). The backend will
     // overwrite every element on success.
     let mu_output = maybe_uninit::slice_as_uninit_mut(output);
-    backend::decode(input, mu_output)?;
+    backend::decode(input.as_ref(), mu_output)?;
     Ok(output)
 }
 
@@ -73,7 +73,8 @@ pub fn decode_to_slice<'a>(input: &[u8], output: &'a mut [u8]) -> Result<&'a [u8
 /// [crate-level performance note](crate#performance-const-fn-vs-runtime-apis).
 /// For compile-time validation use [`const_check`](crate::const_check).
 #[inline]
-pub fn check(input: &[u8]) -> bool {
+pub fn check(input: impl AsRef<[u8]>) -> bool {
+    let input = input.as_ref();
     input.len().is_multiple_of(2) && backend::check(input)
 }
 

@@ -56,7 +56,7 @@ fn decode_error_paths() {
     // Boundary chars just outside valid hex ranges
     for &byte in b"/:@G`g" {
         let mut out = [0u8; 1];
-        assert!(better_hex::decode_to_slice(&[b'0', byte], &mut out).is_err());
+        assert!(better_hex::decode_to_slice([b'0', byte], &mut out).is_err());
     }
 
     // check rejects odd length
@@ -65,14 +65,14 @@ fn decode_error_paths() {
     // encode wrong output size
     let mut buf = [0u8; 3];
     assert!(matches!(
-        better_hex::encode_to_slice(&[0xab, 0xcd], &mut buf),
+        better_hex::encode_to_slice([0xab, 0xcd], &mut buf),
         Err(Error::InvalidLength { expected: 4, got: 3 })
     ));
 
     // Processes all bytes (invalid at start and end → same error)
     #[cfg(feature = "alloc")]
     {
-        let mut hex = better_hex::encode_string(&[0u8; 32]);
+        let mut hex = better_hex::encode_string([0u8; 32]);
         let bytes = unsafe { hex.as_bytes_mut() };
         bytes[0] = b'Z';
         bytes[63] = b'Z';
@@ -119,7 +119,7 @@ fn decode_processes_all_bytes_proof() {
         bad_hex[inject_pos] = b'Z'; // not a valid hex char
 
         let mut output = [0xFFu8; N]; // fill with sentinel
-        let result = better_hex::decode_to_slice(&bad_hex, &mut output);
+        let result = better_hex::decode_to_slice(bad_hex, &mut output);
         assert_eq!(
             result.unwrap_err(),
             Error::InvalidEncoding,
@@ -381,7 +381,7 @@ fn arrayvec_capacity_overflow() {
 #[test]
 fn heapless_oversized_container_ok() {
     // Variable-length containers with more capacity than needed should succeed.
-    let s: heapless::String<100> = better_hex::encode(&[0xab]).unwrap();
+    let s: heapless::String<100> = better_hex::encode([0xab]).unwrap();
     assert_eq!(&*s, "ab");
     let v: heapless::Vec<u8, 100> = better_hex::decode(b"ab").unwrap();
     assert_eq!(&*v, &[0xab]);
@@ -391,7 +391,7 @@ fn heapless_oversized_container_ok() {
 #[test]
 fn arrayvec_oversized_container_ok() {
     // Variable-length containers with more capacity than needed should succeed.
-    let s: arrayvec::ArrayString<100> = better_hex::encode(&[0xab]).unwrap();
+    let s: arrayvec::ArrayString<100> = better_hex::encode([0xab]).unwrap();
     assert_eq!(&*s, "ab");
     let v: arrayvec::ArrayVec<u8, 100> = better_hex::decode(b"ab").unwrap();
     assert_eq!(&*v, &[0xab]);

@@ -247,7 +247,7 @@ proptest! {
 
     #[test]
     fn const_decode_matches_runtime_decode_array(input in any::<[u8; 32]>()) {
-        let hex: String = better_hex::encode(&input).unwrap();
+        let hex: String = better_hex::encode(input).unwrap();
         let const_result = better_hex::const_decode_to_array::<32>(hex.as_bytes()).unwrap();
         let runtime_result = better_hex::decode::<[u8; 32]>(hex.as_bytes()).unwrap();
         prop_assert_eq!(const_result, runtime_result);
