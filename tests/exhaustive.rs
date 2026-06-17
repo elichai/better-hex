@@ -199,24 +199,26 @@ fn hex_str_roundtrip_sizes() {
         let input = fill_input(rng, N);
         let arr: [u8; N] = input.as_slice().try_into().unwrap();
         // Exercise both decoders at every size. `decode` is SIMD +
-        // `unwrap_unchecked`; `const_decode` is the scalar `Result`-returning
-        // const path. Calling `const_decode` at runtime routes its raw-pointer
-        // scalar decode through Miri (const-context callers never do). For any
-        // constructed `HexStr` the hex-ASCII invariant guarantees `Ok`.
+        // `unwrap_unchecked`; `const_decode` is the scalar const mirror, which
+        // collapses its always-`Ok` result with `unreachable_unchecked`.
+        // Calling `const_decode` at runtime routes that unchecked scalar path
+        // through Miri (const-context callers never do): for any constructed
+        // `HexStr` the invariant holds, so the `unreachable_unchecked` branch
+        // must stay unreached — N == 0 included.
         let lower: HexStr<N> = HexStr::encode_lower(&arr);
         assert_eq!(lower.decode(), arr);
-        assert_eq!(lower.const_decode().unwrap(), arr);
+        assert_eq!(lower.const_decode(), arr);
         let upper: HexStr<N> = HexStr::encode_upper(&arr);
         assert_eq!(upper.decode(), arr);
-        assert_eq!(upper.const_decode().unwrap(), arr);
+        assert_eq!(upper.const_decode(), arr);
         // Prefixed variants — decode must ignore the "0x" prefix.
         let p_lower: PrefixedHexStr<N> = HexStr::encode_lower(&arr);
         assert_eq!(p_lower.decode(), arr);
-        assert_eq!(p_lower.const_decode().unwrap(), arr);
+        assert_eq!(p_lower.const_decode(), arr);
         assert!(p_lower.as_str().starts_with("0x"));
         let p_upper: PrefixedHexStr<N> = HexStr::encode_upper(&arr);
         assert_eq!(p_upper.decode(), arr);
-        assert_eq!(p_upper.const_decode().unwrap(), arr);
+        assert_eq!(p_upper.const_decode(), arr);
         assert!(p_upper.as_str().starts_with("0x"));
     }
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
