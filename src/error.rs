@@ -26,7 +26,7 @@ impl fmt::Display for Error {
 }
 
 #[cfg(feature = "std")]
-impl std::error::Error for Error {}
+impl core::error::Error for Error {}
 
 impl From<core::convert::Infallible> for Error {
     #[inline]

@@ -87,3 +87,21 @@ required-features = ["alloc"]
 name = "compare"
 harness = false
 required-features = ["alloc"]
+
+# Lint policy. Tier 1: zero-churn lints valuable for an unsafe-heavy, no_std,
+# constant-time crate. `pedantic`/`nursery`/`restriction` are deliberately not
+# enabled as groups (too noisy here — deliberate `#[inline(always)]` and
+# branchless truncating casts); individual high-value lints are cherry-picked.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"   # warn-by-default in edition 2024; lock it in.
+unused_unsafe = "deny"            # an inert `unsafe` block is stale safety reasoning.
+
+# Crate-wide (lib + tests + benches). The no_std-hygiene lints
+# (`std_instead_of_*`) are NOT here — they belong on the lib only and are set
+# via `#![warn(...)]` in src/lib.rs, since tests/benches are std binaries.
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+ptr_as_ptr = "warn"                  # prefer `.cast()` over `as` in pointer code.
+ptr_cast_constness = "warn"
+borrow_as_ptr = "warn"
+mem_forget = "warn"                  # would defeat the set_len / MaybeUninit init contracts.
