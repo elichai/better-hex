@@ -247,10 +247,9 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
 
     /// Decode the hex content back to raw bytes at compile time.
     ///
-    /// Returns `Ok([u8; N])` for any value constructed through the normal
-    /// constructors (which maintain the hex-ASCII invariant). The `Result`
-    /// is kept so the decoder's internal error accumulation path remains
-    /// expressible in `const`.
+    /// Infallible: every `HexStr` constructor upholds the hex-ASCII invariant
+    /// and `as_bytes_no_prefix` yields exactly `2 * N` bytes, so the decode
+    /// always succeeds. This is the `const` mirror of [`decode`](Self::decode).
     ///
     /// # Performance
     ///
@@ -258,11 +257,19 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     /// decoding prefer [`HexStr::decode`] which uses SIMD.
     ///
     /// [crate-level performance note]: crate#performance-const-fn-vs-runtime-apis
-    pub const fn const_decode(&self) -> Result<[u8; N], Error> {
+    pub const fn const_decode(&self) -> [u8; N] {
         let hex_bytes = self.as_bytes_no_prefix();
         debug_assert!(const_check(hex_bytes), "HexStr contained invalid hex bytes");
-        // SAFETY: We've const asserted that the bytes are valid hex ASCII, so this constructor's invariant is upheld and the decode will succeed.
-        const_decode_to_array(hex_bytes)
+        match const_decode_to_array(hex_bytes) {
+            Ok(arr) => arr,
+            // SAFETY: every constructor upholds the hex-ASCII invariant and
+            // `as_bytes_no_prefix` is exactly `2 * N` bytes, so the decode never
+            // errors. Hand-inlines `Result::unwrap_unchecked` (not const-stable)
+            // via the const-stable `unreachable_unchecked`, mirroring `decode`'s
+            // discriminant elimination so this stays branch-free — and thus
+            // constant-time — when called at runtime.
+            Err(_) => unsafe { core::hint::unreachable_unchecked() },
+        }
     }
 }
 
