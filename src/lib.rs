@@ -1,5 +1,12 @@
 #![no_std]
 #![warn(missing_docs)]
+// no_std hygiene — lib-only (tests/benches are std binaries, so these can't go
+// in Cargo.toml `[lints]`, which applies to every target).
+#![warn(
+    clippy::std_instead_of_core,
+    clippy::std_instead_of_alloc,
+    clippy::alloc_instead_of_core
+)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 //! Fast, constant-time hex encoding and decoding with SIMD and `const fn`.
 //!
