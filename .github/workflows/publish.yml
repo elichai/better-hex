@@ -37,28 +37,26 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # push tags + create GitHub Releases
+      pull-requests: read # detect the release PR and its commits
       id-token: write # crates.io Trusted Publishing (OIDC)
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0 # release-plz needs full history
+          persist-credentials: false
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Authenticate to crates.io (OIDC)
-        id: auth
-        uses: rust-lang/crates-io-auth-action@v1.0.5
-
+      # No crates-io-auth-action / CARGO_REGISTRY_TOKEN: given id-token: write,
+      # release-plz performs the crates.io OIDC token exchange itself.
       - name: Run release-plz
         uses: release-plz/action@v0.5
         with:
           command: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # release-plz invokes `cargo publish`, which reads this env var.
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
   # Maintains the version-bump + changelog PR. Runs cargo-semver-checks so a
   # breaking API change is reflected in the proposed version.
@@ -74,21 +72,16 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      # release-plz compares the public API against the last published version
-      # via cargo-semver-checks. Install it explicitly so the check always runs
-      # (the first 1.0.0 release has no baseline, so it only bites from 1.0.1).
-      - name: Install cargo-semver-checks
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-semver-checks
-
+      # release-plz/action bundles cargo-semver-checks, so a breaking API change
+      # is reflected in the proposed version with no separate install step.
       - name: Run release-plz
         uses: release-plz/action@v0.5
         with:
