@@ -1,0 +1,227 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [1.0.0](https://github.com/elichai/better-hex/compare/v0.1.0...v1.0.0) - 2026-06-17
+
+### Added
+
+- *(serde)* alloc-free serialize for fixed-size byte arrays
+- AVX-512 VBMI encode (vpermi2b), BW decode (vpmovwb), two-tier dispatch
+- add FromHex impl for Cow<'_, [u8]>, enabling serde support
+- add missing check_avx2/ct_check_avx2 — 32 bytes per iteration
+- AVX-512BW check + dispatch (AVX-512 > AVX2 > SSSE3)
+- AVX-512BW decode — Lemire 2023 at 512-bit
+- AVX-512BW encode — 64 bytes per iteration
+- generic decode_to<T: FromHex>, heapless/arrayvec FromHex impls
+- HexTarget trait + ToHex/FromHex traits with tests
+- add serde, heapless, arrayvec optional deps and feature flags
+- expose backend internals for benchmarks and fuzzing
+- public ct module — constant-time encode/decode/check
+- constant-time backend — ct_scalar + const SHORT_CIRCUIT SIMD
+- x86 CT decode/check via const SHORT_CIRCUIT generic
+- WASM CT decode/check via const SHORT_CIRCUIT generic
+- constant-time scalar encode/decode/check with branchless arithmetic
+- x86 SSSE3/AVX2 backend — encode/decode/check
+- WASM SIMD128 backend — encode/decode/check
+- AArch64 NEON backend — encode/decode/check 16 bytes at a time
+- SIMD dispatch infrastructure with cpufeatures
+- const fn encode/decode for compile-time hex
+- HexStr<N, P> type with encode, decode, Display, FromStr
+- scalar encode/decode/check with LUTs, public free functions, tests
+- NoPrefix and WithPrefix types with sealed Prefix trait
+- Error type with Display impl and tests
+- project skeleton with Cargo.toml, features, and lib.rs
+
+### Fixed
+
+- *(wasm)* wrap pointer arithmetic in unsafe blocks, gate CI on warnings
+- *(ct)* accept unsafe fn pointer in test_check_ct
+- *(neon)* annotate unsafe intrinsic wrappers with target_feature
+- *(x86)* make encode_avx512 target_feature explicit about BW
+- *(wasm)* drop stale UPPER const-generic turbofish in test
+- AVX-512 encode and decode cross-lane permutations
+- CT prefix validation, read-only PR bench permissions
+- bottom-up x86 detection, document decode-on-error, gate bench_internals
+- benchmark fairness and mixed-case hex inputs
+- register all fuzz targets, fix oracle odd-length gap, sync CI
+- avoid restarting x86 decode from byte 0 on invalid SIMD chunk
+- PrefixedHexStr FromStr, ct::check even-length, Container errors
+- resolve all clippy warnings across feature powerset
+- update benchmarks for ptr-based backend API
+- reject undersized inputs in HexStr Container impl
+- gate alloc-dependent code and tests behind feature flags
+- CT decode always processes tail, InvalidChar.index is absolute
+- heapless 0.9 API compat, trim bench sizes, add max-tail sizes
+- proptest default-features for WASM compatibility
+- x86 decode delta_rebase table — missing entry at hash index 2
+
+### Other
+
+- fix release-plz action refs that fail to resolve
+- *(deps)* bump the github-actions group with 2 updates
+- *(deps)* bump the cargo-minor-patch group with 5 updates
+- document close-and-reopen for release-PR CI (no PAT)
+- set initial release version to 1.0.0
+- add release-plz workflow to publish on release
+- add Dependabot for cargo and github-actions
+- drop Intel SDE AVX-512 jobs (covered by Miri)
+- *(readme)* describe what oracle actually fuzzes
+- *(backend)* correct stale comments in neon, wasm, and x86 backends
+- *(miri)* replay fuzz corpus through fuzz_target bodies under Miri
+- *(readme)* drop outdated note about Miri AVX-512 nightly minimum
+- *(miri)* cover AVX-512 BW and VBMI backends under Miri
+- enforce -D warnings on doctest compilation
+- *(api)* enable doc_cfg feature badges on docs.rs
+- *(api)* expand rustdocs for public traits and const-fn entry points
+- *(readme)* add testing section covering fuzzing and miri
+- *(ct)* inline CT helpers and reuse input/output buffers
+- *(neon)* hoist horizontal reduce out of decode_inner loop
+- *(avx2)* fuse two-chunk packus + vpermq in decode hot loop
+- replace macOS arm64 runners with Linux arm64 (Cobalt), add aarch64 bench coverage
+- *(neon)* hoist horizontal reduce + invert out of check_inner loop
+- drop valgrind suppressions by exposing raw error accumulators
+- *(ci)* seed corpus from fuzz-corpus orphan branch and push back additions
+- cut CI runtime by alternating upper/lower in encode and trimming sizes
+- pin nightly toolchain, install cargo-fuzz with stable, slow schedule to 3d
+- x86-64 backend: Use cmov for the hex lut
+- spell out case-insensitive decode and case-asymmetry of the API
+- *(prop)* add coverage for upper/mixed-case decode, const fn parity, and array serde
+- thread rng through one-shot generic helpers, drop make_input
+- persist Xoshiro rng across loop iterations for fresh inputs
+- replace synthetic input generators with rand_xoshiro
+- switch AVX-512 emulation from qemu-user to Intel SDE
+- run AVX-512 tests under qemu-user instead of best-effort
+- *(bench)* reduce criterion sample-size and measurement time
+- cap exhaustive loop sizes under cfg!(miri)
+- *(miri)* mirror RUSTFLAGS as RUSTDOCFLAGS for doc-tests
+- *(miri)* install cross toolchains for i686 and aarch64 matrix entries
+- rustfmt fixup for decode_no_length_check signature
+- *(ct-valgrind)* bypass dispatch .map_err in HexStr::decode path
+- *(wasm)* drop criterion default features to avoid rayon on wasi32
+- *(ct-valgrind)* keep HexStr::decode branch-free, rewrite hex_str_ct test
+- fix unresolved intra-doc link to WithPrefix
+- *(serde)* lift hex serde adapter into ToHex::serialize
+- consolidate big ideas into README and code, drop DESIGN.md
+- drop landed plans, add fuzz coverage helper
+- consolidate bench buffers and sync fuzz docs
+- *(neon)* drop unnecessary unsafe blocks; relocate misplaced doc
+- prefer for-loop and clamp idioms
+- *(compare)* rename check group, hex-byte throughput, anchor writes
+- *(traits)* rename group to to_hex; split serde into vec + array
+- *(encode,decode)* use common::as_uninit_mut helper
+- *(common)* add ArrayBuffers, JsonHexTemplate, as_uninit_mut helpers
+- extract cargo-fuzz invocation into fuzz/fuzz.sh
+- *(fuzz)* build with --careful + ASan and add aarch64 runners
+- align throughput semantics and document narrow oracles
+- clarify Container empty-handle invariant and FromStr length errors
+- *(encode)* add upper/lower axis across all backends
+- *(ct)* add AVX-512 suppressions and anchor patterns to crate
+- add exhaustive byte-value coverage
+- tighten CT scope description in README
+- *(ct)* verify check() runs branch-free on invalid input
+- drop cfg-if dep; use plain cfg-gated returns/fns in platform
+- swap zerocopy for bytemuck; reduce unsafe in const paths
+- consolidate Container unsafe; make HexStr accessors const
+- Add history to gitignore
+- make scalar decode const, add public const_encode, simplify helpers
+- replace UPPER const generic with runtime bool parameter
+- add explicit x86 SSSE3/AVX2/AVX-512 backend benchmarks
+- add runtime HexStr tests, enable all features in Miri CI
+- add Prefix::strip_prefix, unify prefix checking
+- make scalar decode_inner and check const fn, remove duplication
+- rewrite CT Valgrind tests with crabgrind, direct backend calls
+- upgrade base16ct dev-dependency from 0.2 to 1.0
+- use required-features in Cargo.toml, remove panic stubs from benchmarks
+- reduce allocation noise in comparison benchmarks
+- simplify write_hex_to to use slice narrowing instead of pos offset
+- consolidate serde into single file, remove FromHexHelper
+- simplify SIMD loops to use pointer advancement and remaining-length
+- return raw error accumulator from decode_inner functions
+- improve inlining across backends
+- add target-feature safety requirements to x86 helper functions
+- add Valgrind-based constant-time verification
+- cargo fmt && cargo update
+- gitignore bench_results/
+- add .unwrap() to Result-discarding benchmarks, add base16ct comparison
+- add security note about action pinning, increase fuzz duration
+- prove decode processes all bytes, add invalid-input property tests
+- use branchless scalar nibble fns in const_decode/const_check
+- rename ct_ prefixed internal functions, fix leftover serde bench
+- update all documentation for CT-only design
+- remove CT comparison benchmarks, single-path only
+- update all tests for CT-only error types and single path
+- simplify serde to single CT path, delete ct submodule
+- remove all non-CT paths, unify to single constant-time backend
+- gitignore .claude/settings.local.json
+- wrap platform transmutes in named const fn helpers
+- replace hardcoded SIMD positions with exhaustive position loop
+- assert exact error content in container overflow tests
+- add SIMD chunk boundary decode tests
+- add display/traits bench targets, enable AVX-512 test execution
+- skip runtime CPUID on compile-time-known SIMD platforms
+- use casefold per-nibble for ct_scalar decode, keep SWAR in benchmarks
+- enforce single-call-depth inlining across backends
+- use maybe_uninit helpers, fix heapless capacity
+- remove redundant caller-side length checks
+- dispatch encode/decode return Result, validate lengths
+- change backend encode/decode to accept (ptr, ptr, len)
+- replace 3-range ct_decode_nibble with case-fold variant
+- rustfmt bench and backend code
+- replace bytemuck with zerocopy, move bench deps to dev-dependencies
+- Add from_hex, from_hex_unchecked, and const_from_hex constructors to HexStr
+- Fix no-alloc compilation cfgs
+- replace nested cfg_if dispatch with Platform enum + atomic cache
+- add REQUIRES_UTF8 guard, Container Handle type, HexStr Container/HexTarget impls
+- update Cargo.lock for serde_test dev-dependency
+- improve unsafe safety documentation across crate
+- add serde_test, const-generic array wrappers for serde tests
+- replace test macros with inner const-generic functions
+- consolidate tests further, simplify fuzz targets
+- consolidate into 3 files with exhaustive size loops
+- reduce public API surface and add ct::FromHex trait
+- add case-fold CT nibble decoder variant to decode benchmarks
+- migrate to cycling Buffers pool for reduced branch prediction
+- add #[inline] consistently, use get_unchecked in SIMD tails
+- refactor benchmarks with shared common module and deterministic RNG
+- apply clippy lints and tighten const assertions
+- add backend unit tests for NEON/WASM, fix x86 tests for Miri
+- overhaul test matrix, switch to rust-cache, add --locked
+- add README.md and crate-level attributions
+- inline encode/decode, merge decode error branches, fix display benchmark
+- move encode_to/encode_upper_to into encode.rs, delete hex_target.rs
+- consolidate HexTarget + Container into traits.rs, fix docs
+- use as_chunks_mut::<2>() instead of chunks_exact_mut(2) in scalar encode
+- eliminate scalar encode bounds checks via chunks_exact_mut
+- eliminate bounds checks in scalar encode without unsafe
+- rename force-generic → disable-simd, fix bench workflow
+- fill coverage gaps — hex_str fmt, serde visitors, display alt
+- fill remaining coverage gaps — hex_str fmt impls, serde array deser, display alt
+- GitHub Actions — tests matrix, fuzz smoke, benchmarks, codecov
+- GitHub Actions matrix — tests, coverage, clippy, fmt, docs
+- heapless/arrayvec/serde CT coverage tests, fix arrayvec encode bug
+- 2x-unroll NEON encode loop and use overlapping tail
+- trim benchmark sizes, remove 1/16/128/512 keep 4/32/64/256/1024/4096/16384
+- comprehensive comparison vs const-hex, faster-hex, hex crate
+- remove cfg-gated use statements from hex_target.rs
+- const UPPER in write_hex_to, consolidate unsafe into maybe_uninit
+- make HexTarget a safe trait
+- consolidate encoding paths, unify write_hex_to
+- DisplayHex buffer sizes, encode_to vs encode, serde fast vs CT
+- x86 decode — fuse movemask calls, hoist constants
+- NEON decode — fuse vmaxvq_u8 calls, hoist broadcast constants
+- encode/decode oracle, roundtrip, and length-mismatch targets
+- encode/decode/check benchmarks — scalar, ct_scalar, NEON, dispatched
+- simplify proptest WASM compat, bump cpufeatures to 0.3
+- boundary-length tests at SIMD chunk edges
+- cross-backend property tests — SIMD vs scalar oracle
+- reduce DEFAULT_FMT_BUF to 256, cleanup user edits
+- MaybeUninit backends, consolidated constructors, full docs
+- bytemuck inner type, rename backend/scalar, remove OddLength, debug assertions, rustdocs
+- fix clippy warnings — use is_multiple_of()
+- alloc-gated tests and no_std verification
