@@ -25,7 +25,8 @@ impl fmt::Display for Error {
     }
 }
 
-#[cfg(feature = "std")]
+// `core::error::Error` lives in `core` (stable since 1.81), so this impl is
+// unconditional — available in `no_std` builds too, not just with `std`.
 impl core::error::Error for Error {}
 
 impl From<core::convert::Infallible> for Error {
