@@ -16,7 +16,6 @@ jobs:
   test:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.allow_failure || false }}
     strategy:
       fail-fast: false
       matrix:
@@ -160,39 +159,8 @@ jobs:
         run: cargo test --locked --target wasm32-wasip1 --no-default-features --features alloc,serde,heapless,arrayvec
 
   clippy:
-    name: ${{ matrix.name }}
+    name: Clippy
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # x86_64 covers the SSSE3 / AVX2 / AVX-512BW / AVX-512 VBMI backends:
-          # `src/backend/x86.rs` is gated only on `target_arch`, not on any
-          # `target_feature`, so the whole module (every `#[target_feature]`
-          # function) is type-checked without RUSTFLAGS toggles.
-          - name: Clippy (x86_64)
-            target: x86_64-unknown-linux-gnu
-            cargo_args: --all-targets --features serde,heapless,arrayvec
-
-          # 32-bit x86 reuses the same arch-gated `src/backend/x86.rs`.
-          - name: Clippy (i686)
-            target: i686-unknown-linux-gnu
-            cargo_args: --all-targets --features serde,heapless,arrayvec
-
-          # NEON is baseline on aarch64 (target_feature="neon" is on by
-          # default), so `src/backend/neon.rs` is linted without RUSTFLAGS.
-          - name: Clippy (aarch64 NEON)
-            target: aarch64-unknown-linux-gnu
-            cargo_args: --all-targets --features serde,heapless,arrayvec
-
-          # wasm32 is no_std (no `std` feature) and `simd128` is not a default
-          # target-feature, so `src/backend/wasm.rs` only compiles with
-          # `+simd128`. `--all-targets` would pull std-only tests/benches, so
-          # lint the library surface only with the no_std-compatible features.
-          - name: Clippy (wasm32 SIMD128)
-            target: wasm32-unknown-unknown
-            rustflags: -C target-feature=+simd128
-            cargo_args: --lib --no-default-features --features alloc,serde,heapless,arrayvec
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -201,26 +169,64 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-          targets: ${{ matrix.target }}
+          targets: i686-unknown-linux-gnu, aarch64-unknown-linux-gnu, wasm32-unknown-unknown
 
       # `--all-targets` pulls in benches/tests whose dev-dep chain (criterion ->
-      # alloca) has a C build script; the 32-bit cross build needs the multilib
-      # headers (`gnu/stubs-32.h`). Same install the Miri i686 job uses.
-      - name: Install i686 cross toolchain
-        if: matrix.target == 'i686-unknown-linux-gnu'
-        run: sudo apt-get update && sudo apt-get install -y gcc-multilib
+      # alloca) has a C build script. The i686 build needs the 32-bit multilib
+      # headers (`gnu/stubs-32.h`); the aarch64 cross build needs its own
+      # `aarch64-linux-gnu-gcc`.
+      - name: Install cross C toolchains
+        run: sudo apt-get update && sudo apt-get install -y gcc-multilib gcc-aarch64-linux-gnu
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
-        env:
-          RUSTFLAGS: ${{ matrix.rustflags || '' }}
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: cargo clippy (${{ matrix.target }})
+      # Each target runs even if an earlier one fails (continue-on-error); the
+      # final gate fails the job if any did, so one run surfaces every target's
+      # lints instead of stopping at the first.
+
+      # x86_64 covers the SSSE3 / AVX2 / AVX-512BW / AVX-512 VBMI backends:
+      # `src/backend/x86.rs` is gated only on `target_arch`, not on any
+      # `target_feature`, so the whole module (every `#[target_feature]`
+      # function) is type-checked without RUSTFLAGS toggles.
+      - name: Clippy (x86_64)
+        id: x86_64
+        continue-on-error: true
+        run: cargo clippy --locked --target x86_64-unknown-linux-gnu --all-targets --features serde,heapless,arrayvec -- -D warnings
+
+      # 32-bit x86 reuses the same arch-gated `src/backend/x86.rs`.
+      - name: Clippy (i686)
+        id: i686
+        continue-on-error: true
+        run: cargo clippy --locked --target i686-unknown-linux-gnu --all-targets --features serde,heapless,arrayvec -- -D warnings
+
+      # NEON is baseline on aarch64 (target_feature="neon" is on by default),
+      # so `src/backend/neon.rs` is linted without RUSTFLAGS.
+      - name: Clippy (aarch64 NEON)
+        id: aarch64
+        continue-on-error: true
+        run: cargo clippy --locked --target aarch64-unknown-linux-gnu --all-targets --features serde,heapless,arrayvec -- -D warnings
+
+      # wasm32 is no_std (no `std` feature) and `simd128` is not a default
+      # target-feature, so `src/backend/wasm.rs` only compiles with `+simd128`.
+      # `--all-targets` would pull std-only tests/benches, so lint the library
+      # surface only with the no_std-compatible features.
+      - name: Clippy (wasm32 SIMD128)
+        id: wasm32
+        continue-on-error: true
         env:
-          RUSTFLAGS: ${{ matrix.rustflags || '' }}
-        run: cargo clippy --locked --target ${{ matrix.target }} ${{ matrix.cargo_args }} -- -D warnings
+          RUSTFLAGS: -C target-feature=+simd128
+        run: cargo clippy --locked --target wasm32-unknown-unknown --lib --no-default-features --features alloc,serde,heapless,arrayvec -- -D warnings
+
+      - name: Fail if any clippy target failed
+        if: >-
+          steps.x86_64.outcome == 'failure'
+          || steps.i686.outcome == 'failure'
+          || steps.aarch64.outcome == 'failure'
+          || steps.wasm32.outcome == 'failure'
+        run: exit 1
 
   fmt:
     name: Format
