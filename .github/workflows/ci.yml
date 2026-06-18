@@ -172,46 +172,35 @@ jobs:
       # instead of stopping at the first.
 
       # Feature combinations only vary library code, so lint the full feature
-      # powerset once on the host. `--lib` (not `--all-targets`): the
-      # no-default-features combo can't compile the alloc-only integration
-      # tests. `_bench_*`/`ct-test` are bench/valgrind internals, not public.
-      - name: Clippy (x86_64 feature powerset)
+      # powerset across all std targets at once: cargo hack forwards every
+      # `--target` to each clippy run, so each combo is checked on x86_64,
+      # i686, and aarch64 (covering the arch-gated x86 and NEON backends).
+      # `--lib` (not `--all-targets`): the no-default-features combo can't
+      # compile the alloc-only integration tests, and `--lib` avoids the
+      # criterion -> alloca dev-dep whose C build script needs a cross C
+      # toolchain. `_bench_*`/`ct-test` are bench/valgrind internals, not public.
+      - name: Clippy (feature powerset, std targets)
         id: powerset
         continue-on-error: true
         run: >-
           cargo hack --feature-powerset
           --exclude-features default,_bench_internals,_bench_base16ct,_bench_const_hex,_bench_faster_hex,_bench_hex,ct-test
-          clippy --locked --lib --target x86_64-unknown-linux-gnu -- -D warnings
+          clippy --locked --lib
+          --target x86_64-unknown-linux-gnu
+          --target i686-unknown-linux-gnu
+          --target aarch64-unknown-linux-gnu
+          -- -D warnings
 
-      # Lint the tests/benches once, with all features, on the host. x86_64
-      # covers the SSSE3 / AVX2 / AVX-512BW / AVX-512 VBMI backends:
-      # `src/backend/x86.rs` is gated only on `target_arch`, not on any
-      # `target_feature`, so the whole module is type-checked without toggles.
+      # Lint the tests/benches once, with all features, on the host (native
+      # toolchain). The arch-gated backends are covered by the powerset above;
+      # tests/benches are target-independent, so the host run suffices.
       - name: Clippy (x86_64 all-targets)
         id: alltargets
         continue-on-error: true
         run: cargo clippy --locked --all-targets --target x86_64-unknown-linux-gnu --features serde,heapless,arrayvec -- -D warnings
 
-      # Cross targets only add backend coverage (feature-gated code is target-
-      # independent and already covered by the powerset above), so one
-      # all-features `--lib` pass each is enough. `--lib` also avoids the
-      # criterion -> alloca dev-dep whose C build script needs a cross C
-      # toolchain.
-
-      # 32-bit x86 reuses the same arch-gated `src/backend/x86.rs`.
-      - name: Clippy (i686)
-        id: i686
-        continue-on-error: true
-        run: cargo clippy --locked --lib --target i686-unknown-linux-gnu --features serde,heapless,arrayvec -- -D warnings
-
-      # NEON is baseline on aarch64 (target_feature="neon" is on by default).
-      - name: Clippy (aarch64 NEON)
-        id: aarch64
-        continue-on-error: true
-        run: cargo clippy --locked --lib --target aarch64-unknown-linux-gnu --features serde,heapless,arrayvec -- -D warnings
-
-      # wasm32 is no_std; `simd128` is not a default target-feature, so
-      # `src/backend/wasm.rs` only compiles with `+simd128`.
+      # wasm32 is no_std and `simd128` is not a default target-feature, so it
+      # can't ride the std powerset above; lint `src/backend/wasm.rs` here.
       - name: Clippy (wasm32 SIMD128)
         id: wasm32
         continue-on-error: true
@@ -223,8 +212,6 @@ jobs:
         if: >-
           steps.powerset.outcome == 'failure'
           || steps.alltargets.outcome == 'failure'
-          || steps.i686.outcome == 'failure'
-          || steps.aarch64.outcome == 'failure'
           || steps.wasm32.outcome == 'failure'
         run: exit 1
 
