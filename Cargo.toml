@@ -105,3 +105,4 @@ ptr_as_ptr = "warn"                  # prefer `.cast()` over `as` in pointer cod
 ptr_cast_constness = "warn"
 borrow_as_ptr = "warn"
 mem_forget = "warn"                  # would defeat the set_len / MaybeUninit init contracts.
+cast_lossless = "warn"               # prefer `From` over `as` for widening casts (non-const sites).

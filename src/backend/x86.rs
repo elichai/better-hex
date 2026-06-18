@@ -545,7 +545,7 @@ pub unsafe fn check_ssse3_inner(mut input: &[u8]) -> i32 {
             input = input.get_unchecked(16..);
         }
 
-        err_accum | scalar::check_inner(input) as i32
+        err_accum | i32::from(scalar::check_inner(input))
     }
 }
 
@@ -867,7 +867,7 @@ pub unsafe fn check_avx512_inner(mut input: &[u8]) -> u64 {
         }
 
         // Cast through u32 to avoid sign-extending a negative i32 accumulator.
-        err_accum | check_avx2_inner(input) as u32 as u64
+        err_accum | u64::from(check_avx2_inner(input) as u32)
     }
 }
 
