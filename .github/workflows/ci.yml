@@ -171,13 +171,6 @@ jobs:
           components: clippy
           targets: i686-unknown-linux-gnu, aarch64-unknown-linux-gnu, wasm32-unknown-unknown
 
-      # `--all-targets` pulls in benches/tests whose dev-dep chain (criterion ->
-      # alloca) has a C build script. The i686 build needs the 32-bit multilib
-      # headers (`gnu/stubs-32.h`); the aarch64 cross build needs its own
-      # `aarch64-linux-gnu-gcc`.
-      - name: Install cross C toolchains
-        run: sudo apt-get update && sudo apt-get install -y gcc-multilib gcc-aarch64-linux-gnu
-
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
@@ -196,18 +189,23 @@ jobs:
         continue-on-error: true
         run: cargo clippy --locked --target x86_64-unknown-linux-gnu --all-targets --features serde,heapless,arrayvec -- -D warnings
 
+      # Cross targets lint the library only: the arch-gated backend modules
+      # live in the lib, whereas `--all-targets` would drag in the criterion ->
+      # alloca dev-dep whose C build script needs a cross C toolchain. The host
+      # `--all-targets` run above already lints the generic tests/benches.
+
       # 32-bit x86 reuses the same arch-gated `src/backend/x86.rs`.
       - name: Clippy (i686)
         id: i686
         continue-on-error: true
-        run: cargo clippy --locked --target i686-unknown-linux-gnu --all-targets --features serde,heapless,arrayvec -- -D warnings
+        run: cargo clippy --locked --target i686-unknown-linux-gnu --lib --features serde,heapless,arrayvec -- -D warnings
 
       # NEON is baseline on aarch64 (target_feature="neon" is on by default),
       # so `src/backend/neon.rs` is linted without RUSTFLAGS.
       - name: Clippy (aarch64 NEON)
         id: aarch64
         continue-on-error: true
-        run: cargo clippy --locked --target aarch64-unknown-linux-gnu --all-targets --features serde,heapless,arrayvec -- -D warnings
+        run: cargo clippy --locked --target aarch64-unknown-linux-gnu --lib --features serde,heapless,arrayvec -- -D warnings
 
       # wasm32 is no_std (no `std` feature) and `simd128` is not a default
       # target-feature, so `src/backend/wasm.rs` only compiles with `+simd128`.
