@@ -40,7 +40,7 @@
 //!
 //! | Feature        | Default | Enables                                                                                                                  |
 //! |----------------|:-------:|--------------------------------------------------------------------------------------------------------------------------|
-//! | `std`          |   yes   | Pulls in `alloc` and links `std`. Required for `Error: std::error::Error`.                                               |
+//! | `std`          |   yes   | Pulls in `alloc` and links `std`; uses `std` for x86 SIMD runtime detection (`cpufeatures` otherwise).                   |
 //! | `alloc`        | (via `std`) | `String` / `Vec<u8>` / `Box<[u8]>` / `Cow<'_, [u8]>` impls of [`ToHex`], [`FromHex`], and (for `String`) [`HexTarget`]. |
 //! | `serde`        |   no    | `Serialize` / `Deserialize` helpers under [`serde`] for `[u8; N]` and `Vec<u8>` fields, plus [`ToHex::serialize`].       |
 //! | `heapless`     |   no    | `heapless::Vec<u8, N>` ([`FromHex`]) and `heapless::String<CAP>` ([`HexTarget`]).                                        |
