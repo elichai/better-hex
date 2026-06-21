@@ -167,10 +167,6 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      # Each step runs even if an earlier one fails (continue-on-error); the
-      # final gate fails the job if any did, so one run surfaces every lint
-      # instead of stopping at the first.
-
       # Feature combinations only vary library code, so lint the full feature
       # powerset across all std targets at once: cargo hack forwards every
       # `--target` to each clippy run, so each combo is checked on x86_64,
@@ -180,8 +176,6 @@ jobs:
       # criterion -> alloca dev-dep whose C build script needs a cross C
       # toolchain. `_bench_*`/`ct-test` are bench/valgrind internals, not public.
       - name: Clippy (feature powerset, std targets)
-        id: powerset
-        continue-on-error: true
         run: >-
           cargo hack --feature-powerset
           --exclude-features default,_bench_internals,_bench_base16ct,_bench_const_hex,_bench_faster_hex,_bench_hex,ct-test
@@ -197,25 +191,14 @@ jobs:
       # silently skips those benches. Arch-gated backends are covered by the
       # powerset above; tests/benches are host-only and target-independent.
       - name: Clippy (x86_64 all-targets)
-        id: alltargets
-        continue-on-error: true
         run: cargo clippy --locked --all-targets --target x86_64-unknown-linux-gnu --features serde,heapless,arrayvec,_bench_internals,_bench_base16ct,_bench_const_hex,_bench_faster_hex,_bench_hex -- -D warnings
 
       # wasm32 is no_std and `simd128` is not a default target-feature, so it
       # can't ride the std powerset above; lint `src/backend/wasm.rs` here.
       - name: Clippy (wasm32 SIMD128)
-        id: wasm32
-        continue-on-error: true
         env:
           RUSTFLAGS: -C target-feature=+simd128
         run: cargo clippy --locked --lib --target wasm32-unknown-unknown --no-default-features --features alloc,serde,heapless,arrayvec -- -D warnings
-
-      - name: Fail if any clippy step failed
-        if: >-
-          steps.powerset.outcome == 'failure'
-          || steps.alltargets.outcome == 'failure'
-          || steps.wasm32.outcome == 'failure'
-        run: exit 1
 
   fmt:
     name: Format
