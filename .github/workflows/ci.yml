@@ -191,13 +191,15 @@ jobs:
           --target aarch64-unknown-linux-gnu
           -- -D warnings
 
-      # Lint the tests/benches once, with all features, on the host (native
-      # toolchain). The arch-gated backends are covered by the powerset above;
-      # tests/benches are target-independent, so the host run suffices.
+      # Lint the tests AND benches once on the host. The encode/decode/check
+      # benches gate on `_bench_internals` (which re-exports the backend), so
+      # the bench features must be enabled here — otherwise `--all-targets`
+      # silently skips those benches. Arch-gated backends are covered by the
+      # powerset above; tests/benches are host-only and target-independent.
       - name: Clippy (x86_64 all-targets)
         id: alltargets
         continue-on-error: true
-        run: cargo clippy --locked --all-targets --target x86_64-unknown-linux-gnu --features serde,heapless,arrayvec -- -D warnings
+        run: cargo clippy --locked --all-targets --target x86_64-unknown-linux-gnu --features serde,heapless,arrayvec,_bench_internals,_bench_base16ct,_bench_const_hex,_bench_faster_hex,_bench_hex -- -D warnings
 
       # wasm32 is no_std and `simd128` is not a default target-feature, so it
       # can't ride the std powerset above; lint `src/backend/wasm.rs` here.
