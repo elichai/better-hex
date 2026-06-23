@@ -275,6 +275,7 @@ pub unsafe fn decode_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: u
 }
 
 #[target_feature(enable = "neon")]
+#[allow(dead_code)]
 pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
     // SAFETY: forwarded from caller.
     if unsafe { decode_inner(src, dst, byte_len) } != 0 {
@@ -356,6 +357,7 @@ pub fn check_inner(mut input: &[u8]) -> u8 {
     err | scalar::check_inner(input) as u8
 }
 
+#[allow(dead_code)]
 pub fn check(input: &[u8]) -> bool {
     check_inner(input) == 0
 }

@@ -98,10 +98,14 @@ assert_eq!(valid.to_u8(), 1);
 The buffer wrappers (`encode_to_slice`, `encode_to_slice_upper`,
 `decode_to_slice`) write data through caller-provided output buffers and
 return a `Choice` success bit. The generic wrappers (`encode`, `encode_upper`,
-`decode`, `const_decode_to_array`) are status-only counterparts of the normal
-`Result` APIs: they report whether the ordinary operation would succeed, but
-discard the produced value. Convert the returned `Choice` to `bool` only at
-the point where success/failure is allowed to become an observable branch.
+`decode`) are status-only helpers over the `CtHexTarget` / `CtFromHex` traits,
+implemented for the built-in target/source families. They report whether the
+ordinary operation would succeed, but discard the produced value.
+`const_decode_to_array` is the const status-only counterpart for fixed arrays.
+Downstream custom targets/sources can opt in by implementing the `ctutils`
+status traits directly.
+Convert the returned `Choice` to `bool` only at the point where success/failure
+is allowed to become an observable branch.
 
 ## Comparison with related crates
 

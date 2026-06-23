@@ -40,6 +40,72 @@ use core::mem::MaybeUninit;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InvalidEncoding;
 
+/// Backend validity status.
+///
+/// Internally this stores `1` for valid/success and `0` for invalid/failure.
+/// Backend decoders and checkers accumulate non-zero error bits; the
+/// `from_*_error_accum` constructors turn those accumulators into this status
+/// without branching on the accumulator value. Ordinary APIs may then branch
+/// once when converting the status into `Result` / `bool`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Status(u8);
+
+impl Status {
+    #[inline]
+    const fn bitnz_u8(value: u8) -> u8 {
+        (value | value.wrapping_neg()) >> (u8::BITS - 1)
+    }
+
+    #[inline]
+    const fn bitnz_u16(value: u16) -> u8 {
+        ((value | value.wrapping_neg()) >> (u16::BITS - 1)) as u8
+    }
+
+    #[inline]
+    #[allow(dead_code)] // Used by x86 backends; unused on non-x86 targets.
+    const fn bitnz_u32(value: u32) -> u8 {
+        ((value | value.wrapping_neg()) >> (u32::BITS - 1)) as u8
+    }
+
+    #[inline]
+    #[allow(dead_code)] // Used by x86 AVX-512 backends; unused on other targets.
+    const fn bitnz_u64(value: u64) -> u8 {
+        ((value | value.wrapping_neg()) >> (u64::BITS - 1)) as u8
+    }
+
+    #[inline]
+    pub(crate) const fn from_u8_error_accum(accum: u8) -> Self {
+        Self(Self::bitnz_u8(accum) ^ 1)
+    }
+
+    #[inline]
+    pub(crate) const fn from_u16_error_accum(accum: u16) -> Self {
+        Self(Self::bitnz_u16(accum) ^ 1)
+    }
+
+    #[inline]
+    #[allow(dead_code)] // Used by x86 backends; unused on non-x86 targets.
+    pub(crate) const fn from_u32_error_accum(accum: u32) -> Self {
+        Self(Self::bitnz_u32(accum) ^ 1)
+    }
+
+    #[inline]
+    #[allow(dead_code)] // Used by x86 AVX-512 backends; unused on other targets.
+    pub(crate) const fn from_u64_error_accum(accum: u64) -> Self {
+        Self(Self::bitnz_u64(accum) ^ 1)
+    }
+
+    #[inline]
+    pub(crate) const fn to_u8(self) -> u8 {
+        self.0
+    }
+
+    #[inline]
+    pub(crate) const fn to_bool_vartime(self) -> bool {
+        self.0 != 0
+    }
+}
+
 /// Dispatch to the detected platform.
 ///
 /// x86 SIMD arms are `unsafe` because the backend functions carry
@@ -131,13 +197,23 @@ pub fn encode(input: &[u8], output: &mut [MaybeUninit<u8>], upper: bool) -> Resu
             got: output.len(),
         });
     }
+    encode_no_length_check(input, output, upper);
+    Ok(())
+}
+
+/// Encode `input` into `output` without checking lengths.
+///
+/// Caller must guarantee `output.len() == input.len() * 2` — debug-checked.
+#[inline]
+pub(crate) fn encode_no_length_check(input: &[u8], output: &mut [MaybeUninit<u8>], upper: bool) {
+    debug_assert_eq!(output.len(), input.len() * 2);
     let src = input.as_ptr();
     let dst = output.as_mut_ptr().cast::<u8>();
     let byte_len = input.len();
     // SAFETY: `src` and `dst` derived from valid, non-overlapping slice borrows.
-    // The length check above guarantees `dst` is writable for `byte_len * 2`
-    // bytes. CPU feature requirements are satisfied by `platform::detect()`
-    // only returning a variant after confirming support.
+    // The caller-guaranteed length relationship makes `dst` writable for
+    // `byte_len * 2` bytes. CPU feature requirements are satisfied by
+    // `platform::detect()` only returning a variant after confirming support.
     dispatch!(
         scalar: unsafe { scalar::encode(src, dst, byte_len, upper) },
         neon: unsafe { neon::encode(src, dst, byte_len, upper) },
@@ -146,23 +222,16 @@ pub fn encode(input: &[u8], output: &mut [MaybeUninit<u8>], upper: bool) -> Resu
         avx512vbmi: unsafe { x86::encode_avx512(src, dst, byte_len, upper) },
         wasm: unsafe { wasm::encode(src, dst, byte_len, upper) },
     );
-    Ok(())
 }
 
-/// Decode hex `input` into `output` without checking lengths.
+/// Decode hex `input` into `output` and return the backend status.
 ///
-/// `pub(crate)` so internal callers (e.g. [`HexStr::decode`]) can reach the
-/// raw inner [`Result`] without the [`Error`]-mapping `match` that
-/// [`decode`] adds. That match would otherwise be a data-dependent branch
-/// (the validity bit lives in the discriminant), and bypassing it lets
-/// callers like `HexStr::decode` use `unwrap_unchecked` to give the
-/// optimizer enough information to remove the discriminant load entirely.
+/// This exposes the inner backend validity status without first materializing
+/// a `Result` discriminant.
 ///
 /// Caller must guarantee `input.len() == output.len() * 2` — debug-checked.
-///
-/// [`HexStr::decode`]: crate::HexStr::decode
 #[inline]
-pub(crate) fn decode_no_length_check(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), InvalidEncoding> {
+pub(crate) fn decode_status_no_length_check(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Status {
     debug_assert_eq!(input.len(), output.len() * 2);
     let src = input.as_ptr();
     let byte_len = output.len();
@@ -173,13 +242,34 @@ pub(crate) fn decode_no_length_check(input: &[u8], output: &mut [MaybeUninit<u8>
     // requirements are satisfied by `platform::detect()` only returning a
     // variant after confirming support.
     dispatch!(
-        scalar: unsafe { scalar::decode(src, dst, byte_len) },
-        neon: unsafe { neon::decode(src, dst, byte_len) },
-        ssse3: unsafe { x86::decode_ssse3(src, dst, byte_len) },
-        avx2: unsafe { x86::decode_avx2(src, dst, byte_len) },
-        avx512bw: unsafe { x86::decode_avx512(src, dst, byte_len) },
-        wasm: unsafe { wasm::decode(src, dst, byte_len) },
+        scalar: unsafe { Status::from_u8_error_accum(scalar::decode_inner(src, dst, byte_len)) },
+        neon: unsafe { Status::from_u8_error_accum(neon::decode_inner(src, dst, byte_len)) },
+        ssse3: unsafe { Status::from_u32_error_accum(x86::decode_ssse3_inner(src, dst, byte_len) as u32) },
+        avx2: unsafe { Status::from_u32_error_accum(x86::decode_avx2_inner(src, dst, byte_len) as u32) },
+        avx512bw: unsafe { Status::from_u64_error_accum(x86::decode_avx512_inner(src, dst, byte_len)) },
+        wasm: unsafe { Status::from_u16_error_accum(wasm::decode_inner(src, dst, byte_len)) },
     )
+}
+
+/// Decode hex `input` into `output` without checking lengths.
+///
+/// `pub(crate)` so internal callers (e.g. [`HexStr::decode`]) can bypass the
+/// [`Error`]-mapping `match` that [`decode`] adds. That match would otherwise
+/// be a data-dependent branch (the validity bit lives in the discriminant),
+/// and bypassing it lets callers like `HexStr::decode` use `unwrap_unchecked`
+/// to give the optimizer enough information to remove the discriminant load
+/// entirely.
+///
+/// Caller must guarantee `input.len() == output.len() * 2` — debug-checked.
+///
+/// [`HexStr::decode`]: crate::HexStr::decode
+#[inline]
+pub(crate) fn decode_no_length_check(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), InvalidEncoding> {
+    if decode_status_no_length_check(input, output).to_bool_vartime() {
+        Ok(())
+    } else {
+        Err(InvalidEncoding)
+    }
 }
 
 /// Decode hex `input` into `output`.
@@ -199,13 +289,22 @@ pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error>
 /// Check if every byte in `input` is a valid hex ASCII character.
 #[inline(never)]
 pub fn check(input: &[u8]) -> bool {
+    check_status(input).to_bool_vartime()
+}
+
+/// Check every byte in `input` and return the backend status.
+///
+/// This preserves the backend validity status for callers that need to convert
+/// it into their own constant-time status type.
+#[inline(never)]
+pub(crate) fn check_status(input: &[u8]) -> Status {
     dispatch!(
-        scalar: scalar::check(input),
-        neon: neon::check(input),
-        ssse3: unsafe { x86::check_ssse3(input) },
-        avx2: unsafe { x86::check_avx2(input) },
-        avx512bw: unsafe { x86::check_avx512(input) },
-        wasm: wasm::check(input),
+        scalar: Status::from_u16_error_accum(scalar::check_inner(input)),
+        neon: Status::from_u8_error_accum(neon::check_inner(input)),
+        ssse3: unsafe { Status::from_u32_error_accum(x86::check_ssse3_inner(input) as u32) },
+        avx2: unsafe { Status::from_u32_error_accum(x86::check_avx2_inner(input) as u32) },
+        avx512bw: unsafe { Status::from_u64_error_accum(x86::check_avx512_inner(input)) },
+        wasm: Status::from_u16_error_accum(wasm::check_inner(input)),
     )
 }
 

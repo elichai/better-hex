@@ -379,6 +379,7 @@ pub unsafe fn decode_ssse3_inner(mut src: *const u8, mut dst: *mut u8, mut byte_
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[target_feature(enable = "ssse3")]
+#[allow(dead_code)]
 pub unsafe fn decode_ssse3(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
     // SAFETY: caller guarantees SSSE3 and pointer validity.
     if unsafe { decode_ssse3_inner(src, dst, byte_len) } != 0 {
@@ -500,6 +501,7 @@ pub unsafe fn decode_avx2_inner(mut src: *const u8, mut dst: *mut u8, mut byte_l
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[target_feature(enable = "avx2")]
+#[allow(dead_code)]
 pub unsafe fn decode_avx2(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
     // SAFETY: caller guarantees AVX2 and pointer validity.
     if unsafe { decode_avx2_inner(src, dst, byte_len) } != 0 {
@@ -558,6 +560,7 @@ pub unsafe fn check_ssse3_inner(mut input: &[u8]) -> i32 {
 ///
 /// Caller must ensure the CPU supports SSSE3.
 #[target_feature(enable = "ssse3")]
+#[allow(dead_code)]
 pub unsafe fn check_ssse3(input: &[u8]) -> bool {
     // SAFETY: caller guarantees SSSE3.
     unsafe { check_ssse3_inner(input) == 0 }
@@ -613,6 +616,7 @@ pub unsafe fn check_avx2_inner(mut input: &[u8]) -> i32 {
 ///
 /// Caller must ensure the CPU supports AVX2.
 #[target_feature(enable = "avx2")]
+#[allow(dead_code)]
 pub unsafe fn check_avx2(input: &[u8]) -> bool {
     // SAFETY: caller guarantees AVX2.
     unsafe { check_avx2_inner(input) == 0 }
@@ -821,6 +825,7 @@ pub unsafe fn decode_avx512_inner(mut src: *const u8, mut dst: *mut u8, mut byte
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[target_feature(enable = "avx512bw")]
+#[allow(dead_code)]
 pub unsafe fn decode_avx512(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
     // SAFETY: caller guarantees AVX-512BW and pointer validity.
     if unsafe { decode_avx512_inner(src, dst, byte_len) } != 0 {
@@ -880,6 +885,7 @@ pub unsafe fn check_avx512_inner(mut input: &[u8]) -> u64 {
 ///
 /// Caller must ensure the CPU supports AVX-512BW.
 #[target_feature(enable = "avx512bw")]
+#[allow(dead_code)]
 pub unsafe fn check_avx512(input: &[u8]) -> bool {
     // SAFETY: caller guarantees AVX-512BW.
     unsafe { check_avx512_inner(input) == 0 }
