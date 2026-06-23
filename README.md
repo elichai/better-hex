@@ -33,6 +33,9 @@ Fast, constant-time hex encoding and decoding with SIMD and `const fn`.
   Deserialization into a fixed-size array is alloc-free; serialization is
   alloc-free with serializers that override `Serializer::collect_str`
   (e.g. `serde_json`, `serde_yaml`).
+- **`ctutils` status wrappers** — optional `better_hex::ctutils` module
+  returning `ctutils::Choice` for success/validity bits instead of
+  `Result` / `bool`.
 
 ## Decoding case behavior
 
@@ -72,6 +75,33 @@ const HEX: HexStr<5> = HexStr::const_encode_lower(b"hello");
 let bytes: Vec<u8> = better_hex::decode(b"68656c6c6f")?;
 let arr: [u8; 5] = better_hex::decode(b"68656c6c6f")?;
 ```
+
+## `ctutils` status API
+
+Enable the optional `ctutils` feature to get `ctutils::Choice`-returning
+wrappers under `better_hex::ctutils`:
+
+```toml
+better-hex = { version = "1", features = ["ctutils"] }
+```
+
+```rust
+let mut bytes = [0u8; 4];
+let ok = better_hex::ctutils::decode_to_slice(b"deadbeef", &mut bytes);
+assert_eq!(ok.to_u8(), 1);
+assert_eq!(bytes, [0xde, 0xad, 0xbe, 0xef]);
+
+let valid = better_hex::ctutils::check(b"deadBEEF");
+assert_eq!(valid.to_u8(), 1);
+```
+
+The buffer wrappers (`encode_to_slice`, `encode_to_slice_upper`,
+`decode_to_slice`) write data through caller-provided output buffers and
+return a `Choice` success bit. The generic wrappers (`encode`, `encode_upper`,
+`decode`, `const_decode_to_array`) are status-only counterparts of the normal
+`Result` APIs: they report whether the ordinary operation would succeed, but
+discard the produced value. Convert the returned `Choice` to `bool` only at
+the point where success/failure is allowed to become an observable branch.
 
 ## Comparison with related crates
 

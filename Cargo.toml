@@ -24,6 +24,7 @@ disable-simd = []
 serde = ["dep:serde"]
 heapless = ["dep:heapless"]
 arrayvec = ["dep:arrayvec"]
+ctutils = ["dep:ctutils_dep"]
 _bench_internals = ["std"]
 _bench_base16ct = []
 _bench_const_hex = []
@@ -36,6 +37,7 @@ bytemuck = { version = "1.25", default-features = false, features = ["derive", "
 serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 heapless = { version = "0.9", default-features = false, optional = true }
 arrayvec = { version = "0.7", default-features = false, optional = true }
+ctutils_dep = { package = "ctutils", version = "0.4.2", default-features = false, optional = true }
 crabgrind = { version = "0.2", optional = true }
 
 [target.'cfg(any(target_arch = "x86", target_arch = "x86_64"))'.dependencies]
