@@ -82,6 +82,7 @@ impl Status {
     }
 
     #[inline]
+    #[cfg(feature = "ctutils")]
     pub const fn to_u8(self) -> u8 {
         Self::bitnz_u64(self.0) ^ 1
     }
@@ -92,6 +93,7 @@ impl Status {
     }
 
     #[inline]
+    #[allow(dead_code)] // Used by SIMD backends; unused when SIMD is disabled.
     pub(crate) const fn or(self, rhs: Self) -> Self {
         Self(self.0 | rhs.0)
     }
