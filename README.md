@@ -33,7 +33,7 @@ Fast, constant-time hex encoding and decoding with SIMD and `const fn`.
   Deserialization into a fixed-size array is alloc-free; serialization is
   alloc-free with serializers that override `Serializer::collect_str`
   (e.g. `serde_json`, `serde_yaml`).
-- **`ctutils` status wrappers** — optional `better_hex::ctutils` module
+- **`ctutils` slice wrappers** — optional `better_hex::ctutils` module
   returning `ctutils::Choice` for success/validity bits instead of
   `Result` / `bool`.
 
@@ -95,15 +95,10 @@ let valid = better_hex::ctutils::check(b"deadBEEF");
 assert_eq!(valid.to_u8(), 1);
 ```
 
-The buffer wrappers (`encode_to_slice`, `encode_to_slice_upper`,
+The slice wrappers (`encode_to_slice`, `encode_to_slice_upper`,
 `decode_to_slice`) write data through caller-provided output buffers and
-return a `Choice` success bit. The generic wrappers (`encode`, `encode_upper`,
-`decode`) are status-only helpers over the `CtHexTarget` / `CtFromHex` traits,
-implemented for the built-in target/source families. They report whether the
-ordinary operation would succeed, but discard the produced value.
-`const_decode_to_array` is the const status-only counterpart for fixed arrays.
-Downstream custom targets/sources can opt in by implementing the `ctutils`
-status traits directly.
+return a `Choice` success bit. `check` and `const_check` report hex validity as
+a `Choice`.
 Convert the returned `Choice` to `bool` only at the point where success/failure
 is allowed to become an observable branch.
 

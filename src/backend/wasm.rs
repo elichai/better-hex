@@ -16,7 +16,7 @@
 //! two parallel paths (digit and alpha) produce candidate nibble values,
 //! merged via `u8x16_min`. Validation detects out-of-range nibbles via
 //! saturating addition; error bits are OR-accumulated across the whole
-//! input and the function returns [`InvalidEncoding`] (with no position) if
+//! input and the function returns a non-zero [`Status`] (with no position) if
 //! anything tripped — the SIMD pass keeps decoding all chunks rather than
 //! short-circuiting on first failure. Scalar is only invoked on the
 //! trailing `byte_len % 16` bytes that don't fill a 16-byte chunk. Nibbles
@@ -28,7 +28,7 @@
 //! Three range checks (`0-9`, `a-f`, `A-F`) are ORed together and reduced
 //! with `u8x16_all_true`.
 
-use super::InvalidEncoding;
+use super::Status;
 use crate::backend::scalar;
 use core::arch::wasm32::*;
 
@@ -101,7 +101,7 @@ pub unsafe fn encode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize, 
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
-pub unsafe fn decode_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> u16 {
+pub unsafe fn decode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> Status {
     let mut err_accum: u16 = 0;
 
     // WASM SIMD128: 16 output bytes per iteration (32 hex chars).
@@ -137,28 +137,10 @@ pub unsafe fn decode_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: u
     // Tail: delegate remaining bytes to scalar.
     if byte_len > 0 {
         // SAFETY: same pointer validity as above.
-        err_accum |= u16::from(unsafe { scalar::decode_inner(src, dst, byte_len) });
+        return Status::from_u16_error_accum(err_accum).or(unsafe { scalar::decode(src, dst, byte_len) });
     }
 
-    err_accum
-}
-
-/// Decode hex-encoded `input` into `output`, using SIMD128 for 32-byte chunks.
-///
-/// Processes all chunks without short-circuiting on invalid input (constant-time),
-/// accumulating errors across the entire input before returning.
-///
-/// # Safety
-///
-/// Same requirements as [`decode_inner`].
-#[allow(dead_code)]
-pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
-    let err_accum = unsafe { decode_inner(src, dst, byte_len) };
-    if err_accum != 0 {
-        return Err(InvalidEncoding);
-    }
-
-    Ok(())
+    Status::from_u16_error_accum(err_accum)
 }
 
 /// Decode 16 hex-ASCII bytes in `v` into nibble values, returning the nibble
@@ -191,11 +173,11 @@ fn decode_nibbles(v: v128) -> (v128, u16) {
 }
 
 /// Check if every byte in `input` is a valid hex ASCII character, using SIMD128
-/// for 16-byte chunks, returning the raw error accumulator.
+/// for 16-byte chunks, returning the backend status.
 ///
 /// Processes all chunks without short-circuiting (constant-time).
 /// Returns zero iff all bytes are in `[0-9a-fA-F]`.
-pub fn check_inner(mut input: &[u8]) -> u16 {
+pub fn check(mut input: &[u8]) -> Status {
     let mut err_accum: u16 = 0;
 
     while input.len() >= 16 {
@@ -214,17 +196,7 @@ pub fn check_inner(mut input: &[u8]) -> u16 {
         input = unsafe { input.get_unchecked(16..) };
     }
 
-    err_accum | scalar::check_inner(input)
-}
-
-/// Check if every byte in `input` is a valid hex ASCII character, using SIMD128
-/// for 16-byte chunks.
-///
-/// Processes all chunks without short-circuiting (constant-time).
-/// Returns `true` iff all bytes are in `[0-9a-fA-F]`.
-#[allow(dead_code)]
-pub fn check(input: &[u8]) -> bool {
-    check_inner(input) == 0
+    Status::from_u16_error_accum(err_accum).or(scalar::check(input))
 }
 
 #[cfg(test)]
@@ -238,10 +210,13 @@ mod tests {
             |input, output| unsafe { encode(input.as_ptr(), output.as_mut_ptr().cast(), input.len(), false) },
             |input, output| unsafe { encode(input.as_ptr(), output.as_mut_ptr().cast(), input.len(), true) },
             |input, output| unsafe {
-                decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len())
-                    .map_err(|_| crate::error::Error::InvalidEncoding)
+                if decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len()).to_bool_vartime() {
+                    Ok(())
+                } else {
+                    Err(crate::error::Error::InvalidEncoding)
+                }
             },
-            check,
+            |input| check(input).to_bool_vartime(),
         );
     }
 }

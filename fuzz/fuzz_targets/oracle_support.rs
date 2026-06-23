@@ -74,7 +74,11 @@ pub fn scalar_encode(data: &[u8], out: &mut [MaybeUninit<u8>], upper: bool) {
 
 pub fn scalar_decode(hex: &[u8], out: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     // SAFETY: `hex` and `out` are valid slices, hex.len() == out.len() * 2 by caller contract.
-    unsafe { scalar::decode(hex.as_ptr(), out.as_mut_ptr().cast(), out.len()) }.map_err(|_| Error::InvalidEncoding)
+    if unsafe { scalar::decode(hex.as_ptr(), out.as_mut_ptr().cast(), out.len()) }.to_bool_vartime() {
+        Ok(())
+    } else {
+        Err(Error::InvalidEncoding)
+    }
 }
 
 fn decode_nibble(byte: u8) -> Option<u8> {

@@ -121,8 +121,7 @@ pub const unsafe fn encode(src: *const u8, dst: *mut u8, byte_len: usize, upper:
 /// position of the first invalid byte is intentionally not revealed to avoid
 /// timing side-channels.
 ///
-/// Returns `Ok(())` on success or `Err(InvalidEncoding)` if any byte was
-/// not a valid hex ASCII character.
+/// Returns a status that is valid/success iff every byte was valid hex ASCII.
 ///
 /// All elements of `dst[..byte_len]` are initialized on return (even on `Err`).
 ///
@@ -132,7 +131,7 @@ pub const unsafe fn encode(src: *const u8, dst: *mut u8, byte_len: usize, upper:
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[inline(always)]
-pub const unsafe fn decode_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> u8 {
+pub const unsafe fn decode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> super::Status {
     let mut err: u8 = 0;
 
     while byte_len != 0 {
@@ -149,31 +148,19 @@ pub const unsafe fn decode_inner(mut src: *const u8, mut dst: *mut u8, mut byte_
         byte_len -= 1;
     }
 
-    err
+    super::Status::from_u8_error_accum(err)
 }
 
-/// See [`decode_inner`].
+/// Constant-time hex validator returning the backend status.
 ///
-/// # Safety
-///
-/// Same requirements as [`decode_inner`].
-pub const unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), super::InvalidEncoding> {
-    if unsafe { decode_inner(src, dst, byte_len) } != 0 {
-        Err(super::InvalidEncoding)
-    } else {
-        Ok(())
-    }
-}
-
-/// Constant-time hex validator returning the raw error accumulator.
-///
-/// Returns `0` iff every byte in `input` is a valid hex ASCII character.
+/// Returns the default/zero status iff every byte in `input` is a valid hex
+/// ASCII character.
 /// Used by SIMD backends to compose tail validation, and by CT tests to
 /// observe the validity bit only after explicit unpoisoning (avoiding an
 /// internal `== 0` branch on poisoned data).
 #[inline]
 #[doc(hidden)]
-pub const fn check_inner(mut input: &[u8]) -> u16 {
+pub const fn check(mut input: &[u8]) -> super::Status {
     let mut err: u16 = 0;
     while let Some((&byte, rest)) = input.split_first() {
         // `decode_nibble` returns 0..=15 for valid bytes and a value with
@@ -182,22 +169,12 @@ pub const fn check_inner(mut input: &[u8]) -> u16 {
         err |= decode_nibble(byte) >> 8;
         input = rest;
     }
-    err
-}
-
-/// Constant-time hex validator.
-///
-/// Returns `true` iff every byte in `input` is a valid hex ASCII character
-/// (`[0-9a-fA-F]`). Examines all bytes without short-circuiting.
-#[inline]
-pub const fn check(input: &[u8]) -> bool {
-    check_inner(input) == 0
+    super::Status::from_u16_error_accum(err)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::InvalidEncoding;
 
     // Expected lowercase hex digits for nibbles 0..=15.
     const LOWER_EXPECTED: [u8; 16] = *b"0123456789abcdef";
@@ -283,25 +260,28 @@ mod tests {
         // Decode back and compare.
         let mut decoded = [0u8; 256];
         // SAFETY: pointers derived from fixed-size arrays with correct lengths.
-        unsafe { decode(upper_out.as_ptr(), decoded.as_mut_ptr(), decoded.len()) }.expect("upper decode failed");
+        assert!(
+            unsafe { decode(upper_out.as_ptr(), decoded.as_mut_ptr(), decoded.len()) }.to_bool_vartime(),
+            "upper decode failed"
+        );
         assert_eq!(decoded, input, "upper roundtrip");
 
         let mut decoded2 = [0u8; 256];
         // SAFETY: pointers derived from fixed-size arrays with correct lengths.
-        unsafe { decode(lower_out.as_ptr(), decoded2.as_mut_ptr(), decoded2.len()) }.expect("lower decode failed");
+        assert!(
+            unsafe { decode(lower_out.as_ptr(), decoded2.as_mut_ptr(), decoded2.len()) }.to_bool_vartime(),
+            "lower decode failed"
+        );
         assert_eq!(decoded2, input, "lower roundtrip");
     }
 
     #[test]
     fn decode_invalid_returns_error() {
-        // A single invalid byte anywhere must cause Err(InvalidEncoding).
+        // A single invalid byte anywhere must mark the status invalid.
         let input = b"0g"; // 'g' is not valid hex
         let mut out = [0u8; 1];
         // SAFETY: pointers derived from valid arrays with correct lengths.
-        assert_eq!(
-            unsafe { decode(input.as_ptr(), out.as_mut_ptr(), out.len()) },
-            Err(InvalidEncoding)
-        );
+        assert!(!unsafe { decode(input.as_ptr(), out.as_mut_ptr(), out.len()) }.to_bool_vartime());
     }
 
     #[test]
@@ -313,9 +293,8 @@ mod tests {
         for &inp in inputs {
             let mut out = [0u8; 1];
             // SAFETY: all inputs are 2 bytes, out is 1 byte.
-            assert_eq!(
-                unsafe { decode(inp.as_ptr(), out.as_mut_ptr(), out.len()) },
-                Err(InvalidEncoding),
+            assert!(
+                !unsafe { decode(inp.as_ptr(), out.as_mut_ptr(), out.len()) }.to_bool_vartime(),
                 "input {:?}",
                 inp
             );
@@ -324,19 +303,19 @@ mod tests {
 
     #[test]
     fn check_valid() {
-        assert!(check(b"0123456789abcdefABCDEF"));
+        assert!(check(b"0123456789abcdefABCDEF").to_bool_vartime());
     }
 
     #[test]
     fn check_invalid() {
-        assert!(!check(b"0g"));
-        assert!(!check(b"zz"));
+        assert!(!check(b"0g").to_bool_vartime());
+        assert!(!check(b"zz").to_bool_vartime());
         // Boundary bytes just outside valid ranges.
-        assert!(!check(b"/")); // one below '0'
-        assert!(!check(b":")); // one above '9'
-        assert!(!check(b"@")); // one below 'A'
-        assert!(!check(b"G")); // one above 'F'
-        assert!(!check(b"`")); // one below 'a'
-        assert!(!check(b"g")); // one above 'f'
+        assert!(!check(b"/").to_bool_vartime()); // one below '0'
+        assert!(!check(b":").to_bool_vartime()); // one above '9'
+        assert!(!check(b"@").to_bool_vartime()); // one below 'A'
+        assert!(!check(b"G").to_bool_vartime()); // one above 'F'
+        assert!(!check(b"`").to_bool_vartime()); // one below 'a'
+        assert!(!check(b"g").to_bool_vartime()); // one above 'f'
     }
 }

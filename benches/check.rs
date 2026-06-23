@@ -20,12 +20,12 @@ fn bench_check(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(hex_len));
 
         group.bench_function(BenchmarkId::new("scalar", size), |b| {
-            b.iter(|| scalar::check(black_box(bufs.next())))
+            b.iter(|| scalar::check(black_box(bufs.next())).to_bool_vartime())
         });
 
         #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
         group.bench_function(BenchmarkId::new("neon", size), |b| {
-            b.iter(|| better_hex::bench_internals::neon::check(black_box(bufs.next())))
+            b.iter(|| better_hex::bench_internals::neon::check(black_box(bufs.next())).to_bool_vartime())
         });
 
         #[cfg(all(not(feature = "disable-simd"), any(target_arch = "x86", target_arch = "x86_64")))]
@@ -33,17 +33,17 @@ fn bench_check(c: &mut Criterion) {
             use better_hex::bench_internals::x86;
             if std::is_x86_feature_detected!("ssse3") {
                 group.bench_function(BenchmarkId::new("ssse3", size), |b| {
-                    b.iter(|| unsafe { x86::check_ssse3(black_box(bufs.next())) })
+                    b.iter(|| unsafe { x86::check_ssse3(black_box(bufs.next())) }.to_bool_vartime())
                 });
             }
             if std::is_x86_feature_detected!("avx2") {
                 group.bench_function(BenchmarkId::new("avx2", size), |b| {
-                    b.iter(|| unsafe { x86::check_avx2(black_box(bufs.next())) })
+                    b.iter(|| unsafe { x86::check_avx2(black_box(bufs.next())) }.to_bool_vartime())
                 });
             }
             if std::is_x86_feature_detected!("avx512bw") {
                 group.bench_function(BenchmarkId::new("avx512", size), |b| {
-                    b.iter(|| unsafe { x86::check_avx512(black_box(bufs.next())) })
+                    b.iter(|| unsafe { x86::check_avx512(black_box(bufs.next())) }.to_bool_vartime())
                 });
             }
         }

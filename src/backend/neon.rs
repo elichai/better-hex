@@ -50,7 +50,7 @@
 //!    Valid nibbles (0-15) become 112-127 (MSB clear). Invalid nibbles (>= 16)
 //!    saturate to >= 128 (MSB set). The high bits are reduced with `vmaxvq_u8`
 //!    across the whole input; if any byte ends with MSB set the function
-//!    returns [`InvalidEncoding`]. The public API surfaces only a yes/no
+//!    returns a non-zero [`Status`]. The public API surfaces only a yes/no
 //!    result — no per-byte error position — so the SIMD pass keeps decoding
 //!    all chunks without short-circuiting (constant-time over the valid path).
 //!    Scalar is only invoked for the trailing `byte_len % 16` bytes that
@@ -77,7 +77,7 @@
 
 #![allow(clippy::doc_overindented_list_items)]
 
-use super::InvalidEncoding;
+use super::Status;
 use crate::backend::scalar;
 use core::arch::aarch64::*;
 
@@ -202,8 +202,8 @@ pub unsafe fn encode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize, 
 
 /// NEON hex decoder — processes all bytes without early exit (constant-time).
 ///
-/// Accumulates error bits across all chunks and returns `Err(InvalidEncoding)`
-/// at the end if any invalid character was encountered. Does not reveal the
+/// Accumulates error bits across all chunks and returns a non-zero status at
+/// the end if any invalid character was encountered. Does not reveal the
 /// position of the invalid character.
 ///
 /// See module-level documentation for the full algorithm description.
@@ -215,7 +215,7 @@ pub unsafe fn encode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize, 
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
 #[target_feature(enable = "neon")]
 #[doc(hidden)]
-pub unsafe fn decode_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> u8 {
+pub unsafe fn decode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> Status {
     // Hoist all broadcast constants out of the loop so LLVM doesn't need to
     // prove them loop-invariant. These are used by decode_nibbles_with_consts
     // and the validation step. `vdupq_n_u8` is safe under #[target_feature].
@@ -264,25 +264,14 @@ pub unsafe fn decode_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: u
         byte_len -= 16;
     }
 
-    let mut err = vmaxvq_u8(acc_check) & 0x80;
+    let err = vmaxvq_u8(acc_check) & 0x80;
 
     if byte_len > 0 {
         // SAFETY: same pointer validity as above.
-        err |= unsafe { scalar::decode_inner(src, dst, byte_len) };
+        return Status::from_u8_error_accum(err).or(unsafe { scalar::decode(src, dst, byte_len) });
     }
 
-    err
-}
-
-#[target_feature(enable = "neon")]
-#[allow(dead_code)]
-pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
-    // SAFETY: forwarded from caller.
-    if unsafe { decode_inner(src, dst, byte_len) } != 0 {
-        Err(InvalidEncoding)
-    } else {
-        Ok(())
-    }
+    Status::from_u8_error_accum(err)
 }
 
 /// Decode a 16-byte NEON vector of hex ASCII characters into nibble values,
@@ -320,7 +309,7 @@ fn decode_nibbles_with_consts(
 ///
 /// Processes all chunks without early exit (constant-time).
 #[doc(hidden)]
-pub fn check_inner(mut input: &[u8]) -> u8 {
+pub fn check(mut input: &[u8]) -> Status {
     // AND-accumulate per-iter `valid` vectors and reduce once at exit:
     // lane i of `acc_valid` stays 0xFF iff every chunk had lane i = 0xFF.
     // Do NOT mirror this on x86 — `pmovmskb` runs on a port disjoint from
@@ -354,12 +343,7 @@ pub fn check_inner(mut input: &[u8]) -> u8 {
     // `vminvq_u8(acc_valid) == 0xFF` iff every lane stayed valid across
     // every chunk. Bitwise NOT flips to error semantics (0 = ok).
     let err = !unsafe { vminvq_u8(acc_valid) };
-    err | scalar::check_inner(input) as u8
-}
-
-#[allow(dead_code)]
-pub fn check(input: &[u8]) -> bool {
-    check_inner(input) == 0
+    Status::from_u8_error_accum(err).or(scalar::check(input))
 }
 
 #[cfg(test)]
@@ -373,10 +357,13 @@ mod tests {
             |input, output| unsafe { encode(input.as_ptr(), output.as_mut_ptr().cast(), input.len(), false) },
             |input, output| unsafe { encode(input.as_ptr(), output.as_mut_ptr().cast(), input.len(), true) },
             |input, output| unsafe {
-                decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len())
-                    .map_err(|_| crate::error::Error::InvalidEncoding)
+                if decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len()).to_bool_vartime() {
+                    Ok(())
+                } else {
+                    Err(crate::error::Error::InvalidEncoding)
+                }
             },
-            check,
+            |input| check(input).to_bool_vartime(),
         );
     }
 }

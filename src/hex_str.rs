@@ -397,9 +397,10 @@ pub const fn const_decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; 
     // SAFETY: `input.len() == N * 2` (checked above), so `input.as_ptr()` is
     // readable for `N * 2` bytes and `out.as_mut_ptr()` writable for `N` bytes.
     // Can't use `?` here: `From<InvalidEncoding>` is not (and cannot be) `const`.
-    match unsafe { crate::backend::scalar::decode(input.as_ptr(), out.as_mut_ptr(), N) } {
-        Ok(()) => Ok(out),
-        Err(crate::backend::InvalidEncoding) => Err(Error::InvalidEncoding),
+    if unsafe { crate::backend::scalar::decode(input.as_ptr(), out.as_mut_ptr(), N) }.to_bool_vartime() {
+        Ok(out)
+    } else {
+        Err(Error::InvalidEncoding)
     }
 }
 
@@ -417,5 +418,5 @@ pub const fn const_decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; 
 ///
 /// [crate-level performance note]: crate#performance-const-fn-vs-runtime-apis
 pub const fn const_check(input: &[u8]) -> bool {
-    input.len().is_multiple_of(2) && crate::backend::scalar::check(input)
+    input.len().is_multiple_of(2) && crate::backend::scalar::check(input).to_bool_vartime()
 }
