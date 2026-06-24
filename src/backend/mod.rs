@@ -289,7 +289,7 @@ pub fn check(input: &[u8]) -> bool {
 ///
 /// This preserves the backend validity status for callers that need to convert
 /// it into their own constant-time status type.
-#[inline(never)]
+#[inline]
 pub(crate) fn check_status(input: &[u8]) -> Status {
     dispatch!(
         scalar: scalar::check(input),

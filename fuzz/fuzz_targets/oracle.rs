@@ -98,36 +98,24 @@ fuzz_target!(|data: &[u8]| {
     let naive_result = naive_decode(data);
 
     assert_decode_matches("scalar", data, &naive_result, scalar_decode);
-    assert_decode_matches("dispatched", data, &naive_result, dispatched_decode);
+    assert_decode_matches("dispatched", data, &naive_result, |hex, out| dispatched_decode(hex, out).is_ok());
 
     #[cfg(all(not(feature = "disable-simd"), any(target_arch = "x86", target_arch = "x86_64")))]
     {
         use better_hex::bench_internals::x86;
         if std::is_x86_feature_detected!("ssse3") {
             assert_decode_matches("ssse3", data, &naive_result, |hex, out| unsafe {
-                if x86::decode_ssse3(hex.as_ptr(), out.as_mut_ptr().cast(), out.len()).to_bool_vartime() {
-                    Ok(())
-                } else {
-                    Err(better_hex::Error::InvalidEncoding)
-                }
+                x86::decode_ssse3(hex.as_ptr(), out.as_mut_ptr().cast(), out.len()).to_bool_vartime()
             });
         }
         if std::is_x86_feature_detected!("avx2") {
             assert_decode_matches("avx2", data, &naive_result, |hex, out| unsafe {
-                if x86::decode_avx2(hex.as_ptr(), out.as_mut_ptr().cast(), out.len()).to_bool_vartime() {
-                    Ok(())
-                } else {
-                    Err(better_hex::Error::InvalidEncoding)
-                }
+                x86::decode_avx2(hex.as_ptr(), out.as_mut_ptr().cast(), out.len()).to_bool_vartime()
             });
         }
         if std::is_x86_feature_detected!("avx512bw") {
             assert_decode_matches("avx512", data, &naive_result, |hex, out| unsafe {
-                if x86::decode_avx512(hex.as_ptr(), out.as_mut_ptr().cast(), out.len()).to_bool_vartime() {
-                    Ok(())
-                } else {
-                    Err(better_hex::Error::InvalidEncoding)
-                }
+                x86::decode_avx512(hex.as_ptr(), out.as_mut_ptr().cast(), out.len()).to_bool_vartime()
             });
         }
     }
@@ -135,11 +123,7 @@ fuzz_target!(|data: &[u8]| {
     {
         use better_hex::bench_internals::neon;
         assert_decode_matches("neon", data, &naive_result, |hex, out| unsafe {
-            if neon::decode(hex.as_ptr(), out.as_mut_ptr().cast(), out.len()).to_bool_vartime() {
-                Ok(())
-            } else {
-                Err(better_hex::Error::InvalidEncoding)
-            }
+            neon::decode(hex.as_ptr(), out.as_mut_ptr().cast(), out.len()).to_bool_vartime()
         });
     }
 });

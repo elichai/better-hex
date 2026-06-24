@@ -25,8 +25,8 @@
 //!
 //! # Validation (`check`)
 //!
-//! Three range checks (`0-9`, `a-f`, `A-F`) are ORed together and reduced
-//! with `u8x16_all_true`.
+//! Three range checks (`0-9`, `a-f`, `A-F`) are ORed together, inverted, and
+//! reduced with `u8x16_bitmask` into the backend status accumulator.
 
 use super::Status;
 use crate::backend::scalar;
