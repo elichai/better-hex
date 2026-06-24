@@ -45,6 +45,7 @@
 //! | `serde`        |   no    | `Serialize` / `Deserialize` helpers under [`serde`] for `[u8; N]` and `Vec<u8>` fields, plus [`ToHex::serialize`].       |
 //! | `heapless`     |   no    | `heapless::Vec<u8, N>` ([`FromHex`]) and `heapless::String<CAP>` ([`HexTarget`]).                                        |
 //! | `arrayvec`     |   no    | `arrayvec::ArrayVec<u8, N>` ([`FromHex`]) and `arrayvec::ArrayString<CAP>` ([`HexTarget`]).                              |
+//! | `ctutils`      |   no    | [`ctutils`] status wrappers that return [`ctutils::Choice`] instead of `Result` / `bool`.                                |
 //! | `disable-simd` |   no    | Force the scalar branchless backend on every target. Useful for size-constrained builds and Miri.                        |
 //!
 //! [`HexTarget`] implementors by feature (this is the full list — `HexStr<N, P>`
@@ -92,6 +93,9 @@ extern crate alloc;
 extern crate std;
 
 mod backend;
+#[cfg(feature = "ctutils")]
+#[cfg_attr(docsrs, doc(cfg(feature = "ctutils")))]
+pub mod ctutils;
 mod decode;
 mod display;
 mod encode;

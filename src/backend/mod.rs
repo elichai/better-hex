@@ -131,13 +131,23 @@ pub fn encode(input: &[u8], output: &mut [MaybeUninit<u8>], upper: bool) -> Resu
             got: output.len(),
         });
     }
+    encode_no_length_check(input, output, upper);
+    Ok(())
+}
+
+/// Encode `input` into `output` without checking lengths.
+///
+/// Caller must guarantee `output.len() == input.len() * 2` — debug-checked.
+#[inline]
+pub(crate) fn encode_no_length_check(input: &[u8], output: &mut [MaybeUninit<u8>], upper: bool) {
+    debug_assert_eq!(output.len(), input.len() * 2);
     let src = input.as_ptr();
     let dst = output.as_mut_ptr().cast::<u8>();
     let byte_len = input.len();
     // SAFETY: `src` and `dst` derived from valid, non-overlapping slice borrows.
-    // The length check above guarantees `dst` is writable for `byte_len * 2`
-    // bytes. CPU feature requirements are satisfied by `platform::detect()`
-    // only returning a variant after confirming support.
+    // The caller-guaranteed length relationship makes `dst` writable for
+    // `byte_len * 2` bytes. CPU feature requirements are satisfied by
+    // `platform::detect()` only returning a variant after confirming support.
     dispatch!(
         scalar: unsafe { scalar::encode(src, dst, byte_len, upper) },
         neon: unsafe { neon::encode(src, dst, byte_len, upper) },
@@ -146,7 +156,6 @@ pub fn encode(input: &[u8], output: &mut [MaybeUninit<u8>], upper: bool) -> Resu
         avx512vbmi: unsafe { x86::encode_avx512(src, dst, byte_len, upper) },
         wasm: unsafe { wasm::encode(src, dst, byte_len, upper) },
     );
-    Ok(())
 }
 
 /// Decode hex `input` into `output` without checking lengths.
@@ -182,6 +191,37 @@ pub(crate) fn decode_no_length_check(input: &[u8], output: &mut [MaybeUninit<u8>
     )
 }
 
+/// Decode hex `input` into `output` without checking lengths, returning the raw
+/// backend error accumulator (`0` iff every byte was valid hex).
+///
+/// Lets [`ctutils`] build a constant-time `Choice` without first collapsing the
+/// validity bit into a `Result` discriminant. Each backend's `*_inner` (x86:
+/// the feature-gated `*_accum` wrapper) returns its natural accumulator, widened
+/// to `u64` so one non-zero test suffices. `i32` accumulators go through `u32`
+/// to zero-extend, though for a `== 0` test sign-extension would be harmless.
+///
+/// Caller must guarantee `input.len() == output.len() * 2` — debug-checked.
+///
+/// [`ctutils`]: crate::ctutils
+#[cfg(feature = "ctutils")]
+#[inline]
+pub(crate) fn decode_accum_no_length_check(input: &[u8], output: &mut [MaybeUninit<u8>]) -> u64 {
+    debug_assert_eq!(input.len(), output.len() * 2);
+    let src = input.as_ptr();
+    let byte_len = output.len();
+    let dst = output.as_mut_ptr().cast::<u8>();
+    // SAFETY: identical contract to `decode_no_length_check`; the x86 `*_accum`
+    // wrappers carry the same `#[target_feature]` as the public wrappers.
+    dispatch!(
+        scalar: unsafe { scalar::decode_inner(src, dst, byte_len) } as u64,
+        neon: unsafe { neon::decode_inner(src, dst, byte_len) } as u64,
+        ssse3: unsafe { x86::decode_ssse3_accum(src, dst, byte_len) } as u32 as u64,
+        avx2: unsafe { x86::decode_avx2_accum(src, dst, byte_len) } as u32 as u64,
+        avx512bw: unsafe { x86::decode_avx512_accum(src, dst, byte_len) },
+        wasm: unsafe { wasm::decode_inner(src, dst, byte_len) } as u64,
+    )
+}
+
 /// Decode hex `input` into `output`.
 ///
 /// Returns `Ok(())` on success, `Err(InvalidEncoding)` on invalid hex,
@@ -206,6 +246,21 @@ pub fn check(input: &[u8]) -> bool {
         avx2: unsafe { x86::check_avx2(input) },
         avx512bw: unsafe { x86::check_avx512(input) },
         wasm: wasm::check(input),
+    )
+}
+
+/// Check every byte in `input`, returning the raw backend error accumulator
+/// (`0` iff every byte was valid hex). See [`decode_accum_no_length_check`].
+#[cfg(feature = "ctutils")]
+#[inline]
+pub(crate) fn check_accum(input: &[u8]) -> u64 {
+    dispatch!(
+        scalar: scalar::check_inner(input) as u64,
+        neon: neon::check_inner(input) as u64,
+        ssse3: unsafe { x86::check_ssse3_accum(input) } as u32 as u64,
+        avx2: unsafe { x86::check_avx2_accum(input) } as u32 as u64,
+        avx512bw: unsafe { x86::check_avx512_accum(input) },
+        wasm: wasm::check_inner(input) as u64,
     )
 }
 

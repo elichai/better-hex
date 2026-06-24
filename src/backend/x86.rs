@@ -885,6 +885,63 @@ pub unsafe fn check_avx512(input: &[u8]) -> bool {
     unsafe { check_avx512_inner(input) == 0 }
 }
 
+// `ctutils` raw-accumulator wrappers.
+//
+// Same `#[target_feature]` contexts as the public `decode_*` / `check_*`
+// wrappers above, but they return the raw error accumulator (`0` iff valid)
+// instead of `Result` / `bool`, so `ctutils` can build a constant-time `Choice`
+// without first collapsing the validity bit into a discriminant. The
+// `#[target_feature]` attribute is what lets the `#[inline(always)]` `*_inner`
+// body get feature-enabled SIMD codegen — without it the intrinsics would not
+// inline.
+#[cfg(feature = "ctutils")]
+#[target_feature(enable = "ssse3")]
+#[doc(hidden)]
+pub unsafe fn decode_ssse3_accum(src: *const u8, dst: *mut u8, byte_len: usize) -> i32 {
+    // SAFETY: caller guarantees SSSE3 and pointer validity; forwarded to inner.
+    unsafe { decode_ssse3_inner(src, dst, byte_len) }
+}
+
+#[cfg(feature = "ctutils")]
+#[target_feature(enable = "avx2")]
+#[doc(hidden)]
+pub unsafe fn decode_avx2_accum(src: *const u8, dst: *mut u8, byte_len: usize) -> i32 {
+    // SAFETY: caller guarantees AVX2 and pointer validity; forwarded to inner.
+    unsafe { decode_avx2_inner(src, dst, byte_len) }
+}
+
+#[cfg(feature = "ctutils")]
+#[target_feature(enable = "avx512bw")]
+#[doc(hidden)]
+pub unsafe fn decode_avx512_accum(src: *const u8, dst: *mut u8, byte_len: usize) -> u64 {
+    // SAFETY: caller guarantees AVX-512BW and pointer validity; forwarded to inner.
+    unsafe { decode_avx512_inner(src, dst, byte_len) }
+}
+
+#[cfg(feature = "ctutils")]
+#[target_feature(enable = "ssse3")]
+#[doc(hidden)]
+pub unsafe fn check_ssse3_accum(input: &[u8]) -> i32 {
+    // SAFETY: caller guarantees SSSE3.
+    unsafe { check_ssse3_inner(input) }
+}
+
+#[cfg(feature = "ctutils")]
+#[target_feature(enable = "avx2")]
+#[doc(hidden)]
+pub unsafe fn check_avx2_accum(input: &[u8]) -> i32 {
+    // SAFETY: caller guarantees AVX2.
+    unsafe { check_avx2_inner(input) }
+}
+
+#[cfg(feature = "ctutils")]
+#[target_feature(enable = "avx512bw")]
+#[doc(hidden)]
+pub unsafe fn check_avx512_accum(input: &[u8]) -> u64 {
+    // SAFETY: caller guarantees AVX-512BW.
+    unsafe { check_avx512_inner(input) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
