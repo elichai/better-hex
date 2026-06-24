@@ -16,7 +16,7 @@
 //! two parallel paths (digit and alpha) produce candidate nibble values,
 //! merged via `u8x16_min`. Validation detects out-of-range nibbles via
 //! saturating addition; error bits are OR-accumulated across the whole
-//! input and the function returns a non-zero [`Status`] (with no position) if
+//! input and the function returns [`InvalidEncoding`] (with no position) if
 //! anything tripped — the SIMD pass keeps decoding all chunks rather than
 //! short-circuiting on first failure. Scalar is only invoked on the
 //! trailing `byte_len % 16` bytes that don't fill a 16-byte chunk. Nibbles
@@ -26,9 +26,9 @@
 //! # Validation (`check`)
 //!
 //! Three range checks (`0-9`, `a-f`, `A-F`) are ORed together, inverted, and
-//! reduced with `u8x16_bitmask` into the backend status accumulator.
+//! reduced with `u8x16_bitmask` into the raw error accumulator.
 
-use super::Status;
+use super::InvalidEncoding;
 use crate::backend::scalar;
 use core::arch::wasm32::*;
 
@@ -90,18 +90,19 @@ pub unsafe fn encode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize, 
     unsafe { scalar::encode_inner(src, dst, byte_len, upper) };
 }
 
-/// Decode hex-encoded `input` into `output`, using SIMD128 for 32-byte chunks.
+/// Decode hex-encoded `input` into `output`, using SIMD128 for 32-byte chunks,
+/// returning the raw error accumulator (`0` iff every byte was valid hex).
 ///
 /// Processes all chunks without short-circuiting on invalid input (constant-time),
-/// accumulating errors across the entire input before returning the raw
-/// error accumulator.
+/// accumulating errors across the entire input before returning.
 ///
 /// # Safety
 ///
 /// - `src` must be [valid](core::ptr#safety) for reads of `byte_len * 2` bytes.
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len` bytes.
 /// - The `src[..byte_len * 2]` and `dst[..byte_len]` regions must not overlap.
-pub unsafe fn decode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> Status {
+#[doc(hidden)]
+pub unsafe fn decode_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) -> u16 {
     let mut err_accum: u16 = 0;
 
     // WASM SIMD128: 16 output bytes per iteration (32 hex chars).
@@ -137,10 +138,24 @@ pub unsafe fn decode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) 
     // Tail: delegate remaining bytes to scalar.
     if byte_len > 0 {
         // SAFETY: same pointer validity as above.
-        return Status::from_u16_error_accum(err_accum).or(unsafe { scalar::decode(src, dst, byte_len) });
+        err_accum |= u16::from(unsafe { scalar::decode_inner(src, dst, byte_len) });
     }
 
-    Status::from_u16_error_accum(err_accum)
+    err_accum
+}
+
+/// See [`decode_inner`]. Returns `Err(InvalidEncoding)` if any byte was invalid.
+///
+/// # Safety
+///
+/// Same requirements as [`decode_inner`].
+pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
+    // SAFETY: forwarded from caller.
+    if unsafe { decode_inner(src, dst, byte_len) } != 0 {
+        Err(InvalidEncoding)
+    } else {
+        Ok(())
+    }
 }
 
 /// Decode 16 hex-ASCII bytes in `v` into nibble values, returning the nibble
@@ -173,11 +188,11 @@ fn decode_nibbles(v: v128) -> (v128, u16) {
 }
 
 /// Check if every byte in `input` is a valid hex ASCII character, using SIMD128
-/// for 16-byte chunks, returning the backend status.
+/// for 16-byte chunks, returning the raw error accumulator (`0` iff valid).
 ///
 /// Processes all chunks without short-circuiting (constant-time).
-/// Returns zero iff all bytes are in `[0-9a-fA-F]`.
-pub fn check(mut input: &[u8]) -> Status {
+#[doc(hidden)]
+pub fn check_inner(mut input: &[u8]) -> u16 {
     let mut err_accum: u16 = 0;
 
     while input.len() >= 16 {
@@ -189,14 +204,20 @@ pub fn check(mut input: &[u8]) -> Status {
         let is_lower = v128_and(u8x16_ge(v, u8x16_splat(b'a')), u8x16_le(v, u8x16_splat(b'f')));
 
         let is_hex = v128_or(v128_or(is_digit, is_upper), is_lower);
-        let invalid = v128_xor(is_hex, u8x16_splat(0xFF));
-        err_accum |= u8x16_bitmask(invalid);
+        // Invert to error semantics (valid lane 0xFF -> 0x00) and OR the per-lane
+        // MSBs into the accumulator: non-zero iff any lane was not valid hex.
+        err_accum |= u8x16_bitmask(v128_xor(is_hex, u8x16_splat(0xFF)));
 
         // SAFETY: `input.len() >= 16` checked above.
         input = unsafe { input.get_unchecked(16..) };
     }
 
-    Status::from_u16_error_accum(err_accum).or(scalar::check(input))
+    err_accum | scalar::check_inner(input)
+}
+
+/// Constant-time hex validator. Returns `true` iff all bytes are in `[0-9a-fA-F]`.
+pub fn check(input: &[u8]) -> bool {
+    check_inner(input) == 0
 }
 
 #[cfg(test)]
@@ -210,13 +231,10 @@ mod tests {
             |input, output| unsafe { encode(input.as_ptr(), output.as_mut_ptr().cast(), input.len(), false) },
             |input, output| unsafe { encode(input.as_ptr(), output.as_mut_ptr().cast(), input.len(), true) },
             |input, output| unsafe {
-                if decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len()).to_bool_vartime() {
-                    Ok(())
-                } else {
-                    Err(crate::error::Error::InvalidEncoding)
-                }
+                decode(input.as_ptr(), output.as_mut_ptr().cast(), output.len())
+                    .map_err(|_| crate::error::Error::InvalidEncoding)
             },
-            |input| check(input).to_bool_vartime(),
+            check,
         );
     }
 }

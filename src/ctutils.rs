@@ -22,11 +22,6 @@ use core::mem::MaybeUninit;
 pub use ctutils_dep::Choice;
 
 #[inline]
-fn choice_from_status(status: backend::Status) -> Choice {
-    Choice::from_u8_lsb(status.to_u8())
-}
-
-#[inline]
 fn choice_from_even_len(len: usize) -> Choice {
     Choice::from_u64_eq((len & 1) as u64, 0)
 }
@@ -37,7 +32,10 @@ fn decode_to_uninit(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Choice {
         return Choice::FALSE;
     }
 
-    choice_from_status(backend::decode_status_no_length_check(input, output))
+    // The backend returns the raw error accumulator (`0` iff valid); building the
+    // `Choice` from it here keeps the validity bit out of any `Result` / `bool`
+    // discriminant before the constant-time barrier.
+    Choice::from_u64_eq(backend::decode_accum_no_length_check(input, output), 0)
 }
 
 /// Encode bytes to lowercase hex into `output`, returning whether it succeeded.
@@ -77,8 +75,7 @@ pub fn encode_to_slice_upper(input: &[u8], output: &mut [u8]) -> Choice {
 /// [`crate::decode_to_slice`].
 #[inline]
 pub fn decode_to_slice(input: &[u8], output: &mut [u8]) -> Choice {
-    let output = maybe_uninit::slice_as_uninit_mut(output);
-    decode_to_uninit(input, output)
+    decode_to_uninit(input, maybe_uninit::slice_as_uninit_mut(output))
 }
 
 /// Check if `input` is valid hex, returning a [`Choice`].
@@ -87,9 +84,7 @@ pub fn decode_to_slice(input: &[u8], output: &mut [u8]) -> Choice {
 /// `[0-9a-fA-F]`.
 #[inline]
 pub fn check(input: &[u8]) -> Choice {
-    let len_ok = choice_from_even_len(input.len());
-    let bytes_ok = choice_from_status(backend::check_status(input));
-    len_ok & bytes_ok
+    choice_from_even_len(input.len()) & Choice::from_u64_eq(backend::check_accum(input), 0)
 }
 
 /// Compile-time hex validity check returning a [`Choice`].
@@ -99,6 +94,6 @@ pub fn check(input: &[u8]) -> Choice {
 #[inline]
 pub const fn const_check(input: &[u8]) -> Choice {
     let len_ok = Choice::from_u64_eq((input.len() & 1) as u64, 0);
-    let bytes_ok = Choice::from_u8_lsb(crate::backend::scalar::check(input).to_u8());
+    let bytes_ok = Choice::from_u64_eq(crate::backend::scalar::check_inner(input) as u64, 0);
     len_ok.and(bytes_ok)
 }

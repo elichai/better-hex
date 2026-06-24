@@ -16,7 +16,7 @@
 //! | wasm32 (SIMD128)| compile-time     | when `target_feature="simd128"` |
 //! | everything else | —                | scalar fallback                 |
 //!
-//! The backend functions work with `MaybeUninit<u8>` output buffers
+//! The inner backend functions work with `MaybeUninit<u8>` output buffers
 //! to avoid unnecessary zeroing.
 
 pub mod scalar;
@@ -39,65 +39,6 @@ use core::mem::MaybeUninit;
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InvalidEncoding;
-
-/// Backend validity status.
-///
-/// Internally this stores `0` for valid/success and non-zero for
-/// invalid/failure.
-/// Backend decoders and checkers accumulate non-zero error bits; the
-/// `from_*_error_accum` constructors preserve that representation without
-/// branching on the accumulator value. Ordinary APIs may then branch once when
-/// converting the status into `Result` / `bool`.
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Status(u64);
-
-impl Status {
-    #[inline]
-    #[allow(dead_code)] // Used by x86 AVX-512 backends; unused on other targets.
-    const fn bitnz_u64(value: u64) -> u8 {
-        ((value | value.wrapping_neg()) >> (u64::BITS - 1)) as u8
-    }
-
-    #[inline]
-    pub(crate) const fn from_u8_error_accum(accum: u8) -> Self {
-        Self(accum as u64)
-    }
-
-    #[inline]
-    pub(crate) const fn from_u16_error_accum(accum: u16) -> Self {
-        Self(accum as u64)
-    }
-
-    #[inline]
-    #[allow(dead_code)] // Used by x86 backends; unused on non-x86 targets.
-    pub(crate) const fn from_u32_error_accum(accum: u32) -> Self {
-        Self(accum as u64)
-    }
-
-    #[inline]
-    #[allow(dead_code)] // Used by x86 AVX-512 backends; unused on other targets.
-    pub(crate) const fn from_u64_error_accum(accum: u64) -> Self {
-        Self(accum)
-    }
-
-    #[inline]
-    #[cfg(feature = "ctutils")]
-    pub const fn to_u8(self) -> u8 {
-        Self::bitnz_u64(self.0) ^ 1
-    }
-
-    #[inline]
-    pub const fn to_bool_vartime(self) -> bool {
-        self.0 == 0
-    }
-
-    #[inline]
-    #[allow(dead_code)] // Used by SIMD backends; unused when SIMD is disabled.
-    pub(crate) const fn or(self, rhs: Self) -> Self {
-        Self(self.0 | rhs.0)
-    }
-}
 
 /// Dispatch to the detected platform.
 ///
@@ -217,14 +158,20 @@ pub(crate) fn encode_no_length_check(input: &[u8], output: &mut [MaybeUninit<u8>
     );
 }
 
-/// Decode hex `input` into `output` and return the backend status.
+/// Decode hex `input` into `output` without checking lengths.
 ///
-/// This exposes the backend validity status without first materializing a
-/// `Result` discriminant.
+/// `pub(crate)` so internal callers (e.g. [`HexStr::decode`]) can reach the
+/// raw inner [`Result`] without the [`Error`]-mapping `match` that
+/// [`decode`] adds. That match would otherwise be a data-dependent branch
+/// (the validity bit lives in the discriminant), and bypassing it lets
+/// callers like `HexStr::decode` use `unwrap_unchecked` to give the
+/// optimizer enough information to remove the discriminant load entirely.
 ///
 /// Caller must guarantee `input.len() == output.len() * 2` — debug-checked.
+///
+/// [`HexStr::decode`]: crate::HexStr::decode
 #[inline]
-pub(crate) fn decode_status_no_length_check(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Status {
+pub(crate) fn decode_no_length_check(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), InvalidEncoding> {
     debug_assert_eq!(input.len(), output.len() * 2);
     let src = input.as_ptr();
     let byte_len = output.len();
@@ -244,25 +191,35 @@ pub(crate) fn decode_status_no_length_check(input: &[u8], output: &mut [MaybeUni
     )
 }
 
-/// Decode hex `input` into `output` without checking lengths.
+/// Decode hex `input` into `output` without checking lengths, returning the raw
+/// backend error accumulator (`0` iff every byte was valid hex).
 ///
-/// `pub(crate)` so internal callers (e.g. [`HexStr::decode`]) can bypass the
-/// [`Error`]-mapping `match` that [`decode`] adds. That match would otherwise
-/// be a data-dependent branch (the validity bit lives in the discriminant),
-/// and bypassing it lets callers like `HexStr::decode` use `unwrap_unchecked`
-/// to give the optimizer enough information to remove the discriminant load
-/// entirely.
+/// Lets [`ctutils`] build a constant-time `Choice` without first collapsing the
+/// validity bit into a `Result` discriminant. Each backend's `*_inner` (x86:
+/// the feature-gated `*_accum` wrapper) returns its natural accumulator, widened
+/// to `u64` so one non-zero test suffices. `i32` accumulators go through `u32`
+/// to zero-extend, though for a `== 0` test sign-extension would be harmless.
 ///
 /// Caller must guarantee `input.len() == output.len() * 2` — debug-checked.
 ///
-/// [`HexStr::decode`]: crate::HexStr::decode
+/// [`ctutils`]: crate::ctutils
+#[cfg(feature = "ctutils")]
 #[inline]
-pub(crate) fn decode_no_length_check(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), InvalidEncoding> {
-    if decode_status_no_length_check(input, output).to_bool_vartime() {
-        Ok(())
-    } else {
-        Err(InvalidEncoding)
-    }
+pub(crate) fn decode_accum_no_length_check(input: &[u8], output: &mut [MaybeUninit<u8>]) -> u64 {
+    debug_assert_eq!(input.len(), output.len() * 2);
+    let src = input.as_ptr();
+    let byte_len = output.len();
+    let dst = output.as_mut_ptr().cast::<u8>();
+    // SAFETY: identical contract to `decode_no_length_check`; the x86 `*_accum`
+    // wrappers carry the same `#[target_feature]` as the public wrappers.
+    dispatch!(
+        scalar: unsafe { scalar::decode_inner(src, dst, byte_len) } as u64,
+        neon: unsafe { neon::decode_inner(src, dst, byte_len) } as u64,
+        ssse3: unsafe { x86::decode_ssse3_accum(src, dst, byte_len) } as u32 as u64,
+        avx2: unsafe { x86::decode_avx2_accum(src, dst, byte_len) } as u32 as u64,
+        avx512bw: unsafe { x86::decode_avx512_accum(src, dst, byte_len) },
+        wasm: unsafe { wasm::decode_inner(src, dst, byte_len) } as u64,
+    )
 }
 
 /// Decode hex `input` into `output`.
@@ -282,15 +239,6 @@ pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error>
 /// Check if every byte in `input` is a valid hex ASCII character.
 #[inline(never)]
 pub fn check(input: &[u8]) -> bool {
-    check_status(input).to_bool_vartime()
-}
-
-/// Check every byte in `input` and return the backend status.
-///
-/// This preserves the backend validity status for callers that need to convert
-/// it into their own constant-time status type.
-#[inline]
-pub(crate) fn check_status(input: &[u8]) -> Status {
     dispatch!(
         scalar: scalar::check(input),
         neon: neon::check(input),
@@ -298,6 +246,21 @@ pub(crate) fn check_status(input: &[u8]) -> Status {
         avx2: unsafe { x86::check_avx2(input) },
         avx512bw: unsafe { x86::check_avx512(input) },
         wasm: wasm::check(input),
+    )
+}
+
+/// Check every byte in `input`, returning the raw backend error accumulator
+/// (`0` iff every byte was valid hex). See [`decode_accum_no_length_check`].
+#[cfg(feature = "ctutils")]
+#[inline]
+pub(crate) fn check_accum(input: &[u8]) -> u64 {
+    dispatch!(
+        scalar: scalar::check_inner(input) as u64,
+        neon: neon::check_inner(input) as u64,
+        ssse3: unsafe { x86::check_ssse3_accum(input) } as u32 as u64,
+        avx2: unsafe { x86::check_avx2_accum(input) } as u32 as u64,
+        avx512bw: unsafe { x86::check_avx512_accum(input) },
+        wasm: wasm::check_inner(input) as u64,
     )
 }
 

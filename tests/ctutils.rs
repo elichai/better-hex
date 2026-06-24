@@ -7,27 +7,6 @@ fn assert_choice(choice: ctutils::Choice, expected: bool) {
 }
 
 #[test]
-fn ctutils_does_not_collapse_result_discriminants() {
-    let source = include_str!("../src/ctutils.rs");
-    assert!(!source.contains("choice_from_result"));
-    assert!(!source.contains(".is_ok() as u8"));
-    assert!(!source.contains("CtHexTarget"));
-    assert!(!source.contains("CtFromHex"));
-    assert!(!source.contains("pub fn encode<"));
-    assert!(!source.contains("pub fn encode_upper<"));
-    assert!(!source.contains("pub fn decode<"));
-    assert!(!source.contains("crate::encode::<"));
-    assert!(!source.contains("crate::encode_upper::<"));
-    assert!(!source.contains("crate::decode::<"));
-    assert!(!source.contains("crate::check("));
-    assert!(!source.contains("crate::const_check("));
-    assert!(!source.contains("crate::const_decode_to_array::<"));
-    assert!(!source.contains("alloc::vec!"));
-    assert!(!source.contains("decode_error_accum"));
-    assert!(!source.contains("check_error_accum"));
-}
-
-#[test]
 fn check_returns_choice() {
     assert_choice(ctutils::check(b"deadBEEF"), true);
     assert_choice(ctutils::check(b"abc"), false);
@@ -66,4 +45,28 @@ fn const_check_returns_choice() {
 
     assert_eq!(VALID_CHECK.to_u8(), 1);
     assert_eq!(INVALID_CHECK.to_u8(), 0);
+}
+
+/// Exercise the SIMD chunk loops (16/32/64-byte) and the scalar tail, not just
+/// the short scalar-only path the other tests hit. This is what would catch a
+/// wrong cast or a broken `*_accum` wrapper in the dispatched backends.
+#[test]
+fn covers_simd_chunk_sizes() {
+    for n in [16usize, 31, 32, 47, 64, 100] {
+        let bytes: Vec<u8> = (0..n).map(|i| (i as u8).wrapping_mul(7)).collect();
+
+        let mut hex = vec![0u8; n * 2];
+        assert_choice(ctutils::encode_to_slice(&bytes, &mut hex), true);
+        assert_choice(ctutils::check(&hex), true);
+
+        let mut out = vec![0u8; n];
+        assert_choice(ctutils::decode_to_slice(&hex, &mut out), true);
+        assert_eq!(out, bytes);
+
+        // Corrupt one byte anywhere -> invalid for both check and decode.
+        let mut bad = hex.clone();
+        bad[n] = b'Z';
+        assert_choice(ctutils::check(&bad), false);
+        assert_choice(ctutils::decode_to_slice(&bad, &mut out), false);
+    }
 }

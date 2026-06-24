@@ -1,4 +1,6 @@
+use better_hex::Error;
 use better_hex::bench_internals::scalar;
+use core::fmt::Debug;
 use core::mem::MaybeUninit;
 
 pub fn naive_encode(input: &[u8], upper: bool) -> Vec<u8> {
@@ -46,22 +48,22 @@ pub fn assert_encode_matches(
     assert_eq!(result, expected, "{label} mismatch");
 }
 
-pub fn assert_decode_matches(
+pub fn assert_decode_matches<E: Debug>(
     label: &str,
     hex: &[u8],
     expected: &Result<Vec<u8>, ()>,
-    decode_fn: impl FnOnce(&[u8], &mut [MaybeUninit<u8>]) -> bool,
+    decode_fn: impl FnOnce(&[u8], &mut [MaybeUninit<u8>]) -> Result<(), E>,
 ) {
     let mut buf = vec![MaybeUninit::uninit(); hex.len() / 2];
-    let decoded = decode_fn(hex, &mut buf);
-    match (expected, decoded) {
-        (Ok(expected), true) => {
+    let result = decode_fn(hex, &mut buf);
+    match (expected, result) {
+        (Ok(expected), Ok(())) => {
             let got = assume_init_vec(buf);
             assert_eq!(got, *expected, "{label} output mismatch");
         }
-        (Err(()), false) => {}
-        (Ok(_), false) => panic!("{label}: naive Ok but decode failed"),
-        (Err(()), true) => panic!("{label}: naive Err but decode succeeded"),
+        (Err(()), Err(_)) => {}
+        (Ok(_), Err(error)) => panic!("{label}: naive Ok but got Err({error:?})"),
+        (Err(()), Ok(())) => panic!("{label}: naive Err but got Ok"),
     }
 }
 
@@ -70,9 +72,9 @@ pub fn scalar_encode(data: &[u8], out: &mut [MaybeUninit<u8>], upper: bool) {
     unsafe { scalar::encode(data.as_ptr(), out.as_mut_ptr().cast(), data.len(), upper) }
 }
 
-pub fn scalar_decode(hex: &[u8], out: &mut [MaybeUninit<u8>]) -> bool {
+pub fn scalar_decode(hex: &[u8], out: &mut [MaybeUninit<u8>]) -> Result<(), Error> {
     // SAFETY: `hex` and `out` are valid slices, hex.len() == out.len() * 2 by caller contract.
-    unsafe { scalar::decode(hex.as_ptr(), out.as_mut_ptr().cast(), out.len()) }.to_bool_vartime()
+    unsafe { scalar::decode(hex.as_ptr(), out.as_mut_ptr().cast(), out.len()) }.map_err(|_| Error::InvalidEncoding)
 }
 
 fn decode_nibble(byte: u8) -> Option<u8> {
