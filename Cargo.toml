@@ -36,7 +36,7 @@ bytemuck = { version = "1.25", default-features = false, features = ["derive", "
 serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 heapless = { version = "0.9", default-features = false, optional = true }
 arrayvec = { version = "0.7", default-features = false, optional = true }
-crabgrind = { version = "0.2", optional = true }
+crabgrind = { version = "0.3", optional = true }
 
 [target.'cfg(any(target_arch = "x86", target_arch = "x86_64"))'.dependencies]
 cpufeatures = "0.3"
