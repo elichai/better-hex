@@ -18,6 +18,8 @@
 //!   [`HexStr::const_encode_lower`] / [`const_encode_upper`][HexStr::const_encode_upper] /
 //!   [`const_from_hex`][HexStr::const_from_hex] / [`const_decode`][HexStr::const_decode],
 //!   plus the free functions [`const_decode_to_array`] and [`const_check`]
+//! - **Hex literals** — [`hex_literal!`] decodes string literals and const string
+//!   expressions into byte arrays at compile time, without allocation or feature flags
 //! - **Stack strings** — [`HexStr<N>`][HexStr] with zero heap allocation
 //!
 //! # Performance: `const fn` vs runtime APIs
@@ -97,6 +99,8 @@ mod display;
 mod encode;
 mod error;
 mod hex_str;
+#[doc(hidden)]
+pub mod literal;
 mod maybe_uninit;
 mod platform;
 mod prefix;
