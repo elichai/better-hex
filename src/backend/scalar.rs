@@ -173,13 +173,13 @@ pub const unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Res
 /// internal `== 0` branch on poisoned data).
 #[inline]
 #[doc(hidden)]
-pub const fn check_inner(mut input: &[u8]) -> u16 {
-    let mut err: u16 = 0;
+pub const fn check_inner(mut input: &[u8]) -> u8 {
+    let mut err: u8 = 0;
     while let Some((&byte, rest)) = input.split_first() {
-        // `decode_nibble` returns 0..=15 for valid bytes and a value with
-        // bit 8 set for invalid ones. Shift right to isolate the error bit
-        // — otherwise valid nibbles (e.g. 'd' → 13) would make `err != 0`.
-        err |= decode_nibble(byte) >> 8;
+        // `decode_nibble` returns 0..=15 for valid bytes and 0xFFFF for
+        // invalid ones. Shift right by 8 to isolate the error byte (0x00 or
+        // 0xFF) — otherwise valid nibbles (e.g. 'd' → 13) would make `err != 0`.
+        err |= (decode_nibble(byte) >> 8) as u8;
         input = rest;
     }
     err

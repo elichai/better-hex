@@ -358,7 +358,7 @@ pub fn check_inner(mut input: &[u8]) -> u8 {
     // `vminvq_u8(acc_valid) == 0xFF` iff every lane stayed valid across
     // every chunk. Bitwise NOT flips to error semantics (0 = ok).
     let err = !unsafe { vminvq_u8(acc_valid) };
-    err | scalar::check_inner(input) as u8
+    err | scalar::check_inner(input)
 }
 
 /// Check that every input byte is a hex digit, without early exit.

@@ -67,7 +67,7 @@ fn test_encode_ct(encode: unsafe fn(*const u8, *mut u8, usize, bool), upper: boo
 /// Test that a `decode_inner` is CT for valid inputs at sizes 0..=512.
 ///
 /// Calls the inner directly; `decode_inner` returns the raw error accumulator
-/// (`u8`/`i32`/`u64` depending on backend). We unpoison it, then assert
+/// (`u8`/`u32`/`u64` depending on backend). We unpoison it, then assert
 /// `accum == T::default()` (i.e. zero) — declaring the validity bit
 /// observable while keeping the input-content bits poisoned.
 #[inline(always)]
