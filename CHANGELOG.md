@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `hex!` accepts spaces, tabs, and underscores as formatting separators,
+  alongside CR/LF. Separators do not define byte boundaries; an odd number
+  of hex digits is still rejected at compile time without padding.
+
 ## [1.1.1](https://github.com/elichai/better-hex/compare/v1.1.0...v1.1.1) - 2026-11-24
 
 ### Other

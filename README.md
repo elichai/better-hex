@@ -16,7 +16,7 @@ Fast, constant-time hex encoding and decoding with SIMD and `const fn`.
     via the `Result` / `bool` return — the *content* of an invalid byte is
     not leaked through timing.
   - **Exception: the `hex!` parser is not constant-time.** Its data-dependent
-    prefix and newline handling runs only during compile-time evaluation.
+    prefix and separator handling runs only during compile-time evaluation.
 - **SIMD** — x86 (SSSE3 / AVX2 / AVX-512 BW + VBMI), AArch64 (NEON),
   WebAssembly (SIMD128). Runtime CPU feature detection on x86; compile-time
   selection on AArch64 and WASM.
@@ -80,12 +80,12 @@ let arr: [u8; 5] = better_hex::decode(b"68656c6c6f")?;
 
 // Hex literals: mixed case, optional prefixes, and const expressions
 const INPUT: &str = "0xdead";
-const BYTES: [u8; 4] = better_hex::hex!(INPUT, "0XBEEF");
+const BYTES: [u8; 4] = better_hex::hex!(INPUT, "BE_EF");
 assert_eq!(BYTES, [0xde, 0xad, 0xbe, 0xef]);
 ```
 
 **Timing exception:** `hex!` uses data-dependent branches and memory accesses
-to handle prefixes and line endings. **Its parser is not constant-time.**
+to handle prefixes and separators. **Its parser is not constant-time.**
 The macro forces parsing and decoding to happen at compile time, including
 when invoked inside an ordinary function; no input parsing runs at runtime.
 Compilation time has no constant-time guarantee. Direct runtime calls to the
@@ -95,19 +95,21 @@ documented timing guarantees.
 
 `hex!` accepts adjacent string literals (`hex!("de" "ad")`)
 or comma-separated const `&str` expressions. Each input accepts mixed-case
-hex digits and one optional leading `0x` or `0X` prefix. CR and LF line
-endings are ignored, including before the prefix; the prefix must be
-contiguous. Spaces, tabs, colons, and all other non-hex characters are
-rejected, so multiline strings must have no indentation. Each input must
-contain an even number of hex digits after removing its prefix and line
-endings. Empty inputs, including a prefix alone, contribute no bytes;
+hex digits and one optional leading `0x` or `0X` prefix. Spaces, tabs, CR/LF
+line endings, and underscores are ignored, including before the prefix and
+between a byte's digits. The prefix must be contiguous. Colons and all other
+non-hex characters are rejected. Each input must contain an even number of
+hex digits after removing its prefix and separators. The remaining digits
+are paired from left to right: `hex!("0 201")` produces `[0x02, 0x01]`, while
+`hex!("201")` is rejected at compile time. No zero padding or partial byte
+is produced. Empty inputs, including a prefix alone, contribute no bytes;
 `hex!()` produces `[u8; 0]`. Invalid input causes a compilation
 error, including inside ordinary functions. Runtime variables are not
 accepted.
 
 Code using `hex_literal::hex!` can retain the `hex!` name with
-`use better_hex::hex;`. The rules above apply: remove spaces,
-tabs, and colons from existing literals, or replace them with line endings.
+`use better_hex::hex;`. The rules above apply: colons must be removed or
+replaced with supported separators.
 
 ## Comparison with related crates
 

@@ -1,12 +1,18 @@
 //! Implementation details of [`crate::hex!`].
 //!
-//! **These helpers are not constant-time.** Prefix handling and newline removal
+//! **These helpers are not constant-time.** Prefix handling and separator removal
 //! use data-dependent branches and memory accesses. The macro evaluates them
 //! only at compile time; direct runtime calls have no constant-time guarantee.
 
+const fn is_separator(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\r' | b'\n' | b'_')
+}
+
 const fn content(input: &str) -> &[u8] {
     let mut bytes = input.as_bytes();
-    while let [b'\r' | b'\n', rest @ ..] = bytes {
+    while let [byte, rest @ ..] = bytes
+        && is_separator(*byte)
+    {
         bytes = rest;
     }
     match bytes {
@@ -24,7 +30,7 @@ pub const fn stripped_len(mut strings: &[&str]) -> usize {
         let mut bytes = content(string);
         while let Some((&byte, rest)) = bytes.split_first() {
             bytes = rest;
-            len += (!matches!(byte, b'\r' | b'\n')) as usize;
+            len += (!is_separator(byte)) as usize;
         }
         assert!(
             (len - start).is_multiple_of(2),
@@ -34,7 +40,7 @@ pub const fn stripped_len(mut strings: &[&str]) -> usize {
     len
 }
 
-/// Remove prefixes and line endings. **Not constant-time.**
+/// Remove prefixes and separators. **Not constant-time.**
 pub const fn strip<const N: usize>(mut strings: &[&str]) -> [u8; N] {
     let mut output = [0; N];
     let mut written = 0;
@@ -43,7 +49,7 @@ pub const fn strip<const N: usize>(mut strings: &[&str]) -> [u8; N] {
         let mut bytes = content(string);
         while let Some((&byte, rest)) = bytes.split_first() {
             bytes = rest;
-            if !matches!(byte, b'\r' | b'\n') {
+            if !is_separator(byte) {
                 output[written] = byte;
                 written += 1;
             }
@@ -64,7 +70,7 @@ pub const fn strip<const N: usize>(mut strings: &[&str]) -> [u8; N] {
 /// guarantees.
 ///
 /// Its compile-time parser is intentionally **not constant-time**: prefix
-/// handling and newline removal use data-dependent branches and memory accesses.
+/// handling and separator removal use data-dependent branches and memory accesses.
 /// This is an explicit exception to the crate's constant-time codec guarantees.
 /// Compilation time has no constant-time guarantee. The hidden normalization
 /// helpers also have no constant-time guarantee if called directly at runtime.
@@ -78,56 +84,62 @@ pub const fn strip<const N: usize>(mut strings: &[&str]) -> [u8; N] {
 /// allowed with the expression syntax. The decoded inputs are concatenated.
 ///
 /// Each input accepts mixed-case ASCII hex digits and an optional leading
-/// `0x` or `0X` prefix. CR (`\r`) and LF (`\n`) are ignored, including before
-/// the prefix and between a byte's digits. The prefix itself must be contiguous.
-/// Spaces, tabs, colons, and all other non-hex characters are rejected.
-/// Multiline strings must therefore contain no indentation.
+/// `0x` or `0X` prefix. Spaces, tabs, CR (`\r`), LF (`\n`), and underscores
+/// are ignored, including before the prefix and between a byte's digits.
+/// The prefix itself must be contiguous. Colons and all other non-hex characters
+/// are rejected.
 ///
 /// Each input must contain an even number of hex digits after removing its
-/// prefix and line endings. Digits cannot pair across input boundaries.
-/// Empty inputs and inputs containing only a prefix or line endings contribute
-/// no bytes. An empty invocation produces `[u8; 0]`.
+/// prefix and separators. The remaining digits are paired from left to right;
+/// separator positions do not mark byte boundaries. Digits cannot pair across
+/// input boundaries. Empty inputs and inputs containing only a prefix or
+/// separators contribute no bytes. An empty invocation produces `[u8; 0]`.
 ///
 /// Evaluation is forced at compile time, even inside ordinary functions.
 /// Runtime variables are not accepted. No features or allocation are required.
 ///
+/// # Examples
+///
 /// ```
 /// use better_hex::hex;
 ///
-/// const INPUT: &str = "0xdead";
-/// const BYTES: [u8; 4] = hex!(INPUT, concat!("BE", "EF"));
-/// assert_eq!(BYTES, [0xde, 0xad, 0xbe, 0xef]);
-/// assert_eq!(hex!("de" "AD"), [0xde, 0xad]);
-/// assert_eq!(hex!(r#"
-/// 00010203
-/// 04050607
-/// "#), [0, 1, 2, 3, 4, 5, 6, 7]);
-/// let empty: [u8; 0] = hex!();
-/// assert_eq!(empty, []);
+/// // Spaces and underscores make byte groups easier to read.
+/// const PACKET: [u8; 6] = hex!("0x0201 0200_0700");
+/// assert_eq!(PACKET, [0x02, 0x01, 0x02, 0x00, 0x07, 0x00]);
+///
+/// // Multiline input can be indented.
+/// const MULTILINE: [u8; 6] = hex!("
+///     0201 0200
+///     0700
+/// ");
+/// assert_eq!(MULTILINE, PACKET);
+///
+/// // Const expressions and adjacent literals are also supported.
+/// const HEADER: &str = "0201";
+/// assert_eq!(hex!(HEADER, "0200_0700"), PACKET);
+/// assert_eq!(hex!("0201" "0200" "0700"), PACKET);
+///
+/// // Separators do not mark byte boundaries: "0 201" becomes "0201".
+/// assert_eq!(hex!("0 201"), [0x02, 0x01]);
+/// ```
+///
+/// An odd total number of hex digits is **rejected at compile time**. No zero
+/// padding or partial byte is produced:
+///
+/// ```compile_fail
+/// let _ = better_hex::hex!("201"); // Three digits: rejected, not [0x02, 0x01].
 /// ```
 ///
 /// Code using [`hex-literal`] can retain the `hex!` name with
 /// `use better_hex::hex;`. The input rules above apply:
-/// spaces, tabs, and colons must be removed or replaced with line endings.
+/// colons must be removed or replaced with supported separators.
 ///
 /// [`hex-literal`]: https://docs.rs/hex-literal/1.1.0/hex_literal/
 ///
 /// Invalid input fails to compile in ordinary expressions too:
 ///
 /// ```compile_fail
-/// let _ = better_hex::hex!("00 11");
-/// ```
-///
-/// ```compile_fail
-/// let _ = better_hex::hex!("00\t11");
-/// ```
-///
-/// ```compile_fail
 /// let _ = better_hex::hex!("00:11");
-/// ```
-///
-/// ```compile_fail
-/// let _ = better_hex::hex!("ab_cd");
 /// ```
 ///
 /// ```compile_fail
@@ -160,6 +172,10 @@ pub const fn strip<const N: usize>(mut strings: &[&str]) -> [u8; N] {
 /// let _ = better_hex::hex!("0\nx12");
 /// ```
 ///
+/// ```compile_fail
+/// let _ = better_hex::hex!("0_x12");
+/// ```
+///
 /// Digits cannot pair across input boundaries, including const expressions:
 ///
 /// ```compile_fail
@@ -168,7 +184,7 @@ pub const fn strip<const N: usize>(mut strings: &[&str]) -> [u8; N] {
 /// ```
 ///
 /// ```compile_fail
-/// let _ = better_hex::hex!("0x1");
+/// let _ = better_hex::hex!("0x2_01"); // Separators do not count as hex digits.
 /// ```
 ///
 /// Runtime variables and byte strings are not accepted:
@@ -215,16 +231,16 @@ mod tests {
     use alloc::{format, string::String, vec};
     use proptest::prelude::*;
 
-    fn formatted(bytes: &[u8], prefix: &str, line_ending: &str, uppercase: bool) -> String {
+    fn formatted(bytes: &[u8], prefix: &str, separator: &str, uppercase: bool) -> String {
         let hex = if uppercase {
             ::hex::encode_upper(bytes)
         } else {
             ::hex::encode(bytes)
         };
-        let mut input = format!("{line_ending}{prefix}");
+        let mut input = format!("{separator}{prefix}");
         for digit in hex.chars() {
             input.push(digit);
-            input.push_str(line_ending);
+            input.push_str(separator);
         }
         input
     }
@@ -232,12 +248,12 @@ mod tests {
     proptest! {
         #[test]
         fn content_matches_string_oracle(
-            leading in "[\r\n]{0,4}",
-            prefix in prop::sample::select(vec!["", "0x", "0X", "0\nx", "0\rx", "0x0x", " 0x", "\t0X", ":0x"]),
-            tail in prop_oneof!["(?s:.{0,32})", "[0-9A-Fa-f\r\n :\t]{0,32}"],
+            leading in "[ \t\r\n_]{0,4}",
+            prefix in prop::sample::select(vec!["", "0x", "0X", "0\nx", "0_x", "0 x", "0\tx", "0x0x", " 0x", "\t0X", ":0x"]),
+            tail in prop_oneof!["(?s:.{0,32})", "[0-9A-Fa-f\r\n_ :\t]{0,32}"],
         ) {
             let input = format!("{leading}{prefix}{tail}");
-            let expected = input.trim_start_matches(['\r', '\n']);
+            let expected = input.trim_start_matches([' ', '\t', '\r', '\n', '_']);
             let expected = expected.strip_prefix("0x")
                 .or_else(|| expected.strip_prefix("0X"))
                 .unwrap_or(expected);
@@ -250,10 +266,10 @@ mod tests {
             split in 0usize..=32,
             prefixes in prop::array::uniform2(prop::sample::select(vec!["", "0x", "0X"])),
             uppercase in any::<[bool; 2]>(),
-            line_ending in prop::sample::select(vec!["", "\r", "\n", "\r\n"]),
+            separator in prop::sample::select(vec!["", "\r", "\n", "\r\n", " ", "\t", "_", " _\t\r\n"]),
         ) {
-            let first = formatted(&bytes[..split], prefixes[0], line_ending, uppercase[0]);
-            let second = formatted(&bytes[split..], prefixes[1], line_ending, uppercase[1]);
+            let first = formatted(&bytes[..split], prefixes[0], separator, uppercase[0]);
+            let second = formatted(&bytes[split..], prefixes[1], separator, uppercase[1]);
             let inputs = [first.as_str(), second.as_str()];
             prop_assert_eq!(stripped_len(&inputs), 64);
             let normalized = strip::<64>(&inputs);
@@ -265,7 +281,7 @@ mod tests {
             bytes in any::<[u8; 32]>(),
             // Avoid creating a valid leading 0x prefix with the corruption.
             position in 2usize..64,
-            invalid in prop::sample::select(vec![b' ', b'\t', b':', b'_', b'/', b'G', b'x', b'X', b'\0', b'\x0b', b'\x0c']),
+            invalid in prop::sample::select(vec![b':', b'/', b'G', b'x', b'X', b'\0', b'\x0b', b'\x0c']),
         ) {
             let mut input = ::hex::encode(bytes).into_bytes();
             input[position] = invalid;
@@ -285,7 +301,9 @@ mod tests {
         ) {
             let input = ::hex::encode(bytes);
             let (first, second) = input.split_at(split_byte * 2 + 1);
-            prop_assert!(std::panic::catch_unwind(|| stripped_len(&[first, second])).is_err());
+            let first = format!("0x{first} _\n");
+            let second = format!(" 0X_{second}\t");
+            prop_assert!(std::panic::catch_unwind(|| stripped_len(&[&first, &second])).is_err());
         }
     }
 }
