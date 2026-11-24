@@ -182,6 +182,7 @@ macro_rules! hex {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(panic = "unwind")]
     extern crate std;
 
     use super::{content, strip, stripped_len};
@@ -250,6 +251,8 @@ mod tests {
             prop_assert_eq!(const_decode_to_array::<32>(&normalized), Err(Error::InvalidEncoding));
         }
 
+        // Expected panics cannot be caught on panic=abort targets such as WASI.
+        #[cfg(panic = "unwind")]
         #[test]
         fn rejects_odd_inputs_even_when_total_length_is_even(
             bytes in any::<[u8; 32]>(),
