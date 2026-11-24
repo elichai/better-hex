@@ -1,4 +1,9 @@
-// Literal parsing is evaluated at compile time; it need not be constant-time.
+//! Implementation details of [`crate::hex!`].
+//!
+//! **These helpers are not constant-time.** Prefix handling and newline removal
+//! use data-dependent branches and memory accesses. The macro evaluates them
+//! only at compile time; direct runtime calls have no constant-time guarantee.
+
 const fn content(input: &str) -> &[u8] {
     let mut bytes = input.as_bytes();
     while let [b'\r' | b'\n', rest @ ..] = bytes {
@@ -10,6 +15,7 @@ const fn content(input: &str) -> &[u8] {
     }
 }
 
+/// Compute the normalized input length. **Not constant-time.**
 pub const fn stripped_len(mut strings: &[&str]) -> usize {
     let mut len = 0usize;
     while let Some((string, rest)) = strings.split_first() {
@@ -28,6 +34,7 @@ pub const fn stripped_len(mut strings: &[&str]) -> usize {
     len
 }
 
+/// Remove prefixes and line endings. **Not constant-time.**
 pub const fn strip<const N: usize>(mut strings: &[&str]) -> [u8; N] {
     let mut output = [0; N];
     let mut written = 0;
@@ -47,6 +54,21 @@ pub const fn strip<const N: usize>(mut strings: &[&str]) -> [u8; N] {
 }
 
 /// Decode hexadecimal strings into a `[u8; N]` at compile time.
+///
+/// # Timing
+///
+/// **This macro's parser is not constant-time.** Prefix handling and newline
+/// removal use data-dependent branches and memory accesses. This is an explicit
+/// exception to the crate's constant-time codec guarantees.
+///
+/// The macro forces parsing and decoding to happen at compile time, even inside
+/// an ordinary function. No input parsing runs at runtime. Compilation time has
+/// no constant-time guarantee. The hidden normalization helpers are also not
+/// constant-time if called directly at runtime. Use [`crate::decode`] or
+/// [`crate::decode_to_slice`] for runtime decoding under the crate's documented
+/// timing guarantees.
+///
+/// # Input syntax
 ///
 /// Accepts adjacent string literals (including raw strings), or comma-separated
 /// expressions that evaluate to `&str` at compile time. A trailing comma is

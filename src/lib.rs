@@ -12,7 +12,10 @@
 //!
 //! # Features
 //!
-//! - **Constant-time** — all operations use branchless arithmetic w.r.t. input data values
+//! - **Constant-time codec APIs** — encoding, decoding, and checking use
+//!   data-independent arithmetic w.r.t. input data values; input lengths and
+//!   the returned validity bit are observable. **Exception: [`hex!`]'s parser
+//!   is not constant-time; it runs only during compile-time evaluation.**
 //! - **SIMD** — x86 (SSSE3/AVX2/AVX-512BW/AVX-512 VBMI), AArch64 (NEON), WASM (SIMD128)
 //! - **`const fn`** — compile-time encode, decode, and validation via
 //!   [`HexStr::const_encode_lower`] / [`const_encode_upper`][HexStr::const_encode_upper] /
@@ -22,9 +25,19 @@
 //!   expressions into byte arrays at compile time, without allocation or feature flags
 //! - **Stack strings** — [`HexStr<N>`][HexStr] with zero heap allocation
 //!
+//! # Timing of `hex!`
+//!
+//! **The [`hex!`] parser is not constant-time.** Prefix handling and newline
+//! removal use data-dependent branches and memory accesses. The macro forces
+//! parsing and decoding to happen at compile time, even when invoked inside an
+//! ordinary function; no input parsing runs at runtime. Compilation time has
+//! no constant-time guarantee. The hidden normalization helpers also have no
+//! constant-time guarantee if called directly at runtime.
+//!
 //! # Performance: `const fn` vs runtime APIs
 //!
-//! All `const fn` entry points run the scalar branchless backend only —
+//! The encoding, decoding, and checking `const fn` APIs run the scalar
+//! branchless backend only —
 //! CPU SIMD intrinsics (SSSE3/AVX2/AVX-512/NEON/SIMD128) are not callable
 //! from `const` contexts in stable Rust. The scalar backend is still
 //! constant-time (no table lookups, no data-dependent branches), but it
