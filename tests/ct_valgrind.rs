@@ -10,10 +10,10 @@
 //!
 //! Run with:
 //! ```sh
-//! cargo test --features ct-test --test ct_valgrind --release --no-run
-//! valgrind --tool=memcheck --error-exitcode=1 --leak-check=no \
-//!     target/release/deps/ct_valgrind-*
+//! CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER="valgrind --tool=memcheck --error-exitcode=1 --leak-check=no" \
+//!     cargo test --locked --features ct-test --test ct_valgrind --release
 //! ```
+//! On aarch64 Linux, use `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER` instead.
 
 #![cfg(feature = "ct-test")]
 

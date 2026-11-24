@@ -33,8 +33,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.97.0
+        uses: dtolnay/rust-toolchain@1.97.0
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -86,8 +86,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.97.0
+        uses: dtolnay/rust-toolchain@1.97.0
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2

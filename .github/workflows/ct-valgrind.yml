@@ -30,8 +30,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust 1.97.0
+        uses: dtolnay/rust-toolchain@1.97.0
 
       - name: Install Valgrind and libclang
         run: sudo apt-get update && sudo apt-get install -y valgrind libclang-dev
@@ -41,15 +41,10 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Build CT tests (release, for accurate codegen)
-        run: cargo test --features ct-test --test ct_valgrind --release --no-run
-
-      - name: Run under Valgrind
-        run: |
-          TEST_BIN=$(find target/release/deps -name 'ct_valgrind-*' -executable -type f)
-          echo "Running: $TEST_BIN"
-          valgrind --tool=memcheck \
-            --error-exitcode=1 \
-            --leak-check=no \
-            --errors-for-leak-kinds=none \
-            $TEST_BIN
+      - name: Run CT tests under Valgrind (release, for accurate codegen)
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: >-
+            valgrind --tool=memcheck --error-exitcode=1 --leak-check=no --errors-for-leak-kinds=none
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER: >-
+            valgrind --tool=memcheck --error-exitcode=1 --leak-check=no --errors-for-leak-kinds=none
+        run: cargo test --locked --features ct-test --test ct_valgrind --release

@@ -187,6 +187,10 @@ for Miri's slow interpreter (`PROPTEST_CASES=8`).
 
 ## Development
 
+CI validation, Valgrind, and benchmarks use Rust **1.97.0**. Toolchain updates
+are explicit so new compiler warnings do not break unrelated pull requests.
+Use `cargo +1.97.0 test` and `cargo +1.97.0 clippy` to match these jobs locally.
+
 A pre-commit hook in [`.githooks/`](.githooks/) runs `cargo fmt --check` and
 `cargo clippy -D warnings` (mirroring the CI `Format` and `Clippy` jobs) before
 each commit. Enable it once per clone:
