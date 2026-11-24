@@ -27,12 +27,16 @@
 //!
 //! # Timing of `hex!`
 //!
-//! **The [`hex!`] parser is not constant-time.** Prefix handling and newline
-//! removal use data-dependent branches and memory accesses. The macro forces
-//! parsing and decoding to happen at compile time, even when invoked inside an
-//! ordinary function; no input parsing runs at runtime. Compilation time has
-//! no constant-time guarantee. The hidden normalization helpers also have no
-//! constant-time guarantee if called directly at runtime.
+//! **[`hex!`] works only at compile time.** It rejects runtime inputs and forces
+//! all parsing and decoding into constant evaluation, even when invoked inside
+//! an ordinary function. No parser runs at runtime. Making this parser
+//! constant-time would therefore not improve the running program's timing
+//! guarantees.
+//!
+//! Its compile-time parser is intentionally **not constant-time**: prefix
+//! handling and newline removal use data-dependent branches and memory accesses.
+//! Compilation time has no constant-time guarantee. The hidden normalization
+//! helpers also have no constant-time guarantee if called directly at runtime.
 //!
 //! # Performance: `const fn` vs runtime APIs
 //!

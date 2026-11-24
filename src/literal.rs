@@ -57,16 +57,19 @@ pub const fn strip<const N: usize>(mut strings: &[&str]) -> [u8; N] {
 ///
 /// # Timing
 ///
-/// **This macro's parser is not constant-time.** Prefix handling and newline
-/// removal use data-dependent branches and memory accesses. This is an explicit
-/// exception to the crate's constant-time codec guarantees.
+/// **This macro works only at compile time.** It rejects runtime inputs and
+/// forces all parsing and decoding into constant evaluation, even when invoked
+/// inside an ordinary function. No parser runs at runtime. Making this parser
+/// constant-time would therefore not improve the running program's timing
+/// guarantees.
 ///
-/// The macro forces parsing and decoding to happen at compile time, even inside
-/// an ordinary function. No input parsing runs at runtime. Compilation time has
-/// no constant-time guarantee. The hidden normalization helpers are also not
-/// constant-time if called directly at runtime. Use [`crate::decode`] or
-/// [`crate::decode_to_slice`] for runtime decoding under the crate's documented
-/// timing guarantees.
+/// Its compile-time parser is intentionally **not constant-time**: prefix
+/// handling and newline removal use data-dependent branches and memory accesses.
+/// This is an explicit exception to the crate's constant-time codec guarantees.
+/// Compilation time has no constant-time guarantee. The hidden normalization
+/// helpers also have no constant-time guarantee if called directly at runtime.
+/// Use [`crate::decode`] or [`crate::decode_to_slice`] for runtime decoding under
+/// the crate's documented timing guarantees.
 ///
 /// # Input syntax
 ///
