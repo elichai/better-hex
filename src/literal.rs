@@ -184,6 +184,14 @@ pub const fn strip<const N: usize>(mut strings: &[&str]) -> [u8; N] {
 /// ```
 ///
 /// ```compile_fail
+/// let _ = better_hex::hex!("00", "a", "b"); // A valid first input changes nothing.
+/// ```
+///
+/// ```compile_fail
+/// let _ = better_hex::hex!("00" "a" "b");
+/// ```
+///
+/// ```compile_fail
 /// let _ = better_hex::hex!("0x2_01"); // Separators do not count as hex digits.
 /// ```
 ///
@@ -226,23 +234,138 @@ mod tests {
     #[cfg(panic = "unwind")]
     extern crate std;
 
-    use super::{content, strip, stripped_len};
+    use super::{content, is_separator, strip, stripped_len};
     use crate::{Error, const_decode_to_array};
-    use alloc::{format, string::String, vec};
+    use alloc::{format, string::String, vec, vec::Vec};
     use proptest::prelude::*;
+    use proptest::test_runner::TestCaseResult;
 
-    fn formatted(bytes: &[u8], prefix: &str, separator: &str, uppercase: bool) -> String {
-        let hex = if uppercase {
-            ::hex::encode_upper(bytes)
-        } else {
-            ::hex::encode(bytes)
-        };
-        let mut input = format!("{separator}{prefix}");
-        for digit in hex.chars() {
-            input.push(digit);
-            input.push_str(separator);
+    fn formatted(bytes: &[u8]) -> impl Strategy<Value = (String, String)> + use<> {
+        let hex = ::hex::encode(bytes);
+        let len = hex.len();
+        (
+            Just(hex),
+            prop::sample::select(vec!["", "0x", "0X"]),
+            prop::collection::vec("[ \t\r\n_]{0,3}", len + 2),
+            prop::collection::vec(any::<bool>(), len),
+        )
+            .prop_map(|(hex, prefix, gaps, uppercase)| {
+                let mut input = format!("{}{prefix}{}", gaps[0], gaps[1]);
+                let mut expected = String::new();
+                for (i, digit) in hex.chars().enumerate() {
+                    let digit = if uppercase[i] {
+                        digit.to_ascii_uppercase()
+                    } else {
+                        digit
+                    };
+                    input.push(digit);
+                    input.push_str(&gaps[i + 2]);
+                    expected.push(digit);
+                }
+                (input, expected)
+            })
+    }
+
+    fn normalization_inputs() -> impl Strategy<Value = (Vec<u8>, Vec<(String, String)>)> {
+        prop::sample::select(vec![0, 1, 2, 3, 8, 32, 64])
+            .prop_flat_map(|len| {
+                (
+                    prop::collection::vec(any::<u8>(), len),
+                    prop::collection::vec(0usize..=len, 0..8),
+                )
+            })
+            .prop_flat_map(|(bytes, mut ends)| {
+                ends.sort_unstable();
+                if !bytes.is_empty() || !ends.is_empty() {
+                    ends.push(bytes.len());
+                }
+                let mut start = 0;
+                let inputs: Vec<_> = ends
+                    .into_iter()
+                    .map(|end| {
+                        let input = formatted(&bytes[start..end]);
+                        start = end;
+                        input
+                    })
+                    .collect();
+                (Just(bytes), inputs)
+            })
+    }
+
+    fn check_normalization<const N: usize, const DIGITS: usize>(
+        inputs: &[&str],
+        expected: &str,
+        bytes: &[u8],
+    ) -> TestCaseResult {
+        prop_assert_eq!(stripped_len(inputs), DIGITS);
+        let normalized = strip::<DIGITS>(inputs);
+        prop_assert_eq!(normalized.as_slice(), expected.as_bytes());
+        let decoded = const_decode_to_array::<N>(&normalized).unwrap();
+        prop_assert_eq!(decoded.as_slice(), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn separator_classification_is_exact_for_every_byte() {
+        for byte in u8::MIN..=u8::MAX {
+            assert_eq!(is_separator(byte), b" \t\r\n_".contains(&byte), "{byte:#04x}");
         }
-        input
+    }
+
+    #[test]
+    fn preserves_every_invalid_ascii_character_at_each_digit_position() {
+        for byte in 0u8..=0x7f {
+            if byte.is_ascii_hexdigit() || b" \t\r\n_".contains(&byte) {
+                continue;
+            }
+            for expected in [[byte, b'0'], [b'1', byte]] {
+                let digits = core::str::from_utf8(&expected).unwrap();
+                for prefix in ["", "0x", "0X"] {
+                    let input = format!(" _{prefix}{digits}\t");
+                    assert_eq!(stripped_len(&[&input]), 2);
+                    assert_eq!(strip::<2>(&[&input]), expected);
+                    assert_eq!(const_decode_to_array::<1>(&expected), Err(Error::InvalidEncoding));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn preserves_utf8_bytes_for_decoder_rejection() {
+        // Each payload has an even byte count, so parity cannot mask rejection.
+        for payload in ["é", "€0", "🦀"] {
+            for digits in [
+                format!("{payload}0011"),
+                format!("00{payload}11"),
+                format!("0011{payload}"),
+            ] {
+                for prefix in ["", "0x", "0X"] {
+                    let input = format!(" _{prefix}{digits}\t");
+                    assert_eq!(stripped_len(&[&input]), digits.len());
+                    match digits.len() {
+                        6 => {
+                            let normalized = strip::<6>(&[&input]);
+                            assert_eq!(normalized.as_slice(), digits.as_bytes());
+                            assert_eq!(const_decode_to_array::<3>(&normalized), Err(Error::InvalidEncoding));
+                        }
+                        8 => {
+                            let normalized = strip::<8>(&[&input]);
+                            assert_eq!(normalized.as_slice(), digits.as_bytes());
+                            assert_eq!(const_decode_to_array::<4>(&normalized), Err(Error::InvalidEncoding));
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(panic = "unwind")]
+    #[test]
+    fn rejects_odd_last_input_after_valid_inputs() {
+        for first in ["", "0x", " _\t\r\n", "00"] {
+            assert!(std::panic::catch_unwind(|| stripped_len(&[first, "a"])).is_err());
+        }
     }
 
     proptest! {
@@ -262,18 +385,20 @@ mod tests {
 
         #[test]
         fn normalization_preserves_bytes_across_inputs(
-            bytes in any::<[u8; 32]>(),
-            split in 0usize..=32,
-            prefixes in prop::array::uniform2(prop::sample::select(vec!["", "0x", "0X"])),
-            uppercase in any::<[bool; 2]>(),
-            separator in prop::sample::select(vec!["", "\r", "\n", "\r\n", " ", "\t", "_", " _\t\r\n"]),
+            (bytes, formatted) in normalization_inputs(),
         ) {
-            let first = formatted(&bytes[..split], prefixes[0], separator, uppercase[0]);
-            let second = formatted(&bytes[split..], prefixes[1], separator, uppercase[1]);
-            let inputs = [first.as_str(), second.as_str()];
-            prop_assert_eq!(stripped_len(&inputs), 64);
-            let normalized = strip::<64>(&inputs);
-            prop_assert_eq!(const_decode_to_array::<32>(&normalized), Ok(bytes));
+            let inputs: Vec<_> = formatted.iter().map(|(input, _)| input.as_str()).collect();
+            let expected: String = formatted.iter().map(|(_, digits)| digits.as_str()).collect();
+            match bytes.len() {
+                0 => check_normalization::<0, 0>(&inputs, &expected, &bytes)?,
+                1 => check_normalization::<1, 2>(&inputs, &expected, &bytes)?,
+                2 => check_normalization::<2, 4>(&inputs, &expected, &bytes)?,
+                3 => check_normalization::<3, 6>(&inputs, &expected, &bytes)?,
+                8 => check_normalization::<8, 16>(&inputs, &expected, &bytes)?,
+                32 => check_normalization::<32, 64>(&inputs, &expected, &bytes)?,
+                64 => check_normalization::<64, 128>(&inputs, &expected, &bytes)?,
+                _ => unreachable!(),
+            }
         }
 
         #[test]
@@ -298,12 +423,17 @@ mod tests {
         fn rejects_odd_inputs_even_when_total_length_is_even(
             bytes in any::<[u8; 32]>(),
             split_byte in 0usize..32,
+            before in prop::collection::vec(prop::sample::select(vec!["", "0x", " _\t\r\n", "00", "0X_abcd"]), 0..8),
+            between in prop::collection::vec(prop::sample::select(vec!["", "0x", " _\t\r\n", "00", "0X_abcd"]), 0..8),
+            after in prop::collection::vec(prop::sample::select(vec!["", "0x", " _\t\r\n", "00", "0X_abcd"]), 0..8),
         ) {
             let input = ::hex::encode(bytes);
             let (first, second) = input.split_at(split_byte * 2 + 1);
             let first = format!("0x{first} _\n");
             let second = format!(" 0X_{second}\t");
-            prop_assert!(std::panic::catch_unwind(|| stripped_len(&[&first, &second])).is_err());
+            let inputs: Vec<_> = before.into_iter().chain([first.as_str()])
+                .chain(between).chain([second.as_str()]).chain(after).collect();
+            prop_assert!(std::panic::catch_unwind(|| stripped_len(&inputs)).is_err());
         }
     }
 }
