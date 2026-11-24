@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0](https://github.com/elichai/better-hex/compare/v1.1.1...v1.2.0) - 2026-11-24
+
+### Added
+
+- accept spaces and underscores in hex macro
+
+### Other
+
+- refresh fuzz lockfile in release-plz PRs
+- check both lockfiles and fix stale fuzz lockfile
+- strengthen hex literal normalization coverage
+
 ### Added
 
 - `hex!` accepts spaces, tabs, and underscores as formatting separators,
