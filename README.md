@@ -6,7 +6,7 @@ Fast, constant-time hex encoding and decoding with SIMD and `const fn`.
 
 ## Features
 
-- **Constant-time** — every encode, decode, and check operation is
+- **Constant-time codec APIs** — the encoding, decoding, and checking functions are
   constant-time w.r.t. the *content* of valid hex input:
   - No memory-resident lookup tables — branchless arithmetic on the scalar
     path, register-only SIMD LUTs on the SIMD paths.
@@ -15,6 +15,8 @@ Fast, constant-time hex encoding and decoding with SIMD and `const fn`.
     For `decode` / `check`, *whether* the input was valid hex is observable
     via the `Result` / `bool` return — the *content* of an invalid byte is
     not leaked through timing.
+  - **Exception: the `hex!` parser is not constant-time.** Its data-dependent
+    prefix and newline handling runs only during compile-time evaluation.
 - **SIMD** — x86 (SSSE3 / AVX2 / AVX-512 BW + VBMI), AArch64 (NEON),
   WebAssembly (SIMD128). Runtime CPU feature detection on x86; compile-time
   selection on AArch64 and WASM.
@@ -22,7 +24,8 @@ Fast, constant-time hex encoding and decoding with SIMD and `const fn`.
   branchless scalar backend.
 - **`hex!`** — compile-time byte arrays from hex string literals,
   const string expressions, or multiline input, with optional `0x` prefixes.
-  Always available, including without `std` or `alloc`.
+  Always available, including without `std` or `alloc`. **Its compile-time
+  parser is not constant-time.**
 - **Stack hex strings** — [`HexStr<N>`] and [`PrefixedHexStr<N>`] hold the
   hex encoding of `N` input bytes with zero heap allocation and zero
   per-instance overhead (the `"0x"` marker lives in a ZST field when
@@ -81,6 +84,15 @@ const BYTES: [u8; 4] = better_hex::hex!(INPUT, "0XBEEF");
 assert_eq!(BYTES, [0xde, 0xad, 0xbe, 0xef]);
 ```
 
+**Timing exception:** `hex!` uses data-dependent branches and memory accesses
+to handle prefixes and line endings. **Its parser is not constant-time.**
+The macro forces parsing and decoding to happen at compile time, including
+when invoked inside an ordinary function; no input parsing runs at runtime.
+Compilation time has no constant-time guarantee. Direct runtime calls to the
+hidden normalization helpers also have no constant-time guarantee. Use the
+codec APIs (`decode`, `decode_to_slice`, etc.) for runtime data under the
+documented timing guarantees.
+
 `hex!` accepts adjacent string literals (`hex!("de" "ad")`)
 or comma-separated const `&str` expressions. Each input accepts mixed-case
 hex digits and one optional leading `0x` or `0X` prefix. CR and LF line
@@ -102,7 +114,7 @@ tabs, and colons from existing literals, or replace them with line endings.
 | | [hex] | [const-hex] | [faster-hex] | [base16ct] | **better-hex** |
 |---|:---:|:---:|:---:|:---:|:---:|
 | SIMD encode / decode / check | — | x86, NEON, WASM | x86 (partial NEON) | — | x86 (incl. AVX-512), NEON, WASM |
-| Constant-time | — | — | — | scalar only | scalar + SIMD (default) |
+| Constant-time codec APIs | — | — | — | scalar only | scalar + SIMD (default) |
 | `const fn` encode / decode / check | — | encode | — | — | all three |
 | Stack hex string | — | `Buffer<N>` (2 B prefix overhead) | — | — | `HexStr<N>` (zero overhead) |
 | Extensible output trait | — | — | — | — | `HexTarget` |

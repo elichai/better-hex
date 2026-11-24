@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `hex!` for compile-time byte arrays from adjacent string literals or
   comma-separated const string expressions. Supports mixed-case hex, optional
   `0x` / `0X` prefixes, and CR/LF line endings without allocation or feature flags.
+  Its parser is not constant-time; the macro evaluates it only at compile time.
 
 ## [1.0.1](https://github.com/elichai/better-hex/compare/v1.0.0...v1.0.1) - 2026-06-23
 
