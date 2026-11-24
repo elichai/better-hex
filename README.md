@@ -157,16 +157,14 @@ CI fuzzes every PR and push to `main` for 60 s/target on both `x86_64` and
 `aarch64` Linux. A scheduled run every three days does a 5-minute campaign
 per target.
 
-The fuzz crate has a separate `fuzz/Cargo.lock`. After changing the root crate's
-version (including in a release-plz PR), refresh its entry from the repository
-root and commit the updated lockfile:
+The fuzz crate has a separate `fuzz/Cargo.lock`. The release-PR workflow
+automatically refreshes and verifies it after release-plz prepares a version
+bump, then commits it to the same PR. For manual version or dependency changes,
+refresh it from the repository root and commit the updated lockfile:
 
 ```bash
 cargo update --manifest-path fuzz/Cargo.toml -p better-hex
 ```
-
-CI's `Lockfiles` job checks both lockfiles with `cargo fetch --locked`, without
-compiling the fuzz targets or setting up Miri.
 
 The seed corpus lives on the orphan branch [`fuzz-corpus`][corpus-branch] —
 no shared history with `main`, one directory per target, libFuzzer's
