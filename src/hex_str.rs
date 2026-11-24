@@ -232,7 +232,7 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     /// Decode the hex content back to raw bytes, ignoring the prefix.
     pub fn decode(&self) -> [u8; N] {
         let hex_bytes = self.as_bytes_no_prefix();
-        let mut out: [MaybeUninit<u8>; N] = maybe_uninit::uninit_array();
+        let mut out = MaybeUninit::<[u8; N]>::uninit();
         // SAFETY: `as_bytes_no_prefix` returns exactly `N * 2` bytes (the
         // length precondition for `decode_no_length_check`); all HexStr
         // constructors maintain the hex-ASCII invariant, so the inner
@@ -240,9 +240,11 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
         // and `unwrap_unchecked` lets LLVM eliminate the discriminant load
         // that would otherwise be a data-dependent branch under Valgrind CT
         // verification.
-        unsafe { backend::decode_no_length_check(hex_bytes, &mut out).unwrap_unchecked() };
+        unsafe {
+            backend::decode_no_length_check(hex_bytes, maybe_uninit::as_bytes_mut(&mut out)).unwrap_unchecked();
+        }
         // SAFETY: backend::decode_no_length_check initialized the full output buffer.
-        unsafe { maybe_uninit::transpose(out).assume_init() }
+        unsafe { out.assume_init() }
     }
 
     /// Decode the hex content back to raw bytes at compile time.

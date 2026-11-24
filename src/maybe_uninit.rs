@@ -3,7 +3,7 @@
 //! Consolidates the unsafe operations on uninitialized memory so callers
 //! don't need to scatter `unsafe` blocks throughout the codebase.
 
-use core::{mem::MaybeUninit, ptr, slice, str};
+use core::{mem::MaybeUninit, slice, str};
 
 /// View a `MaybeUninit<T>` as a mutable slice of `MaybeUninit<u8>` bytes.
 ///
@@ -16,24 +16,6 @@ pub(crate) const fn as_bytes_mut<T>(mu: &mut MaybeUninit<T>) -> &mut [MaybeUnini
     unsafe { slice::from_raw_parts_mut(mu.as_mut_ptr().cast::<MaybeUninit<u8>>(), size_of::<T>()) }
 }
 
-/// Create an uninitialized `[MaybeUninit<u8>; N]` array.
-pub(crate) const fn uninit_array<const N: usize>() -> [MaybeUninit<u8>; N] {
-    // SAFETY: `MaybeUninit::<[MaybeUninit<u8>; N]>::uninit().assume_init()` is
-    // sound because `[MaybeUninit<u8>; N]` is valid for any bit pattern
-    // (including uninitialized memory).
-    const { unsafe { MaybeUninit::uninit().assume_init() } }
-}
-
-/// Transpose `[MaybeUninit<u8>; N]` → `MaybeUninit<[u8; N]>`.
-///
-/// Same layout, but lets us call `.assume_init()` to get `[u8; N]`.
-pub(crate) const fn transpose<const N: usize>(mu: [MaybeUninit<u8>; N]) -> MaybeUninit<[u8; N]> {
-    // SAFETY: `[MaybeUninit<u8>; N]` and `MaybeUninit<[u8; N]>` have identical
-    // size and alignment (`MaybeUninit<u8>` is layout-identical to `u8`).
-    // `read()` performs a bitwise copy; neither type has drop glue.
-    unsafe { ptr::from_ref(&mu).cast::<MaybeUninit<[u8; N]>>().read() }
-}
-
 /// Reinterpret `&[u8]` as `&[MaybeUninit<u8>]` (widening).
 pub(crate) fn slice_as_uninit(s: &[u8]) -> &[MaybeUninit<u8>] {
     // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`; converting
@@ -43,13 +25,15 @@ pub(crate) fn slice_as_uninit(s: &[u8]) -> &[MaybeUninit<u8>] {
 
 /// Reinterpret `&mut [u8]` as `&mut [MaybeUninit<u8>]`.
 ///
-/// Safe because `MaybeUninit<u8>` has the same layout as `u8`, and going
-/// from initialized to maybe-uninit is always valid (the backend will
-/// overwrite every element anyway).
-pub(crate) fn slice_as_uninit_mut(s: &mut [u8]) -> &mut [MaybeUninit<u8>] {
+/// # Safety
+///
+/// Callers must not write uninitialized bytes (e.g. `MaybeUninit::uninit()`)
+/// into the returned slice — doing so would leave the underlying `&mut [u8]`
+/// uninitialized, which is immediate UB once the borrow ends.
+pub(crate) unsafe fn slice_as_uninit_mut(s: &mut [u8]) -> &mut [MaybeUninit<u8>] {
     // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`. The pointer and
-    // length come from a valid `&mut [u8]`. Converting initialized `u8` to
-    // `MaybeUninit<u8>` is always valid (widening the validity invariant).
+    // length come from a valid `&mut [u8]`. The caller guarantees only
+    // initialized bytes will be written through the returned slice.
     unsafe { slice::from_raw_parts_mut(s.as_mut_ptr().cast::<MaybeUninit<u8>>(), s.len()) }
 }
 
@@ -88,7 +72,7 @@ pub(crate) const unsafe fn assume_init_str(s: &[MaybeUninit<u8>]) -> &str {
 ///
 /// The slice must contain only valid hex ASCII bytes.
 pub(crate) unsafe fn bytes_to_hex_str_mut(s: &mut [u8]) -> &mut str {
-    debug_assert!(s.iter().all(|b| b.is_ascii()), "bytes_to_hex_str_mut: non-ASCII");
+    debug_assert!(s.is_ascii(), "bytes_to_hex_str_mut: non-ASCII");
     // SAFETY: caller guarantees all bytes are valid hex ASCII (`[0-9a-fA-F]`),
     // which is a subset of valid UTF-8.
     unsafe { str::from_utf8_unchecked_mut(s) }

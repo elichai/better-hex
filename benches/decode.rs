@@ -73,7 +73,8 @@ fn bench_decode(c: &mut Criterion) {
         }
 
         group.bench_function(BenchmarkId::new("dispatched", size), |b| {
-            let out_mu = common::as_uninit_mut(&mut output);
+            // SAFETY: `dispatched_decode` only writes initialized bytes.
+            let out_mu = unsafe { common::as_uninit_mut(&mut output) };
             b.iter(|| dispatched_decode(black_box(bufs.next()), black_box(out_mu)).unwrap())
         });
     }

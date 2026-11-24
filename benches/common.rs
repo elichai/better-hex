@@ -79,10 +79,15 @@ fn buffer_count(bytes_per_buffer: usize) -> usize {
     (MAX_ALLOC / bytes_per_buffer.max(1)).clamp(2, MAX_BUFFERS)
 }
 
+/// Reinterpret `&mut [u8]` as `&mut [MaybeUninit<u8>]`.
+///
+/// # Safety
+///
+/// Callers must not write uninitialized bytes into the returned slice.
 #[allow(dead_code)]
-pub fn as_uninit_mut(bytes: &mut [u8]) -> &mut [MaybeUninit<u8>] {
-    // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`; widening an
-    // initialized `u8` slice to uninitialized storage is valid.
+pub unsafe fn as_uninit_mut(bytes: &mut [u8]) -> &mut [MaybeUninit<u8>] {
+    // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`; caller guarantees
+    // no uninitialized bytes are written into the slice.
     unsafe { &mut *(bytes as *mut [u8] as *mut [MaybeUninit<u8>]) }
 }
 

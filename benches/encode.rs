@@ -96,7 +96,8 @@ fn bench_encode(c: &mut Criterion) {
 
         group.bench_function(BenchmarkId::new("dispatched", size), |b| {
             let mut upper = false;
-            let out_mu = common::as_uninit_mut(&mut output);
+            // SAFETY: `dispatched_encode` only writes initialized hex bytes.
+            let out_mu = unsafe { common::as_uninit_mut(&mut output) };
             b.iter(|| {
                 upper = !upper;
                 dispatched_encode(bufs.next(), out_mu, upper).unwrap()
