@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1](https://github.com/elichai/better-hex/compare/v1.1.0...v1.1.1) - 2026-11-24
+
+### Other
+
+- lead hex timing sections with compile-time-only use
+- make hex parser timing exception explicit
+
 ## [1.1.0](https://github.com/elichai/better-hex/compare/v1.0.1...v1.1.0) - 2026-11-24
 
 ### Added
