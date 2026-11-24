@@ -5,7 +5,15 @@ use crate::{
     prefix::{NoPrefix, Prefix},
 };
 use bytemuck::NoUninit;
-use core::{fmt, mem::MaybeUninit, ops::Deref, str::FromStr};
+use core::{
+    borrow::Borrow,
+    cmp::Ordering,
+    fmt,
+    hash::{Hash, Hasher},
+    mem::MaybeUninit,
+    ops::Deref,
+    str::FromStr,
+};
 
 /// Raw storage for [`HexStr`].
 ///
@@ -139,24 +147,30 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
         }
     }
 
-    /// Construct a `HexStr` from a hex byte array.
+    /// Construct a `HexStr` from an unprefixed hex byte array.
     ///
-    /// `M` must equal `N * 2` (enforced at compile time). Accepts upper,
-    /// lower, and mixed case (`[0-9a-fA-F]`); the stored string preserves
-    /// whatever case the caller passed in. Returns `None` if any byte is
-    /// not a valid hex character.
+    /// `M` must equal `N * 2` (enforced at compile time). For
+    /// [`PrefixedHexStr`](crate::PrefixedHexStr), `hex` contains only the
+    /// `N * 2` hex digits — the `"0x"` prefix is attached automatically
+    /// (unlike [`FromStr`], which expects `"0x"` in the input).
+    ///
+    /// Accepts upper, lower, and mixed case (`[0-9a-fA-F]`); the stored string
+    /// preserves whatever case the caller passed in. Returns `None` if any byte
+    /// is not a valid hex character.
     pub fn from_hex<const M: usize>(hex: [u8; M]) -> Option<Self> {
         const { assert!(M == N * 2, "hex input length must equal N * 2") };
-        if !crate::check(hex.as_slice()) {
+        if !backend::check(&hex) {
             return None;
         }
-        // SAFETY: `crate::check` confirmed all bytes are valid hex ASCII.
+        // SAFETY: `backend::check` confirmed all bytes are valid hex ASCII.
         Some(unsafe { Self::from_hex_unchecked(hex) })
     }
 
-    /// Construct a `HexStr` from a hex byte array without validation.
+    /// Construct a `HexStr` from an unprefixed hex byte array without validation.
     ///
-    /// `M` must equal `N * 2` (enforced at compile time).
+    /// `M` must equal `N * 2` (enforced at compile time). For
+    /// [`PrefixedHexStr`](crate::PrefixedHexStr), `hex` contains only the
+    /// `N * 2` hex digits and the `"0x"` prefix is attached automatically.
     ///
     /// Implementation note: this is a layout-only cast (`bytemuck::must_cast`
     /// from `[u8; M]` to `[[u8; 2]; N]`), so the `const` form costs the same
@@ -184,11 +198,13 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
         }
     }
 
-    /// Construct a `HexStr` from a hex byte array at compile time.
+    /// Construct a `HexStr` from an unprefixed hex byte array at compile time.
     ///
-    /// `M` must equal `N * 2` (enforced at compile time). Accepts upper,
-    /// lower, and mixed case (`[0-9a-fA-F]`). Returns `None` if any byte
-    /// is not a valid hex character.
+    /// `M` must equal `N * 2` (enforced at compile time). For
+    /// [`PrefixedHexStr`](crate::PrefixedHexStr), `hex` contains only the
+    /// `N * 2` hex digits and the `"0x"` prefix is attached automatically.
+    /// Accepts upper, lower, and mixed case (`[0-9a-fA-F]`). Returns `None` if
+    /// any byte is not a valid hex character.
     ///
     /// # Performance
     ///
@@ -199,10 +215,10 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     /// [crate-level performance note]: crate#performance-const-fn-vs-runtime-apis
     pub const fn const_from_hex<const M: usize>(hex: [u8; M]) -> Option<Self> {
         const { assert!(M == N * 2, "hex input length must equal N * 2") };
-        if !const_check(&hex) {
+        if !crate::backend::scalar::check(&hex) {
             return None;
         }
-        // SAFETY: We've const asserted that the bytes are valid hex ASCII, so this constructor's invariant is upheld.
+        // SAFETY: `scalar::check` confirmed all bytes are valid hex ASCII.
         Some(unsafe { Self::from_hex_unchecked(hex) })
     }
 
@@ -292,6 +308,12 @@ impl<const N: usize, P: Prefix> AsRef<[u8]> for HexStr<N, P> {
     }
 }
 
+impl<const N: usize, P: Prefix> Borrow<str> for HexStr<N, P> {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
 impl<const N: usize, P: Prefix> fmt::Display for HexStr<N, P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
@@ -304,6 +326,7 @@ impl<const N: usize, P: Prefix> fmt::Debug for HexStr<N, P> {
     }
 }
 
+/// Standard byte-wise equality (short-circuiting, **not** constant-time).
 impl<const N: usize, P: Prefix> PartialEq for HexStr<N, P> {
     fn eq(&self, other: &Self) -> bool {
         self.as_bytes() == other.as_bytes()
@@ -312,9 +335,35 @@ impl<const N: usize, P: Prefix> PartialEq for HexStr<N, P> {
 
 impl<const N: usize, P: Prefix> Eq for HexStr<N, P> {}
 
+/// Standard lexicographical ordering (short-circuiting, **not** constant-time).
+impl<const N: usize, P: Prefix> PartialOrd for HexStr<N, P> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Standard lexicographical ordering (short-circuiting, **not** constant-time).
+impl<const N: usize, P: Prefix> Ord for HexStr<N, P> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+impl<const N: usize, P: Prefix> Hash for HexStr<N, P> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state);
+    }
+}
+
 impl<const N: usize, P: Prefix> PartialEq<str> for HexStr<N, P> {
     fn eq(&self, other: &str) -> bool {
         self.as_str() == other
+    }
+}
+
+impl<const N: usize, P: Prefix> PartialEq<&str> for HexStr<N, P> {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
     }
 }
 
@@ -347,9 +396,12 @@ impl<const N: usize, P: Prefix> FromStr for HexStr<N, P> {
         if !backend::check(hex_part) {
             return Err(Error::InvalidEncoding);
         }
-        // Input is valid hex — reinterpret as [[u8; 2]; N] and construct.
-        // `[u8; N*2]` and `[[u8; 2]; N]` have identical layout (no padding).
-        let bytes: &[[u8; 2]; N] = bytemuck::try_from_bytes(hex_part).expect("length already checked above");
+        // Input is valid hex — group into [[u8; 2]; N] and construct.
+        let bytes: &[[u8; 2]; N] = hex_part
+            .as_chunks::<2>()
+            .0
+            .as_array::<N>()
+            .expect("length already checked above");
         Ok(Self {
             inner: RawHexStr {
                 prefix: P::VALUE,
@@ -361,9 +413,10 @@ impl<const N: usize, P: Prefix> FromStr for HexStr<N, P> {
 
 /// Internal helper: encode into the paired `[[u8; 2]; N]` shape `RawHexStr` stores.
 ///
-/// Same contents as [`const_encode`] — paired shape avoids a transmute at the
-/// call site. `[[u8; 2]; N]` has layout `[u8; 2 * N]` (arrays have guaranteed
-/// contiguous layout with no padding).
+/// Used by [`HexStr::const_encode_lower`] and [`HexStr::const_encode_upper`] —
+/// the paired shape avoids a transmute at the call site. `[[u8; 2]; N]` has
+/// layout `[u8; 2 * N]` (arrays have guaranteed contiguous layout with no
+/// padding).
 const fn const_encode_pairs<const N: usize>(input: &[u8; N], upper: bool) -> [[u8; 2]; N] {
     let mut out: MaybeUninit<[[u8; 2]; N]> = MaybeUninit::uninit();
     // SAFETY: `input` is readable for `N` bytes; `out` is writable for

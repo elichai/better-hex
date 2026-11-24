@@ -36,7 +36,6 @@
 /// The offset distinguishes upper/lower: uppercase needs `+7` past `'9'`
 /// to reach `'A'`; lowercase needs `+39` (`0x27`) to reach `'a'`.
 #[inline(always)]
-#[allow(dead_code)]
 const fn encode_nibble(nibble: u8, offset: u8) -> u8 {
     debug_assert!(
         offset == 0x07 || offset == 0x27,
@@ -85,13 +84,13 @@ const fn decode_nibble(byte: u8) -> u16 {
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
 /// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
 #[inline]
-#[allow(dead_code)]
 pub const unsafe fn encode_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize, upper: bool) {
     // 0x07 for upper, 0x27 for lower; passed to `encode_nibble` to select case.
     let offset = if upper { 0x07 } else { 0x27 };
     while byte_len != 0 {
-        // SAFETY: `i < byte_len` so `src.add(i)` is in bounds for reads
-        // and `dst.add(i * 2 + {0,1})` is in bounds for writes.
+        // SAFETY: `byte_len != 0` guarantees `src` is valid for 1 read and
+        // `dst` is valid for 2 writes; advancing `src` by 1 and `dst` by 2
+        // stays within the remaining `byte_len - 1` bounds.
         unsafe {
             let byte = src.read();
             src = src.add(1);
@@ -109,7 +108,6 @@ pub const unsafe fn encode_inner(mut src: *const u8, mut dst: *mut u8, mut byte_
 /// # Safety
 ///
 /// Same requirements as [`encode_inner`].
-#[allow(dead_code)]
 pub const unsafe fn encode(src: *const u8, dst: *mut u8, byte_len: usize, upper: bool) {
     unsafe { encode_inner(src, dst, byte_len, upper) }
 }
@@ -136,8 +134,9 @@ pub const unsafe fn decode_inner(mut src: *const u8, mut dst: *mut u8, mut byte_
     let mut err: u8 = 0;
 
     while byte_len != 0 {
-        // SAFETY: `i < byte_len` so `src.add(i * 2 + {0,1})` is in bounds
-        // for reads and `dst.add(i)` is in bounds for writes.
+        // SAFETY: `byte_len != 0` guarantees `src` is valid for 2 reads and
+        // `dst` is valid for 1 write; advancing `src` by 2 and `dst` by 1
+        // stays within the remaining `byte_len - 1` bounds.
         let hi = decode_nibble(unsafe { src.read() });
         src = unsafe { src.add(1) };
         let lo = decode_nibble(unsafe { src.read() });
