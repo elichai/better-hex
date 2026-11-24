@@ -1,15 +1,8 @@
-use criterion::{Criterion, criterion_group, criterion_main};
-
-#[cfg(feature = "_bench_internals")]
 use better_hex::bench_internals::{dispatched_encode, scalar};
-#[cfg(feature = "_bench_internals")]
-use criterion::{BenchmarkId, Throughput};
-#[cfg(feature = "_bench_internals")]
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
-#[cfg(feature = "_bench_internals")]
 mod common;
 
-#[cfg(feature = "_bench_internals")]
 #[inline(always)]
 fn call(encode_fn: unsafe fn(*const u8, *mut u8, usize, bool), input: &[u8], output: &mut [u8], upper: bool) {
     assert_eq!(
@@ -28,7 +21,6 @@ fn call(encode_fn: unsafe fn(*const u8, *mut u8, usize, bool), input: &[u8], out
     }
 }
 
-#[cfg(feature = "_bench_internals")]
 fn bench_encode(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode");
 
@@ -100,7 +92,7 @@ fn bench_encode(c: &mut Criterion) {
             let out_mu = unsafe { common::as_uninit_mut(&mut output) };
             b.iter(|| {
                 upper = !upper;
-                dispatched_encode(bufs.next(), out_mu, upper).unwrap()
+                dispatched_encode(black_box(bufs.next()), black_box(out_mu), black_box(upper)).unwrap()
             })
         });
     }

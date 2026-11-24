@@ -1,13 +1,7 @@
-use criterion::{Criterion, criterion_group, criterion_main};
-
-#[cfg(feature = "alloc")]
-use criterion::{BenchmarkId, Throughput};
-#[cfg(feature = "alloc")]
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
-#[cfg(feature = "alloc")]
 mod common;
 
-#[cfg(feature = "alloc")]
 fn bench_encode(c: &mut Criterion) {
     let mut group = c.benchmark_group("to_hex");
 
@@ -24,7 +18,7 @@ fn bench_encode(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(all(feature = "alloc", feature = "serde"))]
+#[cfg(feature = "serde")]
 mod serde_bench {
     use serde::{Deserialize, Serialize};
 
@@ -54,7 +48,7 @@ mod serde_bench {
 }
 
 // Serde benchmarks — only with serde feature.
-#[cfg(all(feature = "alloc", feature = "serde"))]
+#[cfg(feature = "serde")]
 fn bench_serde_vec(c: &mut Criterion) {
     use serde_bench::{SliceWrap, VecWrap};
 
@@ -90,7 +84,7 @@ fn bench_serde_vec(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(all(feature = "alloc", feature = "serde"))]
+#[cfg(feature = "serde")]
 fn bench_serde_array(c: &mut Criterion) {
     let mut group = c.benchmark_group("serde_array");
 
@@ -103,7 +97,7 @@ fn bench_serde_array(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(all(feature = "alloc", feature = "serde"))]
+#[cfg(feature = "serde")]
 fn bench_serde_array_size<const N: usize>(group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>) {
     use serde_bench::{ArrayDeserializeWrap, ArraySerializeWrap};
 
@@ -133,7 +127,7 @@ fn bench_serde_array_size<const N: usize>(group: &mut criterion::BenchmarkGroup<
     });
 }
 
-#[cfg(all(feature = "alloc", feature = "serde"))]
+#[cfg(feature = "serde")]
 criterion_group!(benches, bench_encode, bench_serde_vec, bench_serde_array);
 #[cfg(not(feature = "serde"))]
 criterion_group!(benches, bench_encode);

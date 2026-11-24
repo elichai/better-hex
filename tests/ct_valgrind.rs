@@ -97,6 +97,15 @@ where
     }
 }
 
+/// Invalid bytes spanning every Lemire hash bucket and range boundary.
+const INVALID_BYTES: &[u8] = b"/:@G`g\x00\x80\xff";
+
+/// Sizes covering every SIMD/scalar boundary (1..=130) plus larger multi-chunk
+/// sizes without running O(512^2) redundant Valgrind iterations.
+fn invalid_ct_sizes() -> impl Iterator<Item = usize> {
+    (1..=130).chain([255, 256, 257, 512])
+}
+
 /// Test that a `decode_inner` processes all bytes (invalid at every position).
 #[inline(always)]
 fn test_decode_invalid_ct<T>(decode: unsafe fn(*const u8, *mut u8, usize) -> T)
@@ -106,7 +115,7 @@ where
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
     let mut input = Vec::with_capacity(512);
     let mut output = vec![0u8; 512];
-    for size in 1..=512 {
+    for size in invalid_ct_sizes() {
         input.resize(size, 0);
         rng.fill_bytes(&mut input);
         let hex = better_hex::encode_string(&input);
@@ -114,7 +123,7 @@ where
 
         for corrupt_pos in 0..valid_hex.len() {
             let mut hex_bytes = valid_hex.clone();
-            hex_bytes[corrupt_pos] = 0xFF;
+            hex_bytes[corrupt_pos] = INVALID_BYTES[(size + corrupt_pos) % INVALID_BYTES.len()];
             output.resize(size, 0);
 
             poison(&hex_bytes);
@@ -167,7 +176,7 @@ where
 {
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(0xdeadbeaf);
     let mut input = Vec::with_capacity(512);
-    for size in 1..=512 {
+    for size in invalid_ct_sizes() {
         input.resize(size, 0);
         rng.fill_bytes(&mut input);
         let hex = better_hex::encode_string(&input);
@@ -175,7 +184,7 @@ where
 
         for corrupt_pos in 0..valid_hex.len() {
             let mut hex_bytes = valid_hex.clone();
-            hex_bytes[corrupt_pos] = 0xFF;
+            hex_bytes[corrupt_pos] = INVALID_BYTES[(size + corrupt_pos) % INVALID_BYTES.len()];
 
             poison(&hex_bytes);
             let mut accum = unsafe { check(&hex_bytes) };
@@ -407,7 +416,7 @@ mod avx512_ct {
 /// the compiler eliminate the residual discriminant branch.
 mod hex_str_ct {
     use super::*;
-    use better_hex::HexStr;
+    use better_hex::{HexStr, Prefix, PrefixedHexStr, WithPrefix};
 
     macro_rules! test_hex_str {
         ($rng:ident, $n:literal) => {{
@@ -431,14 +440,29 @@ mod hex_str_ct {
             unpoison(&mut valid);
             assert!(valid, "const_check failed at N={}", $n);
 
-            // decode: poison the HexStr internals, decode back.
-            // HexStr::decode uses unwrap_unchecked internally so the residual
-            // dispatch discriminant check is eliminated by the optimizer.
+            // decode & const_decode: poison the HexStr internals, decode back.
             let hex_str = HexStr::<$n>::encode_lower(&input);
             poison(hex_str.as_bytes());
             let mut decoded = hex_str.decode();
             unpoison(&mut decoded);
             assert_eq!(decoded, input, "decode mismatch at N={}", $n);
+
+            poison(hex_str.as_bytes());
+            let mut const_decoded = hex_str.const_decode();
+            unpoison(&mut const_decoded);
+            assert_eq!(const_decoded, input, "const_decode mismatch at N={}", $n);
+
+            // PrefixedHexStr decode & const_decode.
+            let prefixed = PrefixedHexStr::<$n>::encode_lower(&input);
+            poison(prefixed.as_bytes());
+            let mut decoded_p = prefixed.decode();
+            unpoison(&mut decoded_p);
+            assert_eq!(decoded_p, input, "prefixed decode mismatch at N={}", $n);
+
+            poison(prefixed.as_bytes());
+            let mut const_decoded_p = prefixed.const_decode();
+            unpoison(&mut const_decoded_p);
+            assert_eq!(const_decoded_p, input, "prefixed const_decode mismatch at N={}", $n);
         }};
     }
 
@@ -452,5 +476,27 @@ mod hex_str_ct {
         test_hex_str!(rng, 16);
         test_hex_str!(rng, 32);
         test_hex_str!(rng, 64);
+    }
+
+    #[test]
+    fn strip_prefix_ct() {
+        // Poison the prefix bytes so any short-circuit between byte 0 and
+        // byte 1 triggers a Valgrind error, while unpoisoning only the
+        // returned Option's match bit (the documented public prefix bit).
+        for &(bytes, expect_some) in &[
+            (b"0xdead" as &[u8], true),
+            (b"0Xdead", false),
+            (b"1xdead", false),
+            (b"1Xdead", false),
+        ] {
+            let buf = bytes.to_vec();
+            poison(&buf);
+            // `WithPrefix::strip_prefix` compares both bytes before branching
+            // on the black-boxed OR; unpoisoning the boolean discriminant
+            // would still flag a short-circuit on byte 0 alone.
+            let mut matched = WithPrefix::strip_prefix(&buf).is_some();
+            unpoison(&mut matched);
+            assert_eq!(matched, expect_some);
+        }
     }
 }

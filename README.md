@@ -34,11 +34,13 @@ Fast, constant-time hex encoding and decoding with SIMD and `const fn`.
   `heapless::String<CAP>`, `arrayvec::ArrayString<CAP>`, and any downstream
   type, letting SIMD encoders write straight into the target's buffer with
   no intermediate copy.
-- **Serde** — constant-time hex helpers for `[u8; N]` and `Vec<u8>` fields,
+- **Serde** — constant-time hex helpers for `[u8; N]`, `Vec<u8>`, `Box<[u8]>`,
+  `Cow<'_, [u8]>`, `heapless::Vec`, and `arrayvec::ArrayVec` fields,
   in `lower` / `upper` / `prefixed` / `upper_prefixed` variants.
   Deserialization into a fixed-size array is alloc-free; serialization is
-  alloc-free with serializers that override `Serializer::collect_str`
-  (e.g. `serde_json`, `serde_yaml`).
+  always alloc-free for `[u8; N]` (`N <= 512`, stack-encoded via `HexStr<N>`),
+  and alloc-free for dynamic slices/larger arrays with serializers that override
+  `Serializer::collect_str` (e.g. `serde_json`, `serde_yaml`).
 
 ## Decoding case behavior
 
@@ -142,11 +144,11 @@ Three [cargo-fuzz] targets in `fuzz/fuzz_targets/` cover the public API:
   scalar naïve encoder / decoder for every input. Any disagreement on
   encode, decode, or check output (modulo documented case-folding behavior)
   is a bug.
-- **`api`** — round-trip and invariant checks across `encode`, `decode`,
-  `check`, the `FromHex` / `ToHex` traits, and the `HexTarget` adapters
-  (`String`, `heapless::String`, `arrayvec::ArrayString`).
-- **`hex_str`** — `HexStr<N>` and `PrefixedHexStr<N>` construction, parsing,
-  display, and serde round-trips.
+- **`api`** — round-trip and length-error checks across `encode_to_slice`,
+  `encode_to_slice_upper`, `decode_to_slice`, `const_check`,
+  `const_decode_to_array`, and `decode::<[u8; 4]>`.
+- **`hex_str`** — `HexStr<N>` and `PrefixedHexStr<N>` `FromStr` parsing,
+  decoding, and lowercase re-encoding round-trips.
 
 Run locally with `./fuzz/fuzz.sh` (defaults to 60 s per target; configurable
 via `FUZZ_SECONDS`). The script runs `cargo fuzz` in `--release` with
@@ -244,7 +246,7 @@ crates and research. Licenses are noted; all are permissive.
   (Copyright © 2018 Nervos Foundation)
 
 - **[hex](https://github.com/KokaKiwi/rust-hex)** by KokaKiwi / The rust-hex Developers —
-  `FromHex` / `ToHex` trait API design, scalar decode LUT, serde helpers —
+  `FromHex` / `ToHex` trait API design, serde helpers —
   **MIT OR Apache-2.0**
   (Copyright © 2013–2014 The Rust Project Developers; © 2015–2020 The rust-hex Developers)
 

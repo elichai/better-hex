@@ -24,6 +24,7 @@
 //! - **Hex literals** — [`hex!`] decodes string literals and const string
 //!   expressions into byte arrays at compile time, without allocation or feature flags
 //! - **Stack strings** — [`HexStr<N>`][HexStr] with zero heap allocation
+//! - **Extensible** — [`HexTarget`] trait for custom output types
 //!
 //! # Timing of `hex!`
 //!
@@ -53,7 +54,6 @@
 //! [`decode`], [`check`], [`HexStr::encode_lower`], [`HexStr::from_hex`],
 //! [`HexStr::decode`] — which dispatches to SIMD and is 10–50× faster on
 //! typical inputs.
-//! - **Extensible** — [`HexTarget`] trait for custom output types
 //!
 //! # Cargo features
 //!
@@ -85,7 +85,7 @@
 //! - **[faster-hex](https://github.com/nervosnetwork/faster-hex)** (Nervos Foundation) —
 //!   x86 `pshufb` nibble-LUT encode — MIT
 //! - **[hex](https://github.com/KokaKiwi/rust-hex)** (KokaKiwi) — `FromHex`/`ToHex` trait
-//!   API; scalar decode LUT — MIT OR Apache-2.0
+//!   API design — MIT OR Apache-2.0
 //! - **[base16ct](https://github.com/RustCrypto/formats/tree/master/base16ct)** (RustCrypto) —
 //!   constant-time scalar arithmetic (Steve "Sc00bz" Thomas's ConstTimeEncoding) — MIT OR
 //!   Apache-2.0

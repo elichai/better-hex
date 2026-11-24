@@ -72,13 +72,12 @@ fn decode_error_paths() {
     // Processes all bytes (invalid at start and end → same error)
     #[cfg(feature = "alloc")]
     {
-        let mut hex = better_hex::encode_string([0u8; 32]);
-        let bytes = unsafe { hex.as_bytes_mut() };
+        let mut bytes = better_hex::encode_string([0u8; 32]).into_bytes();
         bytes[0] = b'Z';
         bytes[63] = b'Z';
         let mut out = [0u8; 32];
         assert_eq!(
-            better_hex::decode_to_slice(bytes, &mut out).unwrap_err(),
+            better_hex::decode_to_slice(&bytes, &mut out).unwrap_err(),
             Error::InvalidEncoding
         );
     }
@@ -227,8 +226,20 @@ fn hex_str_type_properties() {
     let br: &[u8] = hex.as_ref();
     assert_eq!(br, b"abcd");
 
-    // PartialEq<str>
+    // PartialEq<str> and PartialEq<&str>
     assert_eq!(hex, *"abcd");
+    assert_eq!(hex, "abcd");
+
+    // Hash, Ord, Borrow<str> (usable as HashMap / BTreeMap key looked up by &str)
+    let mut map = std::collections::HashMap::new();
+    map.insert(hex, 42u32);
+    assert_eq!(map.get("abcd"), Some(&42));
+    let mut btree = std::collections::BTreeMap::new();
+    let hex_lo: HexStr<2> = HexStr::encode_lower(&[0x00, 0x01]);
+    btree.insert(hex, 2u32);
+    btree.insert(hex_lo, 1u32);
+    assert_eq!(btree.get("0001"), Some(&1));
+    assert!(hex_lo < hex);
 
     // Debug
     assert_eq!(format!("{hex:?}"), r#"HexStr("abcd")"#);
@@ -273,7 +284,7 @@ fn prefixed_hex_str_from_str_roundtrip() {
 
 #[test]
 fn prefixed_hex_str_from_str_errors() {
-    // Missing prefix (too short)
+    // Missing prefix (bare hex without "0x" is 2 bytes short)
     assert_eq!(
         "cafebabe".parse::<PrefixedHexStr<4>>().unwrap_err(),
         Error::InvalidLength { expected: 10, got: 8 }
@@ -283,16 +294,27 @@ fn prefixed_hex_str_from_str_errors() {
         "1xcafebabe".parse::<PrefixedHexStr<4>>().unwrap_err(),
         Error::InvalidEncoding
     );
+    // Uppercase "0X" prefix is rejected (FromStr matches "0x" verbatim)
+    assert_eq!(
+        "0Xcafebabe".parse::<PrefixedHexStr<4>>().unwrap_err(),
+        Error::InvalidEncoding
+    );
     // Invalid hex after valid prefix
     assert_eq!(
         "0xcafebaGe".parse::<PrefixedHexStr<4>>().unwrap_err(),
         Error::InvalidEncoding
     );
-    // Bare hex without prefix but correct hex-only length
-    assert_eq!(
-        "deadbeef".parse::<PrefixedHexStr<4>>().unwrap_err(),
-        Error::InvalidLength { expected: 10, got: 8 }
-    );
+}
+
+#[test]
+fn prefixed_hex_str_from_hex_takes_unprefixed_bytes() {
+    let p = PrefixedHexStr::<4>::from_hex(*b"deadbeef").unwrap();
+    assert_eq!(p, "0xdeadbeef");
+    assert_eq!(p.decode(), [0xde, 0xad, 0xbe, 0xef]);
+
+    const CP: PrefixedHexStr<4> = PrefixedHexStr::<4>::const_from_hex(*b"DEADBEEF").unwrap();
+    assert_eq!(CP, "0xDEADBEEF");
+    assert_eq!(CP.const_decode(), [0xde, 0xad, 0xbe, 0xef]);
 }
 
 #[test]
@@ -383,11 +405,13 @@ fn display_edge_cases() {
     assert_eq!(format!("{:#x}", better_hex::display(&[] as &[u8])), "0x");
     assert_eq!(format!("{:#X}", better_hex::display(&[] as &[u8])), "0x");
 
-    // Owned data
+    // Owned data & Copy/Clone on borrowed HexDisplay
     assert_eq!(format!("{}", better_hex::display(vec![0xde, 0xad])), "dead");
+    let d = better_hex::display([0xde, 0xad]);
+    let d_copy = d;
+    assert_eq!(format!("{d}"), format!("{d_copy}"));
 }
 
-#[cfg(feature = "alloc")]
 #[test]
 fn display_chunk_boundary() {
     let data128: Vec<u8> = (0u8..128).collect();

@@ -1,13 +1,7 @@
-use criterion::{Criterion, criterion_group, criterion_main};
-
-#[cfg(feature = "alloc")]
-use criterion::{BenchmarkId, Throughput};
-#[cfg(feature = "alloc")]
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
-#[cfg(feature = "alloc")]
 mod common;
 
-#[cfg(feature = "alloc")]
 fn bench_display(c: &mut Criterion) {
     let mut group = c.benchmark_group("display");
 

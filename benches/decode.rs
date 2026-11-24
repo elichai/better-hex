@@ -1,14 +1,8 @@
-#[cfg(feature = "_bench_internals")]
 use better_hex::bench_internals::{dispatched_decode, scalar};
-#[cfg(feature = "_bench_internals")]
-use criterion::{BenchmarkId, Throughput};
-use criterion::{Criterion, criterion_group, criterion_main};
-#[cfg(feature = "_bench_internals")]
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
-#[cfg(feature = "_bench_internals")]
 mod common;
 
-#[cfg(feature = "_bench_internals")]
 fn bench_decode(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode");
 
