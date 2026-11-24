@@ -20,7 +20,7 @@ Fast, constant-time hex encoding and decoding with SIMD and `const fn`.
   selection on AArch64 and WASM.
 - **`const fn`** — compile-time `encode`, `decode`, and `check` via the
   branchless scalar backend.
-- **`hex_literal!`** — compile-time byte arrays from hex string literals,
+- **`hex!`** — compile-time byte arrays from hex string literals,
   const string expressions, or multiline input, with optional `0x` prefixes.
   Always available, including without `std` or `alloc`.
 - **Stack hex strings** — [`HexStr<N>`] and [`PrefixedHexStr<N>`] hold the
@@ -77,11 +77,11 @@ let arr: [u8; 5] = better_hex::decode(b"68656c6c6f")?;
 
 // Hex literals: mixed case, optional prefixes, and const expressions
 const INPUT: &str = "0xdead";
-const BYTES: [u8; 4] = better_hex::hex_literal!(INPUT, "0XBEEF");
+const BYTES: [u8; 4] = better_hex::hex!(INPUT, "0XBEEF");
 assert_eq!(BYTES, [0xde, 0xad, 0xbe, 0xef]);
 ```
 
-`hex_literal!` accepts adjacent string literals (`hex_literal!("de" "ad")`)
+`hex!` accepts adjacent string literals (`hex!("de" "ad")`)
 or comma-separated const `&str` expressions. Each input accepts mixed-case
 hex digits and one optional leading `0x` or `0X` prefix. CR and LF line
 endings are ignored, including before the prefix; the prefix must be
@@ -89,12 +89,12 @@ contiguous. Spaces, tabs, colons, and all other non-hex characters are
 rejected, so multiline strings must have no indentation. Each input must
 contain an even number of hex digits after removing its prefix and line
 endings. Empty inputs, including a prefix alone, contribute no bytes;
-`hex_literal!()` produces `[u8; 0]`. Invalid input causes a compilation
+`hex!()` produces `[u8; 0]`. Invalid input causes a compilation
 error, including inside ordinary functions. Runtime variables are not
 accepted.
 
 Code using `hex_literal::hex!` can retain the `hex!` name with
-`use better_hex::hex_literal as hex;`. The rules above apply: remove spaces,
+`use better_hex::hex;`. The rules above apply: remove spaces,
 tabs, and colons from existing literals, or replace them with line endings.
 
 ## Comparison with related crates

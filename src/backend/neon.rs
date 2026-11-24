@@ -274,6 +274,11 @@ pub unsafe fn decode_inner(mut src: *const u8, mut dst: *mut u8, mut byte_len: u
     err
 }
 
+/// Decode hex using NEON, returning an error if any input byte is invalid.
+///
+/// # Safety
+///
+/// The safety requirements of [`decode_inner`] apply.
 #[target_feature(enable = "neon")]
 pub unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Result<(), InvalidEncoding> {
     // SAFETY: forwarded from caller.
@@ -356,6 +361,7 @@ pub fn check_inner(mut input: &[u8]) -> u8 {
     err | scalar::check_inner(input) as u8
 }
 
+/// Check that every input byte is a hex digit, without early exit.
 pub fn check(input: &[u8]) -> bool {
     check_inner(input) == 0
 }
