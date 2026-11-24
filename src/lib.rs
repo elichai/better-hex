@@ -34,7 +34,7 @@
 //! guarantees.
 //!
 //! Its compile-time parser is intentionally **not constant-time**: prefix
-//! handling and newline removal use data-dependent branches and memory accesses.
+//! handling and separator removal use data-dependent branches and memory accesses.
 //! Compilation time has no constant-time guarantee. The hidden normalization
 //! helpers also have no constant-time guarantee if called directly at runtime.
 //!

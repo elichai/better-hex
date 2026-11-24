@@ -13,6 +13,16 @@ fn decodes_in_const_static_and_expression_contexts() {
 }
 
 #[test]
+fn accepts_spaces_tabs_and_underscores() {
+    const BYTES: [u8; 6] = hex!(" _\t0X0201 0200_0700_\t ");
+    assert_eq!(BYTES, [0x02, 0x01, 0x02, 0x00, 0x07, 0x00]);
+    assert_eq!(hex!("0 201"), [0x02, 0x01]);
+    assert_eq!(hex!("0_201"), [0x02, 0x01]);
+    let empty: [u8; 0] = hex!(" _\t\r\n ");
+    assert_eq!(empty, []);
+}
+
+#[test]
 fn ignores_line_endings_even_between_nibbles() {
     assert_eq!(hex!("\r\n0\n12\r34\r\n5\n"), [1, 0x23, 0x45]);
     assert_eq!(
