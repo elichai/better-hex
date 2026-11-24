@@ -25,8 +25,9 @@
 //!
 //! # Validation (`check`)
 //!
-//! Three range checks (`0-9`, `a-f`, `A-F`) are ORed together and reduced
-//! with `u8x16_all_true`.
+//! Uses an unsigned-wrap digit check `(v - '0') <= 9` and a case-folded letter
+//! check `((v | 0x20) - 'a') <= 5`, AND-accumulated across 16-byte chunks and
+//! reduced once at exit with `u8x16_all_true`.
 
 use super::InvalidEncoding;
 use crate::backend::scalar;
@@ -54,35 +55,37 @@ fn hex_lut(upper: bool) -> v128 {
 /// - `dst` must be [valid](core::ptr#safety) for writes of `byte_len * 2` bytes.
 /// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
 pub unsafe fn encode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize, upper: bool) {
-    let lut = hex_lut(upper);
-    let mask_lo = u8x16_splat(0x0F);
+    if byte_len >= 16 {
+        let lut = hex_lut(upper);
+        let mask_lo = u8x16_splat(0x0F);
 
-    while byte_len >= 16 {
-        // SAFETY: `byte_len >= 16` so src read and dst write are in bounds.
-        unsafe {
-            let chunk = v128_load(src.cast());
+        while byte_len >= 16 {
+            // SAFETY: `byte_len >= 16` so src read and dst write are in bounds.
+            unsafe {
+                let chunk = v128_load(src.cast());
 
-            // Split each byte into high and low nibbles.
-            let lo_nibbles = v128_and(chunk, mask_lo);
-            let hi_nibbles = u8x16_shr(chunk, 4);
+                // Split each byte into high and low nibbles.
+                let lo_nibbles = v128_and(chunk, mask_lo);
+                let hi_nibbles = u8x16_shr(chunk, 4);
 
-            // LUT lookup: nibble → ASCII hex character.
-            let lo_ascii = u8x16_swizzle(lut, lo_nibbles);
-            let hi_ascii = u8x16_swizzle(lut, hi_nibbles);
+                // LUT lookup: nibble → ASCII hex character.
+                let lo_ascii = u8x16_swizzle(lut, lo_nibbles);
+                let hi_ascii = u8x16_swizzle(lut, hi_nibbles);
 
-            // Interleave: for each byte position k, output[2k] = hi_ascii[k],
-            // output[2k+1] = lo_ascii[k].
-            let out0 = u8x16_shuffle::<0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23>(hi_ascii, lo_ascii);
-            let out1 =
-                u8x16_shuffle::<8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31>(hi_ascii, lo_ascii);
+                // Interleave: for each byte position k, output[2k] = hi_ascii[k],
+                // output[2k+1] = lo_ascii[k].
+                let out0 = u8x16_shuffle::<0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23>(hi_ascii, lo_ascii);
+                let out1 =
+                    u8x16_shuffle::<8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31>(hi_ascii, lo_ascii);
 
-            v128_store(dst.cast(), out0);
-            v128_store(dst.add(16).cast(), out1);
+                v128_store(dst.cast(), out0);
+                v128_store(dst.add(16).cast(), out1);
 
-            src = src.add(16);
-            dst = dst.add(32);
+                src = src.add(16);
+                dst = dst.add(32);
+            }
+            byte_len -= 16;
         }
-        byte_len -= 16;
     }
 
     // Tail: delegate remaining bytes to scalar.
@@ -104,33 +107,47 @@ pub unsafe fn decode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) 
     let mut err_accum: u16 = 0;
 
     // WASM SIMD128: 16 output bytes per iteration (32 hex chars).
-    while byte_len >= 16 {
-        // Load two 16-byte halves of the 32-byte hex input.
-        // SAFETY: `byte_len >= 16` so `src` is valid for 32 hex bytes and
-        // `dst` is valid for 16 output bytes.
-        let nib0 = unsafe { v128_load(src.cast()) };
-        let nib1 = unsafe { v128_load(src.add(16).cast()) };
+    if byte_len >= 16 {
+        let c_c6 = u8x16_splat(0xC6);
+        let c_six = u8x16_splat(6);
+        let c_f0 = u8x16_splat(0xF0);
+        let c_df = u8x16_splat(0xDF);
+        let c_a = u8x16_splat(b'A');
+        let c_ten = u8x16_splat(10);
+        let c_validate = u8x16_splat(0x70);
+        let mut acc_check = u8x16_splat(0);
 
-        let (nibbles0, ok0) = decode_nibbles(nib0);
-        let (nibbles1, ok1) = decode_nibbles(nib1);
+        while byte_len >= 16 {
+            // Load two 16-byte halves of the 32-byte hex input.
+            // SAFETY: `byte_len >= 16` so `src` is valid for 32 hex bytes and
+            // `dst` is valid for 16 output bytes.
+            let nib0 = unsafe { v128_load(src.cast()) };
+            let nib1 = unsafe { v128_load(src.add(16).cast()) };
 
-        err_accum |= ok0 | ok1;
+            let (nibbles0, check0) = decode_nibbles(nib0, c_c6, c_six, c_f0, c_df, c_a, c_ten, c_validate);
+            let (nibbles1, check1) = decode_nibbles(nib1, c_c6, c_six, c_f0, c_df, c_a, c_ten, c_validate);
 
-        // Pack nibbles: deinterleave even (hi) and odd (lo) positions from the
-        // two 16-byte nibble vectors, then combine with shift + OR.
-        let hi = u8x16_shuffle::<0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30>(nibbles0, nibbles1);
-        let lo = u8x16_shuffle::<1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31>(nibbles0, nibbles1);
-        let packed = v128_or(u8x16_shl(hi, 4), lo);
+            acc_check = v128_or(acc_check, v128_or(check0, check1));
 
-        // SAFETY: `byte_len >= 16`, so `dst` is valid for 16 writes here, and
-        // advancing `src` by 32 / `dst` by 16 keeps both in bounds for the
-        // remaining `byte_len - 16` iterations (caller's contract).
-        unsafe {
-            v128_store(dst.cast(), packed);
-            src = src.add(32);
-            dst = dst.add(16);
+            // Pack nibbles: deinterleave even (hi) and odd (lo) positions from the
+            // two 16-byte nibble vectors, then combine with shift + OR.
+            let hi = u8x16_shuffle::<0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30>(nibbles0, nibbles1);
+            let lo = u8x16_shuffle::<1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31>(nibbles0, nibbles1);
+            let packed = v128_or(u8x16_shl(hi, 4), lo);
+
+            // SAFETY: `byte_len >= 16`, so `dst` is valid for 16 writes here, and
+            // advancing `src` by 32 / `dst` by 16 keeps both in bounds for the
+            // remaining `byte_len - 16` iterations (caller's contract).
+            unsafe {
+                v128_store(dst.cast(), packed);
+                src = src.add(32);
+                dst = dst.add(16);
+            }
+            byte_len -= 16;
         }
-        byte_len -= 16;
+
+        // `u8x16_bitmask` extracts the MSB of each accumulated check lane.
+        err_accum = u8x16_bitmask(acc_check);
     }
 
     // Tail: delegate remaining bytes to scalar.
@@ -146,33 +163,36 @@ pub unsafe fn decode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize) 
     Ok(())
 }
 
-/// Decode 16 hex-ASCII bytes in `v` into nibble values, returning the nibble
-/// vector and a bitmask (`u16`) where a non-zero value indicates at least one
-/// invalid hex byte (`u8x16_bitmask` of the out-of-range check).
+/// Decode 16 hex-ASCII bytes in `v` into nibble values, returning `(nibbles, check)`
+/// where each lane of `check` has its MSB set iff the corresponding input byte was invalid.
 #[inline(always)]
-fn decode_nibbles(v: v128) -> (v128, u16) {
+#[allow(clippy::too_many_arguments)]
+fn decode_nibbles(
+    v: v128,
+    c_c6: v128,
+    c_six: v128,
+    c_f0: v128,
+    c_df: v128,
+    c_a: v128,
+    c_ten: v128,
+    c_validate: v128,
+) -> (v128, v128) {
     // Digit path: '0'..'9' → 0..9
-    let digit = u8x16_sub(
-        u8x16_sub_sat(u8x16_add(v, u8x16_splat(0xC6)), u8x16_splat(6)),
-        u8x16_splat(0xF0),
-    );
+    let digit = u8x16_sub(u8x16_sub_sat(u8x16_add(v, c_c6), c_six), c_f0);
 
     // Alpha path: 'A'..'F' / 'a'..'f' → 10..15
-    let upper = v128_and(v, u8x16_splat(0xDF));
-    let alpha = u8x16_add_sat(u8x16_sub(upper, u8x16_splat(b'A')), u8x16_splat(10));
+    let upper = v128_and(v, c_df);
+    let alpha = u8x16_add_sat(u8x16_sub(upper, c_a), c_ten);
 
     // Merge: valid nibbles are 0..15; pick the smaller of the two paths.
     let nibbles = u8x16_min(digit, alpha);
 
     // Validate: any nibble > 15 means the byte was not valid hex.
-    // Adding 112 (== 128 - 16) to a value 0..15 stays ≤ 127; anything ≥ 16
-    // wraps to ≥ 128. Check that the high bit is never set (== all ≤ 127).
-    let check = u8x16_add_sat(nibbles, u8x16_splat(112));
-    // `u8x16_bitmask` extracts the MSB of each lane into a u16.
-    // Non-zero means at least one nibble was out of range (invalid hex byte).
-    let err_bits = u8x16_bitmask(check);
+    // Adding 0x70 (112 = 128 - 16) keeps 0..=15 ≤ 127 (MSB clear) and pushes
+    // anything ≥ 16 to ≥ 128 (MSB set).
+    let check = u8x16_add_sat(nibbles, c_validate);
 
-    (nibbles, err_bits)
+    (nibbles, check)
 }
 
 /// Check if every byte in `input` is a valid hex ASCII character, using SIMD128
@@ -181,24 +201,33 @@ fn decode_nibbles(v: v128) -> (v128, u16) {
 /// Processes all chunks without short-circuiting (constant-time).
 /// Returns `true` iff all bytes are in `[0-9a-fA-F]`.
 pub fn check(mut input: &[u8]) -> bool {
-    let mut all_valid = true;
+    let mut err: u8 = 0;
 
-    while input.len() >= 16 {
-        // SAFETY: `input.len() >= 16` so the pointer is valid for 16 reads.
-        let v = unsafe { v128_load(input.as_ptr().cast()) };
+    if input.len() >= 16 {
+        let c_0 = u8x16_splat(b'0');
+        let c_9 = u8x16_splat(9);
+        let c_20 = u8x16_splat(0x20);
+        let c_a = u8x16_splat(b'a');
+        let c_5 = u8x16_splat(5);
+        let mut acc_valid = u8x16_splat(0xFF);
 
-        let is_digit = v128_and(u8x16_ge(v, u8x16_splat(b'0')), u8x16_le(v, u8x16_splat(b'9')));
-        let is_upper = v128_and(u8x16_ge(v, u8x16_splat(b'A')), u8x16_le(v, u8x16_splat(b'F')));
-        let is_lower = v128_and(u8x16_ge(v, u8x16_splat(b'a')), u8x16_le(v, u8x16_splat(b'f')));
+        while input.len() >= 16 {
+            // SAFETY: `input.len() >= 16` so the pointer is valid for 16 reads.
+            let v = unsafe { v128_load(input.as_ptr().cast()) };
 
-        let is_hex = v128_or(v128_or(is_digit, is_upper), is_lower);
-        all_valid &= u8x16_all_true(is_hex);
+            let is_digit = u8x16_le(u8x16_sub(v, c_0), c_9);
+            let is_letter = u8x16_le(u8x16_sub(v128_or(v, c_20), c_a), c_5);
+            let is_hex = v128_or(is_digit, is_letter);
+            acc_valid = v128_and(acc_valid, is_hex);
 
-        // SAFETY: `input.len() >= 16` checked above.
-        input = unsafe { input.get_unchecked(16..) };
+            // SAFETY: `input.len() >= 16` checked above.
+            input = unsafe { input.get_unchecked(16..) };
+        }
+
+        err = u8::from(!u8x16_all_true(acc_valid));
     }
 
-    scalar::check(input) & all_valid
+    (err | scalar::check_inner(input)) == 0
 }
 
 #[cfg(test)]

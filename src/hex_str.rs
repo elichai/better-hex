@@ -261,17 +261,14 @@ impl<const N: usize, P: Prefix> HexStr<N, P> {
     /// [crate-level performance note]: crate#performance-const-fn-vs-runtime-apis
     pub const fn const_decode(&self) -> [u8; N] {
         let hex_bytes = self.as_bytes_no_prefix();
-        debug_assert!(const_check(hex_bytes), "HexStr contained invalid hex bytes");
-        match const_decode_to_array(hex_bytes) {
-            Ok(arr) => arr,
-            // SAFETY: every constructor upholds the hex-ASCII invariant and
-            // `as_bytes_no_prefix` is exactly `2 * N` bytes, so the decode never
-            // errors. Hand-inlines `Result::unwrap_unchecked` (not const-stable)
-            // via the const-stable `unreachable_unchecked`, mirroring `decode`'s
-            // discriminant elimination so this stays branch-free — and thus
-            // constant-time — when called at runtime.
-            Err(_) => unsafe { core::hint::unreachable_unchecked() },
-        }
+        let mut out = MaybeUninit::<[u8; N]>::uninit();
+        // SAFETY: `as_bytes_no_prefix` is readable for `N * 2` bytes; `out` is
+        // writable for `N` bytes; `scalar::decode_inner` writes all `N` bytes
+        // unconditionally.
+        let err = unsafe { crate::backend::scalar::decode_inner(hex_bytes.as_ptr(), out.as_mut_ptr().cast::<u8>(), N) };
+        debug_assert!(err == 0, "HexStr contained invalid hex bytes");
+        // SAFETY: `scalar::decode_inner` initialized all `N` bytes.
+        unsafe { out.assume_init() }
     }
 }
 
@@ -402,12 +399,13 @@ pub const fn const_decode_to_array<const N: usize>(input: &[u8]) -> Result<[u8; 
             got: input.len(),
         });
     }
-    let mut out = [0u8; N];
+    let mut out = MaybeUninit::<[u8; N]>::uninit();
     // SAFETY: `input.len() == N * 2` (checked above), so `input.as_ptr()` is
-    // readable for `N * 2` bytes and `out.as_mut_ptr()` writable for `N` bytes.
+    // readable for `N * 2` bytes and `out` is writable for `N` bytes.
     // Can't use `?` here: `From<InvalidEncoding>` is not (and cannot be) `const`.
-    match unsafe { crate::backend::scalar::decode(input.as_ptr(), out.as_mut_ptr(), N) } {
-        Ok(()) => Ok(out),
+    match unsafe { crate::backend::scalar::decode(input.as_ptr(), out.as_mut_ptr().cast::<u8>(), N) } {
+        // SAFETY: `scalar::decode` initialized all `N` bytes on Ok.
+        Ok(()) => Ok(unsafe { out.assume_init() }),
         Err(crate::backend::InvalidEncoding) => Err(Error::InvalidEncoding),
     }
 }

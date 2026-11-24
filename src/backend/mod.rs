@@ -197,7 +197,7 @@ pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error>
 }
 
 /// Check if every byte in `input` is a valid hex ASCII character.
-#[inline(never)]
+#[inline]
 pub fn check(input: &[u8]) -> bool {
     dispatch!(
         scalar: scalar::check(input),
