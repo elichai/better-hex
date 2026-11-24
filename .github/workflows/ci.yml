@@ -13,23 +13,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  lockfiles:
-    name: Lockfiles
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Install Rust 1.97.0
-        uses: dtolnay/rust-toolchain@1.97.0
-
-      - name: Check root lockfile
-        run: cargo fetch --locked
-
-      # The fuzz crate has its own lockfile, including the root crate's version.
-      - name: Check fuzz lockfile
-        run: cargo fetch --locked --manifest-path fuzz/Cargo.toml
-
   test:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}

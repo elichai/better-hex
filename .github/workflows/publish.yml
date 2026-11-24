@@ -83,6 +83,7 @@ jobs:
       # release-plz/action bundles cargo-semver-checks, so a breaking API change
       # is reflected in the proposed version with no separate install step.
       - name: Run release-plz
+        id: release-plz
         uses: release-plz/action@v0.5
         with:
           command: release-pr
@@ -93,3 +94,25 @@ jobs:
           # run it, manually close and reopen the release PR.
           # https://release-plz.dev/docs/github/token
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout release PR
+        if: steps.release-plz.outputs.prs_created == 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ fromJSON(steps.release-plz.outputs.pr).head_branch }}
+          # The refresh step pushes a commit to this branch.
+          persist-credentials: true
+
+      - name: Refresh fuzz lockfile
+        if: steps.release-plz.outputs.prs_created == 'true'
+        env:
+          RELEASE_PR_BRANCH: ${{ fromJSON(steps.release-plz.outputs.pr).head_branch }}
+        run: |
+          cargo update --manifest-path fuzz/Cargo.toml -p better-hex
+          cargo fetch --locked --manifest-path fuzz/Cargo.toml
+          if git diff --quiet -- fuzz/Cargo.lock; then
+            exit 0
+          fi
+          git add fuzz/Cargo.lock
+          git commit -m "chore: sync fuzz lockfile with release version"
+          git push origin "HEAD:$RELEASE_PR_BRANCH"
