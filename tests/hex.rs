@@ -1,22 +1,22 @@
-use better_hex::hex_literal;
+use better_hex::hex;
 
 #[test]
 fn decodes_in_const_static_and_expression_contexts() {
-    const BYTES: [u8; 4] = hex_literal!("00aAfF19");
-    static STATIC_BYTES: [u8; 4] = hex_literal!("00aAfF19");
+    const BYTES: [u8; 4] = hex!("00aAfF19");
+    static STATIC_BYTES: [u8; 4] = hex!("00aAfF19");
     assert_eq!(BYTES, [0, 0xaa, 0xff, 0x19]);
     assert_eq!(STATIC_BYTES, BYTES);
     assert_eq!(
-        hex_literal!("0123456789abcdefABCDEF"),
+        hex!("0123456789abcdefABCDEF"),
         [1, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xab, 0xcd, 0xef]
     );
 }
 
 #[test]
 fn ignores_line_endings_even_between_nibbles() {
-    assert_eq!(hex_literal!("\r\n0\n12\r34\r\n5\n"), [1, 0x23, 0x45]);
+    assert_eq!(hex!("\r\n0\n12\r34\r\n5\n"), [1, 0x23, 0x45]);
     assert_eq!(
-        hex_literal!(
+        hex!(
             r#"
 001122
 334455
@@ -28,30 +28,27 @@ fn ignores_line_endings_even_between_nibbles() {
 
 #[test]
 fn concatenates_adjacent_literals_and_handles_empty_input() {
-    let empty: [u8; 0] = hex_literal!();
+    let empty: [u8; 0] = hex!();
     assert_eq!(empty, []);
-    assert_eq!(hex_literal!("" "\r\n" r""), []);
-    assert_eq!(
-        hex_literal!("" "00" r"AaBB" /* separator */ "cc" ""),
-        [0, 0xaa, 0xbb, 0xcc]
-    );
+    assert_eq!(hex!("" "\r\n" r""), []);
+    assert_eq!(hex!("" "00" r"AaBB" /* separator */ "cc" ""), [0, 0xaa, 0xbb, 0xcc]);
 }
 
 #[test]
 fn accepts_one_optional_prefix_per_literal() {
-    const BYTES: [u8; 6] = hex_literal!("0xDeAd" "0XbEEf" "0011");
+    const BYTES: [u8; 6] = hex!("0xDeAd" "0XbEEf" "0011");
     assert_eq!(BYTES, [0xde, 0xad, 0xbe, 0xef, 0, 0x11]);
-    assert_eq!(hex_literal!("\r\n0x0\n102" r"0X0304"), [1, 2, 3, 4]);
-    assert_eq!(hex_literal!("0x" "\n0X\r\n"), []);
+    assert_eq!(hex!("\r\n0x0\n102" r"0X0304"), [1, 2, 3, 4]);
+    assert_eq!(hex!("0x" "\n0X\r\n"), []);
 }
 
 #[test]
 fn accepts_const_string_expressions() {
     const INPUT: &str = "dead";
-    const BYTES: [u8; 4] = hex_literal!(INPUT, concat!("be", "ef"));
-    assert_eq!(hex_literal!(INPUT), [0xde, 0xad]);
+    const BYTES: [u8; 4] = hex!(INPUT, concat!("be", "ef"));
+    assert_eq!(hex!(INPUT), [0xde, 0xad]);
     assert_eq!(BYTES, [0xde, 0xad, 0xbe, 0xef]);
-    assert_eq!(hex_literal!(INPUT, "beef",), BYTES);
+    assert_eq!(hex!(INPUT, "beef",), BYTES);
 }
 
 #[test]
@@ -63,7 +60,7 @@ fn expansion_is_hygienic() {
     let _: u8 = 0;
     let _: usize = 0;
     let strings = "unrelated";
-    let bytes = renamed::hex_literal!("dead" "beef");
+    let bytes = renamed::hex!("dead" "beef");
     assert_eq!(bytes, [0xde, 0xad, 0xbe, 0xef]);
     assert_eq!(strings, "unrelated");
 }

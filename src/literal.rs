@@ -22,7 +22,7 @@ pub const fn stripped_len(mut strings: &[&str]) -> usize {
         }
         assert!(
             (len - start).is_multiple_of(2),
-            "hex_literal!: odd number of hex digits in an input"
+            "hex!: odd number of hex digits in an input"
         );
     }
     len
@@ -42,7 +42,7 @@ pub const fn strip<const N: usize>(mut strings: &[&str]) -> [u8; N] {
             }
         }
     }
-    assert!(written == N, "hex_literal!: incorrect output length");
+    assert!(written == N, "hex!: incorrect output length");
     output
 }
 
@@ -67,22 +67,22 @@ pub const fn strip<const N: usize>(mut strings: &[&str]) -> [u8; N] {
 /// Runtime variables are not accepted. No features or allocation are required.
 ///
 /// ```
-/// use better_hex::hex_literal;
+/// use better_hex::hex;
 ///
 /// const INPUT: &str = "0xdead";
-/// const BYTES: [u8; 4] = hex_literal!(INPUT, concat!("BE", "EF"));
+/// const BYTES: [u8; 4] = hex!(INPUT, concat!("BE", "EF"));
 /// assert_eq!(BYTES, [0xde, 0xad, 0xbe, 0xef]);
-/// assert_eq!(hex_literal!("de" "AD"), [0xde, 0xad]);
-/// assert_eq!(hex_literal!(r#"
+/// assert_eq!(hex!("de" "AD"), [0xde, 0xad]);
+/// assert_eq!(hex!(r#"
 /// 00010203
 /// 04050607
 /// "#), [0, 1, 2, 3, 4, 5, 6, 7]);
-/// let empty: [u8; 0] = hex_literal!();
+/// let empty: [u8; 0] = hex!();
 /// assert_eq!(empty, []);
 /// ```
 ///
 /// Code using [`hex-literal`] can retain the `hex!` name with
-/// `use better_hex::hex_literal as hex;`. The input rules above apply:
+/// `use better_hex::hex;`. The input rules above apply:
 /// spaces, tabs, and colons must be removed or replaced with line endings.
 ///
 /// [`hex-literal`]: https://docs.rs/hex-literal/1.1.0/hex_literal/
@@ -90,91 +90,91 @@ pub const fn strip<const N: usize>(mut strings: &[&str]) -> [u8; N] {
 /// Invalid input fails to compile in ordinary expressions too:
 ///
 /// ```compile_fail
-/// let _ = better_hex::hex_literal!("00 11");
+/// let _ = better_hex::hex!("00 11");
 /// ```
 ///
 /// ```compile_fail
-/// let _ = better_hex::hex_literal!("00\t11");
+/// let _ = better_hex::hex!("00\t11");
 /// ```
 ///
 /// ```compile_fail
-/// let _ = better_hex::hex_literal!("00:11");
+/// let _ = better_hex::hex!("00:11");
 /// ```
 ///
 /// ```compile_fail
-/// let _ = better_hex::hex_literal!("ab_cd");
+/// let _ = better_hex::hex!("ab_cd");
 /// ```
 ///
 /// ```compile_fail
-/// let _ = better_hex::hex_literal!("00\u{00a0}11");
+/// let _ = better_hex::hex!("00\u{00a0}11");
 /// ```
 ///
 /// ```compile_fail
-/// let _ = better_hex::hex_literal!("АА"); // Cyrillic letters
+/// let _ = better_hex::hex!("АА"); // Cyrillic letters
 /// ```
 ///
 /// ```compile_fail
-/// let _ = better_hex::hex_literal!("00\x0b11"); // Vertical tab
+/// let _ = better_hex::hex!("00\x0b11"); // Vertical tab
 /// ```
 ///
 /// ```compile_fail
-/// let _ = better_hex::hex_literal!("00\x0c11"); // Form feed
+/// let _ = better_hex::hex!("00\x0c11"); // Form feed
 /// ```
 ///
 /// Prefixes are allowed only once at the start of each input:
 ///
 /// ```compile_fail
-/// let _ = better_hex::hex_literal!("0x0x12");
+/// let _ = better_hex::hex!("0x0x12");
 /// ```
 ///
 /// ```compile_fail
-/// let _ = better_hex::hex_literal!("120x34");
+/// let _ = better_hex::hex!("120x34");
 /// ```
 ///
 /// ```compile_fail
-/// let _ = better_hex::hex_literal!("0\nx12");
+/// let _ = better_hex::hex!("0\nx12");
 /// ```
 ///
 /// Digits cannot pair across input boundaries, including const expressions:
 ///
 /// ```compile_fail
 /// const INPUT: &str = "a";
-/// let _ = better_hex::hex_literal!(INPUT, "b");
+/// let _ = better_hex::hex!(INPUT, "b");
 /// ```
 ///
 /// ```compile_fail
-/// let _ = better_hex::hex_literal!("0x1");
+/// let _ = better_hex::hex!("0x1");
 /// ```
 ///
 /// Runtime variables and byte strings are not accepted:
 ///
 /// ```compile_fail
 /// let INPUT: &str = "abcd";
-/// let _ = better_hex::hex_literal!(INPUT);
+/// let _ = better_hex::hex!(INPUT);
 /// ```
 ///
 /// ```compile_fail
-/// let _ = better_hex::hex_literal!(b"abcd");
+/// let _ = better_hex::hex!(b"abcd");
 /// ```
 ///
 /// Invalid hex is rejected even in unused generic functions:
 ///
 /// ```compile_fail
 /// fn unused<T>() {
-///     let _ = better_hex::hex_literal!("gg");
+///     let _ = better_hex::hex!("gg");
 /// }
 /// ```
 #[macro_export]
-macro_rules! hex_literal {
-    ($($s:literal)*) => { $crate::hex_literal!(@decode $($s),*) };
-    ($($s:expr),+ $(,)?) => { $crate::hex_literal!(@decode $($s),*) };
+macro_rules! hex {
+    ($($s:literal)*) => { $crate::hex!(@decode $($s),*) };
+    ($($s:expr),+ $(,)?) => { $crate::hex!(@decode $($s),*) };
     (@decode $($s:expr),*) => {{
         const STRINGS: &[&::core::primitive::str] = &[$($s),*];
         const LEN: ::core::primitive::usize = $crate::literal::stripped_len(STRINGS);
         const HEX: [::core::primitive::u8; LEN] = $crate::literal::strip(STRINGS);
         const BYTES: [::core::primitive::u8; LEN / 2] = match $crate::const_decode_to_array(&HEX) {
             ::core::result::Result::Ok(bytes) => bytes,
-            ::core::result::Result::Err(_) => ::core::panic!("hex_literal!: invalid hex character"),
+            ::core::result::Result::Err(_) => ::core::panic!("hex!: invalid hex character"),
         };
         BYTES
     }};

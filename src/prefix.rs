@@ -70,7 +70,7 @@ impl Prefix for NoPrefix {
 }
 
 impl Prefix for WithPrefix {
-    const VALUE: Self = WithPrefix([b'0', b'x']);
+    const VALUE: Self = WithPrefix(*b"0x");
 
     #[inline]
     fn strip_prefix(input: &[u8]) -> Option<&[u8]> {

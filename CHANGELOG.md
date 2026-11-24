@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `hex_literal!` for compile-time byte arrays from adjacent string literals or
+- `hex!` for compile-time byte arrays from adjacent string literals or
   comma-separated const string expressions. Supports mixed-case hex, optional
   `0x` / `0X` prefixes, and CR/LF line endings without allocation or feature flags.
 
