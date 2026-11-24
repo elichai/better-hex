@@ -233,7 +233,7 @@ jobs:
       - name: cargo doc
         env:
           RUSTDOCFLAGS: "-D warnings"
-        run: cargo doc --locked --no-deps --all-features
+        run: cargo doc --locked --no-deps --features std,alloc,serde,heapless,arrayvec
 
   coverage:
     name: Coverage
