@@ -531,7 +531,9 @@ fn from_hex_container<C: Container>(hex: &[u8]) -> Result<C, Error> {
     }
     let out_len = hex.len() / 2;
     let mut out = C::new(out_len)?;
-    crate::backend::decode_no_length_check(hex, &mut C::as_mut_slice(&mut out)[..out_len])
+    // SAFETY: `hex.len()` is even (checked above), so `hex.len() == out_len * 2`,
+    // and the sliced spare capacity has length exactly `out_len`.
+    unsafe { crate::backend::decode_no_length_check(hex, &mut C::as_mut_slice(&mut out)[..out_len]) }
         .map_err(|crate::backend::InvalidEncoding| Error::InvalidEncoding)?;
     // SAFETY: the first `out_len` bytes of the spare capacity have been
     // initialized by `backend::decode_no_length_check`. The const assertion

@@ -158,11 +158,18 @@ pub fn encode(input: &[u8], output: &mut [MaybeUninit<u8>], upper: bool) -> Resu
 /// callers like `HexStr::decode` use `unwrap_unchecked` to give the
 /// optimizer enough information to remove the discriminant load entirely.
 ///
-/// Caller must guarantee `input.len() == output.len() * 2` — debug-checked.
+/// # Safety
+///
+/// Callers must guarantee `input.len() == output.len() * 2` (only checked via
+/// `debug_assert_eq!`; violating this in release builds causes out-of-bounds
+/// reads or writes).
 ///
 /// [`HexStr::decode`]: crate::HexStr::decode
 #[inline]
-pub(crate) fn decode_no_length_check(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), InvalidEncoding> {
+pub(crate) unsafe fn decode_no_length_check(
+    input: &[u8],
+    output: &mut [MaybeUninit<u8>],
+) -> Result<(), InvalidEncoding> {
     debug_assert_eq!(input.len(), output.len() * 2);
     let src = input.as_ptr();
     let byte_len = output.len();
@@ -193,7 +200,8 @@ pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error>
             got: input.len(),
         });
     }
-    decode_no_length_check(input, output).map_err(|InvalidEncoding| Error::InvalidEncoding)
+    // SAFETY: `input.len() == output.len() * 2` was checked above.
+    unsafe { decode_no_length_check(input, output) }.map_err(|InvalidEncoding| Error::InvalidEncoding)
 }
 
 /// Check if every byte in `input` is a valid hex ASCII character.
