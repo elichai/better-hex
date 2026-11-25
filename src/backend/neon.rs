@@ -104,72 +104,73 @@ fn hex_lut(upper: bool) -> uint8x16_t {
 /// - The `src[..byte_len]` and `dst[..byte_len * 2]` regions must not overlap.
 #[target_feature(enable = "neon")]
 pub unsafe fn encode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize, upper: bool) {
+    let lut = hex_lut(upper);
+    // `vdupq_n_u8` and the arithmetic / shuffle intrinsics are safe under
+    // `#[target_feature(enable = "neon")]`; only pointer loads/stores and
+    // pointer arithmetic require `unsafe`.
+    let mask_lo = vdupq_n_u8(0x0F);
+
+    // Save the original total length for the overlapping-tail heuristic.
+    let orig_byte_len = byte_len;
+
+    // Process 32 bytes (2x16) per iteration to reduce loop overhead
+    // and give the OoO engine more independent work per iteration.
+    while byte_len >= 32 {
+        // SAFETY: `byte_len >= 32` guarantees src is readable for 32 bytes.
+        let (chunk_a, chunk_b) = unsafe { (vld1q_u8(src), vld1q_u8(src.add(16))) };
+
+        // Process chunk A.
+        let hi_a = vshrq_n_u8::<4>(chunk_a);
+        let lo_a = vandq_u8(chunk_a, mask_lo);
+        let hi_hex_a = vqtbl1q_u8(lut, hi_a);
+        let lo_hex_a = vqtbl1q_u8(lut, lo_a);
+        let zipped_a = vzipq_u8(hi_hex_a, lo_hex_a);
+
+        // Process chunk B.
+        let hi_b = vshrq_n_u8::<4>(chunk_b);
+        let lo_b = vandq_u8(chunk_b, mask_lo);
+        let hi_hex_b = vqtbl1q_u8(lut, hi_b);
+        let lo_hex_b = vqtbl1q_u8(lut, lo_b);
+        let zipped_b = vzipq_u8(hi_hex_b, lo_hex_b);
+
+        // SAFETY: `byte_len >= 32` guarantees dst is writable for 64 bytes
+        // and advancing src/dst stays within bounds.
+        unsafe {
+            vst1q_u8(dst, zipped_a.0);
+            vst1q_u8(dst.add(16), zipped_a.1);
+            vst1q_u8(dst.add(32), zipped_b.0);
+            vst1q_u8(dst.add(48), zipped_b.1);
+            src = src.add(32);
+            dst = dst.add(64);
+        }
+        byte_len -= 32;
+    }
+
+    // Handle a remaining 16-byte chunk if `byte_len >= 16`.
+    // (There can be at most one, since the 2x loop handles pairs.)
     if byte_len >= 16 {
-        let lut = hex_lut(upper);
-        // `vdupq_n_u8` and the arithmetic / shuffle intrinsics are safe under
-        // `#[target_feature(enable = "neon")]`; only pointer loads/stores and
-        // pointer arithmetic require `unsafe`.
-        let mask_lo = vdupq_n_u8(0x0F);
-
-        // Save the original total length for the overlapping-tail heuristic.
-        let orig_byte_len = byte_len;
-
-        // Process 32 bytes (2x16) per iteration to reduce loop overhead
-        // and give the OoO engine more independent work per iteration.
-        while byte_len >= 32 {
-            // SAFETY: `byte_len >= 32` guarantees src is readable for 32 bytes.
-            let (chunk_a, chunk_b) = unsafe { (vld1q_u8(src), vld1q_u8(src.add(16))) };
-
-            // Process chunk A.
-            let hi_a = vshrq_n_u8::<4>(chunk_a);
-            let lo_a = vandq_u8(chunk_a, mask_lo);
-            let hi_hex_a = vqtbl1q_u8(lut, hi_a);
-            let lo_hex_a = vqtbl1q_u8(lut, lo_a);
-            let zipped_a = vzipq_u8(hi_hex_a, lo_hex_a);
-
-            // Process chunk B.
-            let hi_b = vshrq_n_u8::<4>(chunk_b);
-            let lo_b = vandq_u8(chunk_b, mask_lo);
-            let hi_hex_b = vqtbl1q_u8(lut, hi_b);
-            let lo_hex_b = vqtbl1q_u8(lut, lo_b);
-            let zipped_b = vzipq_u8(hi_hex_b, lo_hex_b);
-
-            // SAFETY: `byte_len >= 32` guarantees dst is writable for 64 bytes
-            // and advancing src/dst stays within bounds.
-            unsafe {
-                vst1q_u8(dst, zipped_a.0);
-                vst1q_u8(dst.add(16), zipped_a.1);
-                vst1q_u8(dst.add(32), zipped_b.0);
-                vst1q_u8(dst.add(48), zipped_b.1);
-                src = src.add(32);
-                dst = dst.add(64);
-            }
-            byte_len -= 32;
+        // SAFETY: `byte_len >= 16` guarantees src is readable for 16 bytes.
+        let chunk = unsafe { vld1q_u8(src) };
+        let hi_nibbles = vshrq_n_u8::<4>(chunk);
+        let lo_nibbles = vandq_u8(chunk, mask_lo);
+        let hi_hex = vqtbl1q_u8(lut, hi_nibbles);
+        let lo_hex = vqtbl1q_u8(lut, lo_nibbles);
+        let zipped = vzipq_u8(hi_hex, lo_hex);
+        // SAFETY: `byte_len >= 16` guarantees dst is writable for 32 bytes.
+        unsafe {
+            vst1q_u8(dst, zipped.0);
+            vst1q_u8(dst.add(16), zipped.1);
+            src = src.add(16);
+            dst = dst.add(32);
         }
+        byte_len -= 16;
+    }
 
-        // Handle a remaining 16-byte chunk if `byte_len >= 16`.
-        // (There can be at most one, since the 2x loop handles pairs.)
-        if byte_len >= 16 {
-            // SAFETY: `byte_len >= 16` guarantees src is readable for 16 bytes.
-            let chunk = unsafe { vld1q_u8(src) };
-            let hi_nibbles = vshrq_n_u8::<4>(chunk);
-            let lo_nibbles = vandq_u8(chunk, mask_lo);
-            let hi_hex = vqtbl1q_u8(lut, hi_nibbles);
-            let lo_hex = vqtbl1q_u8(lut, lo_nibbles);
-            let zipped = vzipq_u8(hi_hex, lo_hex);
-            // SAFETY: `byte_len >= 16` guarantees dst is writable for 32 bytes.
-            unsafe {
-                vst1q_u8(dst, zipped.0);
-                vst1q_u8(dst.add(16), zipped.1);
-                src = src.add(16);
-                dst = dst.add(32);
-            }
-            byte_len -= 16;
-        }
-
-        // Handle the final < 16 bytes. Use an overlapping NEON read of the last
-        // 16 input bytes when the tail is >= 4 bytes (worth the SIMD overhead)
-        // and the total input is >= 16 bytes (so the overlap is valid).
+    // Handle the final < 16 bytes. Use an overlapping NEON read of the last
+    // 16 input bytes when the tail is >= 4 bytes (worth the SIMD overhead)
+    // and the total input is >= 16 bytes (so the overlap is valid). For
+    // tiny tails (< 4 bytes) the scalar path is cheaper.
+    if byte_len > 0 {
         if byte_len >= 4 && orig_byte_len >= 16 {
             // SAFETY: `orig_byte_len >= 16` and `byte_len < 16`, so backing up
             // by `16 - byte_len` lands within the original input/output buffers.
@@ -186,14 +187,11 @@ pub unsafe fn encode(mut src: *const u8, mut dst: *mut u8, mut byte_len: usize, 
                 vst1q_u8(overlap_dst, zipped.0);
                 vst1q_u8(overlap_dst.add(16), zipped.1);
             }
-            return;
+        } else {
+            // SAFETY: `src` is valid for `byte_len` reads,
+            // `dst` is valid for `byte_len * 2` writes.
+            unsafe { scalar::encode_inner(src, dst, byte_len, upper) };
         }
-    }
-
-    if byte_len > 0 {
-        // SAFETY: `src` is valid for `byte_len` reads,
-        // `dst` is valid for `byte_len * 2` writes.
-        unsafe { scalar::encode_inner(src, dst, byte_len, upper) };
     }
 }
 
