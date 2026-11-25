@@ -5,16 +5,10 @@
 //
 // serde groups also require --features serde (and serde_json is a dev-dep).
 
-use criterion::{Criterion, criterion_group, criterion_main};
-
-#[cfg(feature = "alloc")]
-use criterion::{BenchmarkId, Throughput};
-#[cfg(feature = "alloc")]
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
-#[cfg(feature = "alloc")]
 mod common;
 
-#[cfg(feature = "alloc")]
 fn bench_encode_alloc(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_alloc");
 
@@ -45,7 +39,6 @@ fn bench_encode_alloc(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(feature = "alloc")]
 fn bench_encode_to_slice(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode_to_slice");
 
@@ -62,7 +55,9 @@ fn bench_encode_to_slice(c: &mut Criterion) {
 
         #[cfg(feature = "_bench_const_hex")]
         group.bench_function(BenchmarkId::new("const_hex", size), |b| {
-            b.iter(|| const_hex::encode_to_slice(black_box(bufs.next()), black_box(dst.as_mut_slice())));
+            b.iter(|| {
+                const_hex::encode_to_slice(black_box(bufs.next()), black_box(dst.as_mut_slice())).unwrap();
+            });
         });
 
         #[cfg(feature = "_bench_faster_hex")]
@@ -90,7 +85,6 @@ fn bench_encode_to_slice(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(feature = "alloc")]
 fn bench_decode_alloc(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode_alloc");
 
@@ -130,7 +124,6 @@ fn bench_decode_alloc(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(feature = "alloc")]
 fn bench_decode_to_slice(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode_to_slice");
 
@@ -150,12 +143,16 @@ fn bench_decode_to_slice(c: &mut Criterion) {
         // const_hex::decode_to_slice accepts AsRef<[u8]>.
         #[cfg(feature = "_bench_const_hex")]
         group.bench_function(BenchmarkId::new("const_hex", size), |b| {
-            b.iter(|| const_hex::decode_to_slice(black_box(bufs.next()), black_box(dst.as_mut_slice())));
+            b.iter(|| {
+                const_hex::decode_to_slice(black_box(bufs.next()), black_box(dst.as_mut_slice())).unwrap();
+            });
         });
 
         #[cfg(feature = "_bench_faster_hex")]
         group.bench_function(BenchmarkId::new("faster_hex", size), |b| {
-            b.iter(|| faster_hex::hex_decode(black_box(bufs.next()), black_box(dst.as_mut_slice())));
+            b.iter(|| {
+                faster_hex::hex_decode(black_box(bufs.next()), black_box(dst.as_mut_slice())).unwrap();
+            });
         });
 
         #[cfg(feature = "_bench_base16ct")]
@@ -169,7 +166,6 @@ fn bench_decode_to_slice(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(feature = "alloc")]
 fn bench_check(c: &mut Criterion) {
     let mut group = c.benchmark_group("check_compare");
 
@@ -193,7 +189,6 @@ fn bench_check(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(feature = "alloc")]
 fn bench_display_format(c: &mut Criterion) {
     use std::fmt::Write;
     let mut group = c.benchmark_group("display_format");
@@ -225,7 +220,7 @@ fn bench_display_format(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(all(feature = "alloc", feature = "serde"))]
+#[cfg(feature = "serde")]
 mod serde_bench {
     use serde::{Deserialize, Serialize};
     use std::borrow::Cow;
@@ -244,7 +239,7 @@ mod serde_bench {
     }
 }
 
-#[cfg(all(feature = "alloc", feature = "serde"))]
+#[cfg(feature = "serde")]
 fn bench_serde_serialize(c: &mut Criterion) {
     use serde_bench::BetterHexWrap;
     use std::borrow::Cow;
@@ -286,7 +281,7 @@ fn bench_serde_serialize(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(all(feature = "alloc", feature = "serde"))]
+#[cfg(feature = "serde")]
 fn bench_serde_deserialize(c: &mut Criterion) {
     use serde_bench::BetterHexWrap;
 

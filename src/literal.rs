@@ -123,11 +123,28 @@ pub const fn strip<const N: usize>(mut strings: &[&str]) -> [u8; N] {
 /// assert_eq!(hex!("0 201"), [0x02, 0x01]);
 /// ```
 ///
-/// An odd total number of hex digits is **rejected at compile time**. No zero
-/// padding or partial byte is produced:
+/// An odd total number of hex digits, invalid characters, misplaced prefixes,
+/// or runtime inputs are **rejected at compile time** (including inside
+/// ordinary or unused generic functions). No zero padding or partial byte is
+/// produced:
 ///
 /// ```compile_fail
 /// let _ = better_hex::hex!("201"); // Three digits: rejected, not [0x02, 0x01].
+/// ```
+///
+/// ```compile_fail
+/// let _ = better_hex::hex!("00:11"); // Colons are rejected.
+/// ```
+///
+/// ```compile_fail
+/// let input: &str = "abcd";
+/// let _ = better_hex::hex!(input); // Runtime variables are not accepted.
+/// ```
+///
+/// ```compile_fail
+/// fn unused<T>() {
+///     let _ = better_hex::hex!("gg"); // Rejected even in unused generic functions.
+/// }
 /// ```
 ///
 /// Code using [`hex-literal`] can retain the `hex!` name with
@@ -135,12 +152,23 @@ pub const fn strip<const N: usize>(mut strings: &[&str]) -> [u8; N] {
 /// colons must be removed or replaced with supported separators.
 ///
 /// [`hex-literal`]: https://docs.rs/hex-literal/1.1.0/hex_literal/
-///
-/// Invalid input fails to compile in ordinary expressions too:
-///
-/// ```compile_fail
-/// let _ = better_hex::hex!("00:11");
-/// ```
+#[macro_export]
+macro_rules! hex {
+    ($($s:literal)*) => { $crate::hex!(@decode $($s),*) };
+    ($($s:expr),+ $(,)?) => { $crate::hex!(@decode $($s),*) };
+    (@decode $($s:expr),*) => {{
+        const STRINGS: &[&::core::primitive::str] = &[$($s),*];
+        const LEN: ::core::primitive::usize = $crate::literal::stripped_len(STRINGS);
+        const HEX: [::core::primitive::u8; LEN] = $crate::literal::strip(STRINGS);
+        const BYTES: [::core::primitive::u8; LEN / 2] = match $crate::const_decode_to_array(&HEX) {
+            ::core::result::Result::Ok(bytes) => bytes,
+            ::core::result::Result::Err(_) => ::core::panic!("hex!: invalid hex character"),
+        };
+        BYTES
+    }};
+}
+
+/// Additional `compile_fail` doctests for `hex!` kept out of public docs.
 ///
 /// ```compile_fail
 /// let _ = better_hex::hex!("00\u{00a0}11");
@@ -158,8 +186,6 @@ pub const fn strip<const N: usize>(mut strings: &[&str]) -> [u8; N] {
 /// let _ = better_hex::hex!("00\x0c11"); // Form feed
 /// ```
 ///
-/// Prefixes are allowed only once at the start of each input:
-///
 /// ```compile_fail
 /// let _ = better_hex::hex!("0x0x12");
 /// ```
@@ -175,8 +201,6 @@ pub const fn strip<const N: usize>(mut strings: &[&str]) -> [u8; N] {
 /// ```compile_fail
 /// let _ = better_hex::hex!("0_x12");
 /// ```
-///
-/// Digits cannot pair across input boundaries, including const expressions:
 ///
 /// ```compile_fail
 /// const INPUT: &str = "a";
@@ -195,39 +219,12 @@ pub const fn strip<const N: usize>(mut strings: &[&str]) -> [u8; N] {
 /// let _ = better_hex::hex!("0x2_01"); // Separators do not count as hex digits.
 /// ```
 ///
-/// Runtime variables and byte strings are not accepted:
-///
-/// ```compile_fail
-/// let INPUT: &str = "abcd";
-/// let _ = better_hex::hex!(INPUT);
-/// ```
-///
 /// ```compile_fail
 /// let _ = better_hex::hex!(b"abcd");
 /// ```
-///
-/// Invalid hex is rejected even in unused generic functions:
-///
-/// ```compile_fail
-/// fn unused<T>() {
-///     let _ = better_hex::hex!("gg");
-/// }
-/// ```
-#[macro_export]
-macro_rules! hex {
-    ($($s:literal)*) => { $crate::hex!(@decode $($s),*) };
-    ($($s:expr),+ $(,)?) => { $crate::hex!(@decode $($s),*) };
-    (@decode $($s:expr),*) => {{
-        const STRINGS: &[&::core::primitive::str] = &[$($s),*];
-        const LEN: ::core::primitive::usize = $crate::literal::stripped_len(STRINGS);
-        const HEX: [::core::primitive::u8; LEN] = $crate::literal::strip(STRINGS);
-        const BYTES: [::core::primitive::u8; LEN / 2] = match $crate::const_decode_to_array(&HEX) {
-            ::core::result::Result::Ok(bytes) => bytes,
-            ::core::result::Result::Err(_) => ::core::panic!("hex!: invalid hex character"),
-        };
-        BYTES
-    }};
-}
+#[doc(hidden)]
+#[cfg(doctest)]
+pub mod __compile_fail_tests {}
 
 #[cfg(test)]
 mod tests {

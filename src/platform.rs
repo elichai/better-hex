@@ -17,28 +17,28 @@
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)] // Scalar is constructed inside cfg-gated arms the lint can't see through.
 pub(crate) enum Platform {
-    Scalar,
+    Scalar = 1,
     #[cfg(all(not(feature = "disable-simd"), target_arch = "aarch64", target_feature = "neon"))]
-    Neon,
+    Neon = 2,
     #[cfg(all(not(feature = "disable-simd"), any(target_arch = "x86", target_arch = "x86_64")))]
-    Ssse3,
+    Ssse3 = 3,
     #[cfg(all(not(feature = "disable-simd"), any(target_arch = "x86", target_arch = "x86_64")))]
-    Avx2,
+    Avx2 = 4,
     #[cfg(all(not(feature = "disable-simd"), any(target_arch = "x86", target_arch = "x86_64")))]
-    Avx512bw,
+    Avx512bw = 5,
     #[cfg(all(not(feature = "disable-simd"), any(target_arch = "x86", target_arch = "x86_64")))]
-    Avx512vbmi,
+    Avx512vbmi = 6,
     #[cfg(all(not(feature = "disable-simd"), target_arch = "wasm32", target_feature = "simd128"))]
-    Wasm,
+    Wasm = 7,
 }
 
 /// Return the best available platform.
 ///
 /// On platforms where the SIMD level is known at compile time (aarch64+NEON,
-/// wasm32+simd128, x86+AVX-512, or `disable-simd`), this returns a constant
-/// with zero runtime overhead — no atomic load, no branch.
+/// wasm32+simd128, x86+AVX-512 VBMI, or `disable-simd`), this returns a
+/// constant with zero runtime overhead — no atomic load, no branch.
 ///
-/// Only x86/x86_64 without compile-time AVX-512BW goes through the cached
+/// Only x86/x86_64 without compile-time AVX-512 VBMI goes through the cached
 /// atomic path (CPUID on first call, then a single relaxed load thereafter).
 #[inline(always)]
 pub(crate) fn detect() -> Platform {
@@ -83,42 +83,43 @@ mod runtime {
     use super::Platform;
     use core::sync::atomic::{AtomicU8, Ordering};
 
-    type CachedPlatform = Option<Platform>;
+    const UNINIT: u8 = 0;
+    const SCALAR: u8 = Platform::Scalar as u8;
+    const SSSE3: u8 = Platform::Ssse3 as u8;
+    const AVX2: u8 = Platform::Avx2 as u8;
+    const AVX512BW: u8 = Platform::Avx512bw as u8;
+    const AVX512VBMI: u8 = Platform::Avx512vbmi as u8;
 
-    const fn cached_platform_to_u8(p: CachedPlatform) -> u8 {
-        // SAFETY: `CachedPlatform` is `Option<Platform>`, and `Platform` is `#[repr(u8)]` with valid discriminants.
-        // This will fail compilation if `Option<Platform>` ever has a non-`u8` representation
-        unsafe { core::mem::transmute::<CachedPlatform, u8>(p) }
-    }
-    // SAFETY: Requires that `v` is only ever written by `cached_platform_to_u8` with valid `CachedPlatform` values
-    const unsafe fn u8_to_cached_platform(v: u8) -> CachedPlatform {
-        // SAFETY: `v` is only ever written by `cached_platform_to_u8` with valid `CachedPlatform` values.
-        // This will fail compilation if `Option<Platform>` ever has a non-`u8` representation
-        unsafe { core::mem::transmute::<u8, CachedPlatform>(v) }
-    }
-
-    static CACHED: AtomicU8 = AtomicU8::new(cached_platform_to_u8(None));
+    static CACHED: AtomicU8 = AtomicU8::new(UNINIT);
 
     /// Cached runtime CPUID detection. First call probes and caches;
     /// subsequent calls are a single relaxed atomic load.
     #[inline(always)]
     pub(super) fn detect() -> Platform {
-        // SAFETY: `CACHED` is initialized to `None` and only ever written by `detect_impl()` with a valid `Platform` discriminant.
-        let p = unsafe { u8_to_cached_platform(CACHED.load(Ordering::Relaxed)) };
-        if let Some(p) = p {
-            return p;
+        match CACHED.load(Ordering::Relaxed) {
+            SCALAR => Platform::Scalar,
+            SSSE3 => Platform::Ssse3,
+            AVX2 => Platform::Avx2,
+            AVX512BW => Platform::Avx512bw,
+            AVX512VBMI => Platform::Avx512vbmi,
+            _ => detect_and_cache(),
         }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn detect_and_cache() -> Platform {
         let p = detect_impl();
-        CACHED.store(cached_platform_to_u8(Some(p)), Ordering::Relaxed);
+        CACHED.store(p as u8, Ordering::Relaxed);
         p
     }
 
     // avx512vbmi at compile time is handled in `super::detect()` directly.
     // Lower compile-time tiers (avx512bw, avx2, ssse3) still need runtime
     // probes because a higher tier might be available.
-    // Check top-down: VBMI → BW → AVX2 → SSSE3 → Scalar.
-    #[cold]
-    #[inline(never)]
+    // Check bottom-up (SSSE3 → AVX2 → BW → VBMI) so each tier guarantees
+    // every lower tier it falls through to is also supported.
+    #[inline(always)]
     #[cfg(feature = "std")]
     fn detect_impl() -> Platform {
         if !std::is_x86_feature_detected!("ssse3") {
@@ -134,8 +135,7 @@ mod runtime {
         }
     }
 
-    #[cold]
-    #[inline(never)]
+    #[inline(always)]
     #[cfg(not(feature = "std"))]
     fn detect_impl() -> Platform {
         cpufeatures::new!(cpuid_ssse3, "ssse3");

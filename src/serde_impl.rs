@@ -30,11 +30,14 @@
 //!
 //! # Allocation behaviour
 //!
-//! `serialize` calls `serializer.collect_str(display_adapter)`.  Serializers
-//! that override `collect_str` — e.g. `serde_json`, `serde_yaml` — write
-//! directly into their output buffers without a heap allocation.  The default
-//! `Serializer::collect_str` fallback formats into a temporary `String`,
-//! which **does** allocate.
+//! - Fixed-size arrays `[u8; N]` with `N <= 512` stack-encode into a
+//!   [`HexStr<N, P>`](crate::HexStr) and call `serializer.serialize_str`
+//!   directly — alloc-free regardless of the serializer.
+//! - Slices, `Vec<u8>`, and larger arrays (`N > 512`) stream through
+//!   `serializer.collect_str(display_adapter)`. Serializers that override
+//!   `collect_str` (e.g. `serde_json`, `serde_yaml`) write directly into their
+//!   output buffers without a heap allocation; the default `collect_str`
+//!   fallback formats into a temporary `String`.
 //!
 //! # Example
 //!
@@ -75,7 +78,7 @@ impl<'de, T: crate::FromHex, const PREFIX: bool> de::Visitor<'de> for HexVisitor
 
     fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
         let hex = strip_prefix::<PREFIX>(v.as_bytes()).map_err(de::Error::custom)?;
-        T::from_hex(hex).map_err(|e| de::Error::custom(e))
+        T::from_hex(hex).map_err(de::Error::custom)
     }
 }
 

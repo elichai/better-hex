@@ -24,6 +24,7 @@
 //! - **Hex literals** — [`hex!`] decodes string literals and const string
 //!   expressions into byte arrays at compile time, without allocation or feature flags
 //! - **Stack strings** — [`HexStr<N>`][HexStr] with zero heap allocation
+//! - **Extensible** — [`HexTarget`] trait for custom output types
 //!
 //! # Timing of `hex!`
 //!
@@ -53,7 +54,6 @@
 //! [`decode`], [`check`], [`HexStr::encode_lower`], [`HexStr::from_hex`],
 //! [`HexStr::decode`] — which dispatches to SIMD and is 10–50× faster on
 //! typical inputs.
-//! - **Extensible** — [`HexTarget`] trait for custom output types
 //!
 //! # Cargo features
 //!
@@ -62,8 +62,8 @@
 //! | `std`          |   yes   | Pulls in `alloc` and links `std`; uses `std` for x86 SIMD runtime detection (`cpufeatures` otherwise).                   |
 //! | `alloc`        | (via `std`) | `String` / `Vec<u8>` / `Box<[u8]>` / `Cow<'_, [u8]>` impls of [`ToHex`], [`FromHex`], and (for `String`) [`HexTarget`]. |
 //! | `serde`        |   no    | `Serialize` / `Deserialize` helpers under [`serde`] for `[u8; N]` and `Vec<u8>` fields, plus [`ToHex::serialize`].       |
-//! | `heapless`     |   no    | `heapless::Vec<u8, N>` ([`FromHex`]) and `heapless::String<CAP>` ([`HexTarget`]).                                        |
-//! | `arrayvec`     |   no    | `arrayvec::ArrayVec<u8, N>` ([`FromHex`]) and `arrayvec::ArrayString<CAP>` ([`HexTarget`]).                              |
+//! | `heapless`     |   no    | `heapless::Vec<u8, N>` ([`ToHex`], [`FromHex`]) and `heapless::String<CAP>` ([`HexTarget`]).                             |
+//! | `arrayvec`     |   no    | `arrayvec::ArrayVec<u8, N>` ([`ToHex`], [`FromHex`]) and `arrayvec::ArrayString<CAP>` ([`HexTarget`]).                   |
 //! | `disable-simd` |   no    | Force the scalar branchless backend on every target. Useful for size-constrained builds and Miri.                        |
 //!
 //! [`HexTarget`] implementors by feature (this is the full list — `HexStr<N, P>`
@@ -85,7 +85,7 @@
 //! - **[faster-hex](https://github.com/nervosnetwork/faster-hex)** (Nervos Foundation) —
 //!   x86 `pshufb` nibble-LUT encode — MIT
 //! - **[hex](https://github.com/KokaKiwi/rust-hex)** (KokaKiwi) — `FromHex`/`ToHex` trait
-//!   API; scalar decode LUT — MIT OR Apache-2.0
+//!   API design — MIT OR Apache-2.0
 //! - **[base16ct](https://github.com/RustCrypto/formats/tree/master/base16ct)** (RustCrypto) —
 //!   constant-time scalar arithmetic (Steve "Sc00bz" Thomas's ConstTimeEncoding) — MIT OR
 //!   Apache-2.0

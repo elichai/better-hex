@@ -14,11 +14,13 @@ use core::mem::MaybeUninit;
 
 /// Trait for types that can be hex-encoded.
 ///
-/// Implemented for `[u8; N]`, `[u8]`, and (with `alloc`) `Vec<u8>`,
-/// `Box<[u8]>`, and `Cow<'_, [u8]>`. The `[u8]` impl covers `&[u8]`
-/// callers via auto-deref on method calls. Downstream byte containers
-/// can implement `ToHex` themselves to plug into [`write_hex`],
-/// [`encode_hex`], and the serde [`serialize`] path uniformly.
+/// Implemented for `[u8; N]`, `[u8]`, `&U` (for `U: ToHex + ?Sized`),
+/// (with `alloc`) `Vec<u8>`, `Box<[u8]>`, `Cow<'_, [u8]>`,
+/// (with `heapless`) `heapless::Vec<u8, N>`, and
+/// (with `arrayvec`) `arrayvec::ArrayVec<u8, N>`.
+/// The `[u8]` impl covers `&[u8]` callers via auto-deref on method calls.
+/// Downstream byte containers can implement `ToHex` themselves to plug into
+/// [`write_hex`], [`encode_hex`], and the serde [`serialize`] path uniformly.
 ///
 /// # Examples
 ///
@@ -109,6 +111,7 @@ impl<T: ToHex + ?Sized> fmt::Display for HexAdapter<'_, T> {
 ///
 /// - `[u8; N]` — always available.
 /// - `Vec<u8>` — with the `alloc` feature.
+/// - `Box<[u8]>` — with the `alloc` feature.
 /// - `Cow<'_, [u8]>` — with the `alloc` feature. Always returns
 ///   [`Cow::Owned`](alloc::borrow::Cow::Owned) wrapping a freshly-decoded
 ///   `Vec<u8>`; the borrowed variant is never produced because decoding
@@ -188,6 +191,39 @@ pub trait HexTarget: Sized {
     fn encode_hex_upper(bytes: impl AsRef<[u8]>) -> Result<Self, Self::Error>;
 }
 
+/// Maximum `[u8; N]` byte count serialized via a stack-allocated [`HexStr<N, P>`]
+/// (up to 1026 bytes on the stack). Larger fixed-size arrays fall back to the
+/// streaming `collect_str` adapter to avoid risking stack overflow.
+#[cfg(feature = "serde")]
+const MAX_STACK_SERDE_BYTES: usize = 512;
+
+#[cfg(feature = "serde")]
+#[inline]
+fn serialize_array_stack<const N: usize, S, const PREFIX: bool>(
+    bytes: &[u8; N],
+    serializer: S,
+    upper: bool,
+) -> Result<S::Ok, S::Error>
+where
+    S: ::serde::Serializer,
+{
+    if PREFIX {
+        let hex = if upper {
+            HexStr::<N, crate::WithPrefix>::encode_upper(bytes)
+        } else {
+            HexStr::<N, crate::WithPrefix>::encode_lower(bytes)
+        };
+        serializer.serialize_str(hex.as_str())
+    } else {
+        let hex = if upper {
+            HexStr::<N>::encode_upper(bytes)
+        } else {
+            HexStr::<N>::encode_lower(bytes)
+        };
+        serializer.serialize_str(hex.as_str())
+    }
+}
+
 impl<const N: usize> ToHex for [u8; N] {
     #[inline]
     fn write_hex<W: fmt::Write>(&self, w: &mut W, upper: bool) -> fmt::Result {
@@ -202,29 +238,20 @@ impl<const N: usize> ToHex for [u8; N] {
         T::encode_hex_upper(self)
     }
 
-    /// Fast path: stack-encode into a [`HexStr<N, P>`](crate::HexStr) and
-    /// hand a complete `&str` to `serialize_str`. Alloc-free regardless of
-    /// the serializer's `collect_str` implementation.
+    /// Fast path for `N <= 512`: stack-encode into a [`HexStr<N, P>`](crate::HexStr)
+    /// and hand a complete `&str` to `serialize_str` (alloc-free regardless of
+    /// the serializer's `collect_str` implementation). Larger arrays fall back
+    /// to streaming through `collect_str` to bound stack usage.
     #[cfg(feature = "serde")]
     #[inline]
     fn serialize<S, const PREFIX: bool>(&self, serializer: S, upper: bool) -> Result<S::Ok, S::Error>
     where
         S: ::serde::Serializer,
     {
-        if PREFIX {
-            let hex = if upper {
-                HexStr::<N, crate::WithPrefix>::encode_upper(self)
-            } else {
-                HexStr::<N, crate::WithPrefix>::encode_lower(self)
-            };
-            serializer.serialize_str(hex.as_str())
+        if N <= MAX_STACK_SERDE_BYTES {
+            serialize_array_stack::<N, S, PREFIX>(self, serializer, upper)
         } else {
-            let hex = if upper {
-                HexStr::<N>::encode_upper(self)
-            } else {
-                HexStr::<N>::encode_lower(self)
-            };
-            serializer.serialize_str(hex.as_str())
+            <[u8] as ToHex>::serialize::<S, PREFIX>(self, serializer, upper)
         }
     }
 }
@@ -323,6 +350,40 @@ impl ToHex for alloc::borrow::Cow<'_, [u8]> {
     }
 }
 
+#[cfg(feature = "heapless")]
+#[cfg_attr(docsrs, doc(cfg(feature = "heapless")))]
+impl<const N: usize> ToHex for heapless::Vec<u8, N> {
+    #[inline]
+    fn write_hex<W: fmt::Write>(&self, w: &mut W, upper: bool) -> fmt::Result {
+        <[u8] as ToHex>::write_hex(self, w, upper)
+    }
+    #[inline]
+    fn encode_hex<T: HexTarget>(&self) -> Result<T, T::Error> {
+        <[u8] as ToHex>::encode_hex(self)
+    }
+    #[inline]
+    fn encode_hex_upper<T: HexTarget>(&self) -> Result<T, T::Error> {
+        <[u8] as ToHex>::encode_hex_upper(self)
+    }
+}
+
+#[cfg(feature = "arrayvec")]
+#[cfg_attr(docsrs, doc(cfg(feature = "arrayvec")))]
+impl<const N: usize> ToHex for arrayvec::ArrayVec<u8, N> {
+    #[inline]
+    fn write_hex<W: fmt::Write>(&self, w: &mut W, upper: bool) -> fmt::Result {
+        <[u8] as ToHex>::write_hex(self, w, upper)
+    }
+    #[inline]
+    fn encode_hex<T: HexTarget>(&self) -> Result<T, T::Error> {
+        <[u8] as ToHex>::encode_hex(self)
+    }
+    #[inline]
+    fn encode_hex_upper<T: HexTarget>(&self) -> Result<T, T::Error> {
+        <[u8] as ToHex>::encode_hex_upper(self)
+    }
+}
+
 #[cfg(feature = "alloc")]
 #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 impl FromHex for alloc::vec::Vec<u8> {
@@ -330,6 +391,16 @@ impl FromHex for alloc::vec::Vec<u8> {
 
     fn from_hex(hex: impl AsRef<[u8]>) -> Result<Self, Self::Error> {
         from_hex_container(hex.as_ref())
+    }
+}
+
+#[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+impl FromHex for alloc::boxed::Box<[u8]> {
+    type Error = Error;
+
+    fn from_hex(hex: impl AsRef<[u8]>) -> Result<Self, Self::Error> {
+        alloc::vec::Vec::<u8>::from_hex(hex).map(alloc::vec::Vec::into_boxed_slice)
     }
 }
 
@@ -452,13 +523,23 @@ fn from_hex_container<C: Container>(hex: &[u8]) -> Result<C, Error> {
             "from_hex_container writes raw decoded bytes, not valid UTF-8; use only with byte containers"
         )
     }
+    if !hex.len().is_multiple_of(2) {
+        return Err(Error::InvalidLength {
+            expected: hex.len() - 1,
+            got: hex.len(),
+        });
+    }
     let out_len = hex.len() / 2;
     let mut out = C::new(out_len)?;
-    crate::backend::decode(hex, &mut C::as_mut_slice(&mut out)[..out_len])?;
+    // SAFETY: `hex.len()` is even (checked above), so `hex.len() == out_len * 2`,
+    // and the sliced spare capacity has length exactly `out_len`.
+    unsafe { crate::backend::decode_no_length_check(hex, &mut C::as_mut_slice(&mut out)[..out_len]) }
+        .map_err(|crate::backend::InvalidEncoding| Error::InvalidEncoding)?;
     // SAFETY: the first `out_len` bytes of the spare capacity have been
-    // initialized by `backend::decode`. The const assertion above guarantees
-    // `C::REQUIRES_UTF8` is false (i.e. only byte containers like `Vec<u8>`,
-    // `heapless::Vec`, `arrayvec::ArrayVec`), so raw bytes are acceptable.
+    // initialized by `backend::decode_no_length_check`. The const assertion
+    // above guarantees `C::REQUIRES_UTF8` is false (i.e. only byte containers
+    // like `Vec<u8>`, `heapless::Vec`, `arrayvec::ArrayVec`), so raw bytes are
+    // acceptable.
     Ok(unsafe { C::set_len(out, out_len) })
 }
 

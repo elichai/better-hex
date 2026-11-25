@@ -72,13 +72,12 @@ fn decode_error_paths() {
     // Processes all bytes (invalid at start and end → same error)
     #[cfg(feature = "alloc")]
     {
-        let mut hex = better_hex::encode_string([0u8; 32]);
-        let bytes = unsafe { hex.as_bytes_mut() };
+        let mut bytes = better_hex::encode_string([0u8; 32]).into_bytes();
         bytes[0] = b'Z';
         bytes[63] = b'Z';
         let mut out = [0u8; 32];
         assert_eq!(
-            better_hex::decode_to_slice(bytes, &mut out).unwrap_err(),
+            better_hex::decode_to_slice(&bytes, &mut out).unwrap_err(),
             Error::InvalidEncoding
         );
     }
@@ -147,7 +146,58 @@ fn decode_processes_all_bytes_proof() {
 #[cfg(feature = "alloc")]
 #[test]
 fn from_hex_vec_odd_length() {
-    assert!(better_hex::decode::<Vec<u8>>(b"abc").is_err());
+    assert_eq!(
+        better_hex::decode::<Vec<u8>>(b"abc").unwrap_err(),
+        Error::InvalidLength { expected: 2, got: 3 }
+    );
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn alloc_container_traits_roundtrip() {
+    use better_hex::{FromHex, ToHex};
+    use std::borrow::Cow;
+
+    let raw = [0xde, 0xad, 0xbe, 0xef];
+    let vec_val = raw.to_vec();
+    let boxed: Box<[u8]> = raw.into();
+    let cow_borrowed: Cow<'_, [u8]> = Cow::Borrowed(&raw);
+    let cow_owned: Cow<'_, [u8]> = Cow::Owned(vec_val.clone());
+
+    for (lower, upper) in [
+        (
+            vec_val.encode_hex::<String>().unwrap(),
+            vec_val.encode_hex_upper::<String>().unwrap(),
+        ),
+        (
+            boxed.encode_hex::<String>().unwrap(),
+            boxed.encode_hex_upper::<String>().unwrap(),
+        ),
+        (
+            cow_borrowed.encode_hex::<String>().unwrap(),
+            cow_borrowed.encode_hex_upper::<String>().unwrap(),
+        ),
+        (
+            cow_owned.encode_hex::<String>().unwrap(),
+            cow_owned.encode_hex_upper::<String>().unwrap(),
+        ),
+    ] {
+        assert_eq!(lower, "deadbeef");
+        assert_eq!(upper, "DEADBEEF");
+    }
+
+    let mut out = String::new();
+    boxed.write_hex(&mut out, false).unwrap();
+    assert_eq!(out, "deadbeef");
+    out.clear();
+    cow_borrowed.write_hex(&mut out, true).unwrap();
+    assert_eq!(out, "DEADBEEF");
+
+    let decoded_box = Box::<[u8]>::from_hex("DeAdBeEf").unwrap();
+    assert_eq!(&*decoded_box, &raw);
+    let decoded_cow = Cow::<[u8]>::from_hex("DeAdBeEf").unwrap();
+    assert!(matches!(decoded_cow, Cow::Owned(_)));
+    assert_eq!(&*decoded_cow, &raw);
 }
 
 // ── HexStr ──────────────────────────────────────────────────────────────────
@@ -176,8 +226,20 @@ fn hex_str_type_properties() {
     let br: &[u8] = hex.as_ref();
     assert_eq!(br, b"abcd");
 
-    // PartialEq<str>
+    // PartialEq<str> and PartialEq<&str>
     assert_eq!(hex, *"abcd");
+    assert_eq!(hex, "abcd");
+
+    // Hash, Ord, Borrow<str> (usable as HashMap / BTreeMap key looked up by &str)
+    let mut map = std::collections::HashMap::new();
+    map.insert(hex, 42u32);
+    assert_eq!(map.get("abcd"), Some(&42));
+    let mut btree = std::collections::BTreeMap::new();
+    let hex_lo: HexStr<2> = HexStr::encode_lower(&[0x00, 0x01]);
+    btree.insert(hex, 2u32);
+    btree.insert(hex_lo, 1u32);
+    assert_eq!(btree.get("0001"), Some(&1));
+    assert!(hex_lo < hex);
 
     // Debug
     assert_eq!(format!("{hex:?}"), r#"HexStr("abcd")"#);
@@ -222,7 +284,7 @@ fn prefixed_hex_str_from_str_roundtrip() {
 
 #[test]
 fn prefixed_hex_str_from_str_errors() {
-    // Missing prefix (too short)
+    // Missing prefix (bare hex without "0x" is 2 bytes short)
     assert_eq!(
         "cafebabe".parse::<PrefixedHexStr<4>>().unwrap_err(),
         Error::InvalidLength { expected: 10, got: 8 }
@@ -232,16 +294,27 @@ fn prefixed_hex_str_from_str_errors() {
         "1xcafebabe".parse::<PrefixedHexStr<4>>().unwrap_err(),
         Error::InvalidEncoding
     );
+    // Uppercase "0X" prefix is rejected (FromStr matches "0x" verbatim)
+    assert_eq!(
+        "0Xcafebabe".parse::<PrefixedHexStr<4>>().unwrap_err(),
+        Error::InvalidEncoding
+    );
     // Invalid hex after valid prefix
     assert_eq!(
         "0xcafebaGe".parse::<PrefixedHexStr<4>>().unwrap_err(),
         Error::InvalidEncoding
     );
-    // Bare hex without prefix but correct hex-only length
-    assert_eq!(
-        "deadbeef".parse::<PrefixedHexStr<4>>().unwrap_err(),
-        Error::InvalidLength { expected: 10, got: 8 }
-    );
+}
+
+#[test]
+fn prefixed_hex_str_from_hex_takes_unprefixed_bytes() {
+    let p = PrefixedHexStr::<4>::from_hex(*b"deadbeef").unwrap();
+    assert_eq!(p, "0xdeadbeef");
+    assert_eq!(p.decode(), [0xde, 0xad, 0xbe, 0xef]);
+
+    const CP: PrefixedHexStr<4> = PrefixedHexStr::<4>::const_from_hex(*b"DEADBEEF").unwrap();
+    assert_eq!(CP, "0xDEADBEEF");
+    assert_eq!(CP.const_decode(), [0xde, 0xad, 0xbe, 0xef]);
 }
 
 #[test]
@@ -332,11 +405,13 @@ fn display_edge_cases() {
     assert_eq!(format!("{:#x}", better_hex::display(&[] as &[u8])), "0x");
     assert_eq!(format!("{:#X}", better_hex::display(&[] as &[u8])), "0x");
 
-    // Owned data
+    // Owned data & Copy/Clone on borrowed HexDisplay
     assert_eq!(format!("{}", better_hex::display(vec![0xde, 0xad])), "dead");
+    let d = better_hex::display([0xde, 0xad]);
+    let d_copy = d;
+    assert_eq!(format!("{d}"), format!("{d_copy}"));
 }
 
-#[cfg(feature = "alloc")]
 #[test]
 fn display_chunk_boundary() {
     let data128: Vec<u8> = (0u8..128).collect();
@@ -360,6 +435,11 @@ fn heapless_capacity_overflow() {
         better_hex::decode::<heapless::Vec<u8, 2>>(b"aabbcc").unwrap_err(),
         Error::InvalidLength { expected: 2, got: 3 }
     );
+    // odd length rejected consistently before capacity check
+    assert_eq!(
+        better_hex::decode::<heapless::Vec<u8, 2>>(b"abcdefg").unwrap_err(),
+        Error::InvalidLength { expected: 6, got: 7 }
+    );
 }
 
 #[cfg(feature = "arrayvec")]
@@ -375,26 +455,41 @@ fn arrayvec_capacity_overflow() {
         better_hex::decode::<arrayvec::ArrayVec<u8, 2>>(b"aabbcc").unwrap_err(),
         Error::InvalidLength { expected: 2, got: 3 }
     );
+    // odd length rejected consistently before capacity check
+    assert_eq!(
+        better_hex::decode::<arrayvec::ArrayVec<u8, 2>>(b"abcdefg").unwrap_err(),
+        Error::InvalidLength { expected: 6, got: 7 }
+    );
 }
 
 #[cfg(feature = "heapless")]
 #[test]
 fn heapless_oversized_container_ok() {
+    use better_hex::ToHex;
     // Variable-length containers with more capacity than needed should succeed.
     let s: heapless::String<100> = better_hex::encode([0xab]).unwrap();
     assert_eq!(&*s, "ab");
     let v: heapless::Vec<u8, 100> = better_hex::decode(b"ab").unwrap();
     assert_eq!(&*v, &[0xab]);
+    let re: heapless::String<100> = v.encode_hex().unwrap();
+    assert_eq!(&*re, "ab");
+    let re_upper: heapless::String<100> = v.encode_hex_upper().unwrap();
+    assert_eq!(&*re_upper, "AB");
 }
 
 #[cfg(feature = "arrayvec")]
 #[test]
 fn arrayvec_oversized_container_ok() {
+    use better_hex::ToHex;
     // Variable-length containers with more capacity than needed should succeed.
     let s: arrayvec::ArrayString<100> = better_hex::encode([0xab]).unwrap();
     assert_eq!(&*s, "ab");
     let v: arrayvec::ArrayVec<u8, 100> = better_hex::decode(b"ab").unwrap();
     assert_eq!(&*v, &[0xab]);
+    let re: arrayvec::ArrayString<100> = v.encode_hex().unwrap();
+    assert_eq!(&*re, "ab");
+    let re_upper: arrayvec::ArrayString<100> = v.encode_hex_upper().unwrap();
+    assert_eq!(&*re_upper, "AB");
 }
 
 // ── Serde error paths ───────────────────────────────────────────────────────
@@ -443,4 +538,63 @@ fn serde_error_paths() {
     // Uppercase input accepted by lowercase module
     let decoded: W = serde_json::from_str(r#"{"data":"DEADBEEF"}"#).unwrap();
     assert_eq!(decoded.data, [0xde, 0xad, 0xbe, 0xef]);
+
+    // Box<[u8]> roundtrip
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
+    struct B {
+        #[serde(with = "better_hex::serde")]
+        data: Box<[u8]>,
+    }
+    let b_orig = B {
+        data: Box::from([0xde, 0xad, 0xbe, 0xef]),
+    };
+    let b_json = serde_json::to_string(&b_orig).unwrap();
+    assert_eq!(b_json, r#"{"data":"deadbeef"}"#);
+    assert_eq!(serde_json::from_str::<B>(&b_json).unwrap(), b_orig);
+
+    // Large fixed array (> 512 bytes) hits streaming serialize fallback
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
+    struct Large {
+        #[serde(with = "better_hex::serde::prefixed")]
+        data: [u8; 600],
+    }
+    let large = Large { data: [0xab; 600] };
+    let large_json = serde_json::to_string(&large).unwrap();
+    assert_eq!(serde_json::from_str::<Large>(&large_json).unwrap(), large);
+}
+
+#[cfg(all(feature = "serde", feature = "heapless"))]
+#[test]
+fn serde_heapless_vec_roundtrip() {
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
+    struct H {
+        #[serde(with = "better_hex::serde")]
+        data: heapless::Vec<u8, 8>,
+    }
+    let mut data = heapless::Vec::new();
+    data.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]).unwrap();
+    let orig = H { data };
+    let json = serde_json::to_string(&orig).unwrap();
+    assert_eq!(json, r#"{"data":"deadbeef"}"#);
+    assert_eq!(serde_json::from_str::<H>(&json).unwrap(), orig);
+}
+
+#[cfg(all(feature = "serde", feature = "arrayvec"))]
+#[test]
+fn serde_arrayvec_roundtrip() {
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
+    struct Av {
+        #[serde(with = "better_hex::serde::upper_prefixed")]
+        data: arrayvec::ArrayVec<u8, 8>,
+    }
+    let mut data = arrayvec::ArrayVec::new();
+    data.try_extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]).unwrap();
+    let orig = Av { data };
+    let json = serde_json::to_string(&orig).unwrap();
+    assert_eq!(json, r#"{"data":"0xDEADBEEF"}"#);
+    assert_eq!(serde_json::from_str::<Av>(&json).unwrap(), orig);
 }

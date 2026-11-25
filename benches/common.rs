@@ -12,7 +12,9 @@ const SEED: u64 = 0x7f4a_7c15_9e37_79b9;
 const MAX_ALLOC: usize = 16 * 1024 * 1024; // 16 MiB
 const MAX_BUFFERS: usize = 64 * 1024;
 pub struct Buffers {
-    buffers: Vec<Box<[u8]>>,
+    data: Vec<u8>,
+    stride: usize,
+    count: usize,
     index: usize,
 }
 
@@ -26,14 +28,14 @@ impl Buffers {
     pub fn new(size: usize) -> Self {
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(SEED);
         let count = buffer_count(size);
-        let buffers = (0..count)
-            .map(|_| {
-                let mut buf = vec![0u8; size];
-                rng.fill_bytes(&mut buf);
-                buf.into_boxed_slice()
-            })
-            .collect();
-        Self { buffers, index: 0 }
+        let mut data = vec![0u8; count * size];
+        rng.fill_bytes(&mut data);
+        Self {
+            data,
+            stride: size,
+            count,
+            index: 0,
+        }
     }
 
     /// Hex-encoded buffers for decode/check benches.
@@ -45,29 +47,32 @@ impl Buffers {
     /// measurement, generate a dedicated buffer set.
     pub fn new_hex(size: usize) -> Self {
         let mut rng = Xoshiro256PlusPlus::seed_from_u64(SEED);
-        let count = buffer_count(size * 2);
-        let buffers = (0..count)
-            .enumerate()
-            .map(|(idx, _)| {
-                let mut buf = vec![0u8; size];
-                rng.fill_bytes(&mut buf);
-                if idx % 2 == 0 {
-                    better_hex::encode::<String>(&buf)
-                } else {
-                    better_hex::encode_upper::<String>(&buf)
-                }
-                .unwrap()
-                .into_bytes()
-                .into_boxed_slice()
-            })
-            .collect();
-        Self { buffers, index: 0 }
+        let stride = size * 2;
+        let count = buffer_count(stride);
+        let mut data = vec![0u8; count * stride];
+        let mut raw = vec![0u8; size];
+        for idx in 0..count {
+            rng.fill_bytes(&mut raw);
+            let dst = &mut data[idx * stride..(idx + 1) * stride];
+            if idx % 2 == 0 {
+                better_hex::encode_to_slice(&raw, dst).unwrap();
+            } else {
+                better_hex::encode_to_slice_upper(&raw, dst).unwrap();
+            }
+        }
+        Self {
+            data,
+            stride,
+            count,
+            index: 0,
+        }
     }
 
     pub fn next(&mut self) -> &[u8] {
-        let buf = &self.buffers[self.index];
-        self.index = (self.index + 1) % self.buffers.len();
-        buf
+        let start = self.index * self.stride;
+        let next = self.index + 1;
+        self.index = if next >= self.count { 0 } else { next };
+        &self.data[start..start + self.stride]
     }
 
     pub fn next_array<const N: usize>(&mut self) -> &[u8; N] {
@@ -79,10 +84,15 @@ fn buffer_count(bytes_per_buffer: usize) -> usize {
     (MAX_ALLOC / bytes_per_buffer.max(1)).clamp(2, MAX_BUFFERS)
 }
 
+/// Reinterpret `&mut [u8]` as `&mut [MaybeUninit<u8>]`.
+///
+/// # Safety
+///
+/// Callers must not write uninitialized bytes into the returned slice.
 #[allow(dead_code)]
-pub fn as_uninit_mut(bytes: &mut [u8]) -> &mut [MaybeUninit<u8>] {
-    // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`; widening an
-    // initialized `u8` slice to uninitialized storage is valid.
+pub unsafe fn as_uninit_mut(bytes: &mut [u8]) -> &mut [MaybeUninit<u8>] {
+    // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`; caller guarantees
+    // no uninitialized bytes are written into the slice.
     unsafe { &mut *(bytes as *mut [u8] as *mut [MaybeUninit<u8>]) }
 }
 

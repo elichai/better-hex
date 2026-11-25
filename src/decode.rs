@@ -6,6 +6,7 @@
 use crate::error::Error;
 use crate::traits::FromHex;
 use crate::{backend, maybe_uninit};
+use core::mem::MaybeUninit;
 
 /// Decode hex into any type that implements [`FromHex`].
 ///
@@ -54,11 +55,8 @@ pub fn decode<T: FromHex>(input: impl AsRef<[u8]>) -> Result<T, T::Error> {
 /// on `output` contents after a failed decode.
 #[inline]
 pub fn decode_to_slice(input: impl AsRef<[u8]>, output: &mut [u8]) -> Result<&[u8], Error> {
-    // SAFETY: `MaybeUninit<u8>` has the same layout as `u8`; the pointer cast
-    // preserves the slice length. Treating initialized `u8` as `MaybeUninit<u8>`
-    // is always valid (widening the validity invariant). The backend will
-    // overwrite every element on success.
-    let mu_output = maybe_uninit::slice_as_uninit_mut(output);
+    // SAFETY: `backend::decode` only writes initialized bytes and never writes uninit.
+    let mu_output = unsafe { maybe_uninit::slice_as_uninit_mut(output) };
     backend::decode(input.as_ref(), mu_output)?;
     Ok(output)
 }
@@ -81,8 +79,8 @@ pub fn check(input: impl AsRef<[u8]>) -> bool {
 /// Internal: decode hex into a fixed-size array using the backend directly.
 /// Used by the `FromHex` impl for `[u8; N]`.
 pub(crate) fn decode_array<const N: usize>(input: &[u8]) -> Result<[u8; N], Error> {
-    let mut out = maybe_uninit::uninit_array::<N>();
-    backend::decode(input, &mut out)?;
+    let mut out = MaybeUninit::<[u8; N]>::uninit();
+    backend::decode(input, maybe_uninit::as_bytes_mut(&mut out))?;
     // SAFETY: backend initialized all N bytes on Ok.
-    Ok(unsafe { maybe_uninit::transpose(out).assume_init() })
+    Ok(unsafe { out.assume_init() })
 }

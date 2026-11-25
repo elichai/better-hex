@@ -31,7 +31,23 @@ pub fn display<T: AsRef<[u8]>>(data: T) -> HexDisplay<T> {
 /// Opaque type implementing hex formatting traits for byte data.
 ///
 /// Created by [`display()`]. Implements `Display`, `LowerHex`, and `UpperHex`.
+///
+/// Supports the alternate `#` flag (`{:#x}`, `{:#X}`) to emit a `"0x"` prefix.
+/// Format width, alignment, fill, and precision flags are not applied because
+/// output is streamed in fixed-size stack chunks.
+#[derive(Clone, Copy)]
 pub struct HexDisplay<T>(T);
+
+impl<T: AsRef<[u8]>> HexDisplay<T> {
+    #[inline]
+    fn fmt_hex(&self, f: &mut fmt::Formatter<'_>, upper: bool) -> fmt::Result {
+        // The '#' flag in format strings (e.g. "{:#x}" / "{:#X}") requests a "0x" prefix.
+        if f.alternate() {
+            f.write_str("0x")?;
+        }
+        write_hex_to::<DEFAULT_BUF, _>(self.0.as_ref(), f, upper)
+    }
+}
 
 impl<T: AsRef<[u8]>> fmt::Display for HexDisplay<T> {
     #[inline]
@@ -43,22 +59,14 @@ impl<T: AsRef<[u8]>> fmt::Display for HexDisplay<T> {
 impl<T: AsRef<[u8]>> fmt::LowerHex for HexDisplay<T> {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // The '#' flag in format strings (e.g., "{:#x}") requests a "0x" prefix.
-        if f.alternate() {
-            f.write_str("0x")?;
-        }
-        write_hex_to::<DEFAULT_BUF, _>(self.0.as_ref(), f, false)
+        self.fmt_hex(f, false)
     }
 }
 
 impl<T: AsRef<[u8]>> fmt::UpperHex for HexDisplay<T> {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // The '#' flag in format strings (e.g., "{:#x}") requests a "0x" prefix.
-        if f.alternate() {
-            f.write_str("0x")?;
-        }
-        write_hex_to::<DEFAULT_BUF, _>(self.0.as_ref(), f, true)
+        self.fmt_hex(f, true)
     }
 }
 
@@ -71,7 +79,7 @@ impl<T: AsRef<[u8]>> fmt::UpperHex for HexDisplay<T> {
 /// `upper` selects lowercase vs uppercase.
 /// `BUF` is the hex output buffer size in bytes (must be even; generic for benchmarking).
 pub(crate) fn write_hex_to<const BUF: usize, W: fmt::Write>(input: &[u8], w: &mut W, upper: bool) -> fmt::Result {
-    debug_assert!(BUF >= 2 && BUF.is_multiple_of(2), "BUF must be even and >= 2");
+    const { assert!(BUF >= 2 && BUF.is_multiple_of(2), "BUF must be even and >= 2") };
     let mut buf = [MaybeUninit::<u8>::uninit(); BUF];
     let mut chunks = input.chunks_exact(BUF / 2);
 

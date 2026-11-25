@@ -9,11 +9,13 @@ repository = "https://github.com/elichai/better-hex"
 keywords = ["hex", "encoding", "simd", "no-std", "constant-time"]
 categories = ["encoding", "no-std"]
 
-# docs.rs builds nightly + --all-features and sets `--cfg docsrs` so the
+# docs.rs builds nightly and sets `--cfg docsrs` so the
 # `#[cfg_attr(docsrs, doc(cfg(...)))]` annotations on feature-gated items
-# render "Available on crate feature `…` only" badges.
+# render "Available on crate feature `…` only" badges. List public features
+# explicitly instead of `all-features = true` so docs.rs does not enable
+# `disable-simd` or pull in `ct-test` (`crabgrind` / `bindgen`).
 [package.metadata.docs.rs]
-all-features = true
+features = ["std", "alloc", "serde", "heapless", "arrayvec"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
@@ -33,7 +35,7 @@ ct-test = ["dep:crabgrind", "_bench_internals"]
 
 [dependencies]
 bytemuck = { version = "1.25", default-features = false, features = ["derive", "min_const_generics", "must_cast"] }
-serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+serde = { version = "1", default-features = false, optional = true }
 heapless = { version = "0.9", default-features = false, optional = true }
 arrayvec = { version = "0.7", default-features = false, optional = true }
 crabgrind = { version = "0.2", optional = true }
@@ -42,7 +44,6 @@ crabgrind = { version = "0.2", optional = true }
 cpufeatures = "0.3"
 
 [dev-dependencies]
-bytemuck = { version = "1.25", default-features = false, features = ["derive", "min_const_generics"] }
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support", "plotters", "html_reports"] }
 proptest = { version = "1", default-features = false, features = ["std"] }
 rand_core = "0.10"

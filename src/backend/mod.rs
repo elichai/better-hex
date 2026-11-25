@@ -158,11 +158,18 @@ pub fn encode(input: &[u8], output: &mut [MaybeUninit<u8>], upper: bool) -> Resu
 /// callers like `HexStr::decode` use `unwrap_unchecked` to give the
 /// optimizer enough information to remove the discriminant load entirely.
 ///
-/// Caller must guarantee `input.len() == output.len() * 2` — debug-checked.
+/// # Safety
+///
+/// Callers must guarantee `input.len() == output.len() * 2` (only checked via
+/// `debug_assert_eq!`; violating this in release builds causes out-of-bounds
+/// reads or writes).
 ///
 /// [`HexStr::decode`]: crate::HexStr::decode
 #[inline]
-pub(crate) fn decode_no_length_check(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), InvalidEncoding> {
+pub(crate) unsafe fn decode_no_length_check(
+    input: &[u8],
+    output: &mut [MaybeUninit<u8>],
+) -> Result<(), InvalidEncoding> {
     debug_assert_eq!(input.len(), output.len() * 2);
     let src = input.as_ptr();
     let byte_len = output.len();
@@ -193,11 +200,12 @@ pub fn decode(input: &[u8], output: &mut [MaybeUninit<u8>]) -> Result<(), Error>
             got: input.len(),
         });
     }
-    decode_no_length_check(input, output).map_err(|InvalidEncoding| Error::InvalidEncoding)
+    // SAFETY: `input.len() == output.len() * 2` was checked above.
+    unsafe { decode_no_length_check(input, output) }.map_err(|InvalidEncoding| Error::InvalidEncoding)
 }
 
 /// Check if every byte in `input` is a valid hex ASCII character.
-#[inline(never)]
+#[inline]
 pub fn check(input: &[u8]) -> bool {
     dispatch!(
         scalar: scalar::check(input),
@@ -230,6 +238,12 @@ pub(crate) mod test_support {
         buf
     }
 
+    /// SAFETY: all elements of `buf` must have been initialized.
+    pub(crate) unsafe fn assume_init_vec(buf: &[MaybeUninit<u8>]) -> alloc::vec::Vec<u8> {
+        // SAFETY: caller guarantees all elements are initialized.
+        buf.iter().map(|m| unsafe { m.assume_init() }).collect()
+    }
+
     fn scalar_encode(input: &[u8], upper: bool) -> alloc::vec::Vec<u8> {
         let mut out = alloc::vec![0u8; input.len() * 2];
         // SAFETY: pointers derived from valid slices with correct lengths.
@@ -257,19 +271,22 @@ pub(crate) mod test_support {
             // Encode lower
             let mut lower_out = alloc::vec![MaybeUninit::uninit(); hex_len];
             encode_lower(&input, &mut lower_out);
-            let lower: alloc::vec::Vec<u8> = lower_out.iter().map(|m| unsafe { m.assume_init() }).collect();
+            // SAFETY: `encode_lower` initialized all `hex_len` bytes.
+            let lower = unsafe { assume_init_vec(&lower_out) };
             assert_eq!(lower, expected_lower, "lower encode mismatch at size {size}");
 
             // Encode upper
             let mut upper_out = alloc::vec![MaybeUninit::uninit(); hex_len];
             encode_upper(&input, &mut upper_out);
-            let upper: alloc::vec::Vec<u8> = upper_out.iter().map(|m| unsafe { m.assume_init() }).collect();
+            // SAFETY: `encode_upper` initialized all `hex_len` bytes.
+            let upper = unsafe { assume_init_vec(&upper_out) };
             assert_eq!(upper, expected_upper, "upper encode mismatch at size {size}");
 
             // Decode
             let mut decoded = alloc::vec![MaybeUninit::uninit(); size];
             decode(&expected_lower, &mut decoded).unwrap_or_else(|e| panic!("decode failed at size {size}: {e}"));
-            let dec: alloc::vec::Vec<u8> = decoded.iter().map(|m| unsafe { m.assume_init() }).collect();
+            // SAFETY: `decode` initialized all `size` bytes on Ok.
+            let dec = unsafe { assume_init_vec(&decoded) };
             assert_eq!(dec, input, "decode mismatch at size {size}");
 
             // Check
@@ -303,6 +320,7 @@ mod boundary_tests {
     use alloc::vec::Vec;
     use core::mem::MaybeUninit;
 
+    use super::test_support::{assume_init_vec, fill_input};
     use super::{check, decode, encode};
     use crate::error::Error;
 
@@ -310,19 +328,11 @@ mod boundary_tests {
     /// 16-byte (SSSE3/NEON), 32-byte (AVX2), 64-byte, and 128-byte marks.
     const BOUNDARY_SIZES: [usize; 12] = [15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129];
 
-    /// Fill `size` fresh bytes from `rng`. Used inside loops so each
-    /// iteration sees uncorrelated bytes.
-    fn fill_bytes_vec(rng: &mut rand_xoshiro::Xoshiro256PlusPlus, size: usize) -> Vec<u8> {
-        use rand_core::Rng;
-        let mut buf = vec![0u8; size];
-        rng.fill_bytes(&mut buf);
-        buf
-    }
-
     fn encode_hex(input: &[u8]) -> Vec<u8> {
         let mut out = vec![MaybeUninit::uninit(); input.len() * 2];
         encode(input, &mut out, false).expect("encode failed");
-        out.iter().map(|m| unsafe { m.assume_init() }).collect()
+        // SAFETY: `encode` initialized all `input.len() * 2` bytes.
+        unsafe { assume_init_vec(&out) }
     }
 
     #[test]
@@ -330,14 +340,15 @@ mod boundary_tests {
         use rand_core::SeedableRng;
         let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0xb0_ba_b0_b0);
         for &size in &BOUNDARY_SIZES {
-            let input = fill_bytes_vec(&mut rng, size);
+            let input = fill_input(&mut rng, size);
             let hex = encode_hex(&input);
             let hex_len = hex.len();
 
             // Baseline: valid hex decodes correctly.
             let mut out = vec![MaybeUninit::uninit(); size];
             decode(&hex, &mut out).unwrap_or_else(|e| panic!("decode failed at size {size}: {e}"));
-            let decoded: Vec<u8> = out.iter().map(|m| unsafe { m.assume_init() }).collect();
+            // SAFETY: `decode` initialized all `size` bytes.
+            let decoded = unsafe { assume_init_vec(&out) };
             assert_eq!(decoded, input, "decode mismatch at size {size}");
 
             assert!(check(&hex), "check rejected valid hex at size {size}");
@@ -366,25 +377,29 @@ mod boundary_tests {
         use rand_core::SeedableRng;
         let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0xb0_ba_b0_b0);
         for &size in &BOUNDARY_SIZES {
-            let input = fill_bytes_vec(&mut rng, size);
+            let input = fill_input(&mut rng, size);
             let hex_len = size * 2;
 
             // Lower-case roundtrip
             let mut lower = vec![MaybeUninit::uninit(); hex_len];
             encode(&input, &mut lower, false).expect("encode lower failed");
-            let lower_hex: Vec<u8> = lower.iter().map(|m| unsafe { m.assume_init() }).collect();
+            // SAFETY: `encode` initialized all `hex_len` bytes.
+            let lower_hex = unsafe { assume_init_vec(&lower) };
             let mut dec = vec![MaybeUninit::uninit(); size];
             decode(&lower_hex, &mut dec).unwrap_or_else(|e| panic!("roundtrip(lower) failed at {size}: {e}"));
-            let result: Vec<u8> = dec.iter().map(|m| unsafe { m.assume_init() }).collect();
+            // SAFETY: `decode` initialized all `size` bytes.
+            let result = unsafe { assume_init_vec(&dec) };
             assert_eq!(result, input, "lower roundtrip mismatch at size {size}");
 
             // Upper-case roundtrip
             let mut upper = vec![MaybeUninit::uninit(); hex_len];
             encode(&input, &mut upper, true).expect("encode upper failed");
-            let upper_hex: Vec<u8> = upper.iter().map(|m| unsafe { m.assume_init() }).collect();
+            // SAFETY: `encode` initialized all `hex_len` bytes.
+            let upper_hex = unsafe { assume_init_vec(&upper) };
             let mut dec2 = vec![MaybeUninit::uninit(); size];
             decode(&upper_hex, &mut dec2).unwrap_or_else(|e| panic!("roundtrip(upper) failed at {size}: {e}"));
-            let result2: Vec<u8> = dec2.iter().map(|m| unsafe { m.assume_init() }).collect();
+            // SAFETY: `decode` initialized all `size` bytes.
+            let result2 = unsafe { assume_init_vec(&dec2) };
             assert_eq!(result2, input, "upper roundtrip mismatch at size {size}");
         }
     }
@@ -399,7 +414,7 @@ mod boundary_tests {
         const HEX_LEN: usize = DECODED_LEN * 2;
 
         let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(0xb0_ba_b0_b0);
-        let input = fill_bytes_vec(&mut rng, DECODED_LEN);
+        let input = fill_input(&mut rng, DECODED_LEN);
         let hex = encode_hex(&input);
         assert_eq!(hex.len(), HEX_LEN);
 

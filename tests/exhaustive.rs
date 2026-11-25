@@ -1,4 +1,4 @@
-//! Exhaustive size-loop tests: exercise every public API at sizes 0..=512.
+//! Exhaustive size-loop tests: exercise every public API at sizes 0..=MAX (4096, or 70 under Miri).
 
 #![cfg(feature = "alloc")]
 
@@ -183,8 +183,12 @@ fn from_hex_array_sizes() {
     check::<31>(&mut rng);
     check::<32>(&mut rng);
     check::<33>(&mut rng);
+    check::<63>(&mut rng);
     check::<64>(&mut rng);
+    check::<65>(&mut rng);
+    check::<127>(&mut rng);
     check::<128>(&mut rng);
+    check::<129>(&mut rng);
     check::<255>(&mut rng);
     check::<256>(&mut rng);
     check::<512>(&mut rng);
@@ -233,8 +237,12 @@ fn hex_str_roundtrip_sizes() {
     check::<31>(&mut rng);
     check::<32>(&mut rng);
     check::<33>(&mut rng);
+    check::<63>(&mut rng);
     check::<64>(&mut rng);
+    check::<65>(&mut rng);
+    check::<127>(&mut rng);
     check::<128>(&mut rng);
+    check::<129>(&mut rng);
     check::<255>(&mut rng);
     check::<256>(&mut rng);
 }
@@ -250,9 +258,12 @@ fn heapless_all_sizes() {
         let input = fill_input(&mut rng, size);
         let hex: heapless::String<CAP> = better_hex::encode(&input).unwrap();
         assert_eq!(hex.len(), size * 2);
-        let _upper: heapless::String<CAP> = better_hex::encode_upper(&input).unwrap();
+        let upper: heapless::String<CAP> = better_hex::encode_upper(&input).unwrap();
+        assert_eq!(upper.as_str(), hex.as_str().to_ascii_uppercase());
         let decoded: heapless::Vec<u8, CAP> = better_hex::decode(hex.as_str()).unwrap();
         assert_eq!(&decoded[..], &input[..]);
+        let decoded_upper: heapless::Vec<u8, CAP> = better_hex::decode(upper.as_str()).unwrap();
+        assert_eq!(&decoded_upper[..], &input[..]);
     }
 }
 
@@ -267,13 +278,16 @@ fn arrayvec_all_sizes() {
         let input = fill_input(&mut rng, size);
         let hex: arrayvec::ArrayString<CAP> = better_hex::encode(&input).unwrap();
         assert_eq!(hex.len(), size * 2);
-        let _upper: arrayvec::ArrayString<CAP> = better_hex::encode_upper(&input).unwrap();
+        let upper: arrayvec::ArrayString<CAP> = better_hex::encode_upper(&input).unwrap();
+        assert_eq!(upper.as_str(), hex.as_str().to_ascii_uppercase());
         let decoded: arrayvec::ArrayVec<u8, CAP> = better_hex::decode(hex.as_str()).unwrap();
         assert_eq!(&decoded[..], &input[..]);
+        let decoded_upper: arrayvec::ArrayVec<u8, CAP> = better_hex::decode(upper.as_str()).unwrap();
+        assert_eq!(&decoded_upper[..], &input[..]);
     }
 }
 
-// ── serde (all 8 modules) ───────────────────────────────────────────────────
+// ── serde (all 4 modules) ───────────────────────────────────────────────────
 
 #[cfg(feature = "serde")]
 mod serde_exhaustive {

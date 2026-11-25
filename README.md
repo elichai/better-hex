@@ -34,11 +34,13 @@ Fast, constant-time hex encoding and decoding with SIMD and `const fn`.
   `heapless::String<CAP>`, `arrayvec::ArrayString<CAP>`, and any downstream
   type, letting SIMD encoders write straight into the target's buffer with
   no intermediate copy.
-- **Serde** — constant-time hex helpers for `[u8; N]` and `Vec<u8>` fields,
+- **Serde** — constant-time hex helpers for `[u8; N]`, `Vec<u8>`, `Box<[u8]>`,
+  `Cow<'_, [u8]>`, `heapless::Vec`, and `arrayvec::ArrayVec` fields,
   in `lower` / `upper` / `prefixed` / `upper_prefixed` variants.
   Deserialization into a fixed-size array is alloc-free; serialization is
-  alloc-free with serializers that override `Serializer::collect_str`
-  (e.g. `serde_json`, `serde_yaml`).
+  always alloc-free for `[u8; N]` (`N <= 512`, stack-encoded via `HexStr<N>`),
+  and alloc-free for dynamic slices/larger arrays with serializers that override
+  `Serializer::collect_str` (e.g. `serde_json`, `serde_yaml`).
 
 ## Decoding case behavior
 
@@ -123,12 +125,51 @@ replaced with supported separators.
 | Alloc-free serde for `[u8; N]` | deserialize only | full¹ | — | n/a | **full** |
 | `no_std` | yes | yes | yes | yes | yes |
 
-¹ const-hex serialize is alloc-free with serializers that override `Serializer::collect_str` (e.g. `serde_json`, `serde_yaml`); the default `collect_str` formats into a temporary `String`. better-hex's `[u8; N]` path stack-encodes into a `HexStr<N>` and calls `serialize_str` directly, so it is alloc-free regardless of the serializer.
+¹ const-hex serialize is alloc-free with serializers that override `Serializer::collect_str` (e.g. `serde_json`, `serde_yaml`); the default `collect_str` formats into a temporary `String`. better-hex's `[u8; N]` path (`N <= 512`) stack-encodes into a `HexStr<N>` and calls `serialize_str` directly, so it is alloc-free regardless of the serializer (larger arrays stream through `collect_str`).
 
 [hex]: https://github.com/KokaKiwi/rust-hex
 [const-hex]: https://github.com/danipopes/const-hex
 [faster-hex]: https://github.com/nervosnetwork/faster-hex
 [base16ct]: https://github.com/RustCrypto/formats/tree/master/base16ct
+
+## Benchmarks
+
+![Throughput comparison vs const-hex, faster-hex, base16ct, and hex on x86_64 AVX-512 and AArch64 NEON](docs/benchmarks.svg)
+
+<details>
+<summary>Full numbers (32 B and 16 KiB, zero-allocation slice APIs)</summary>
+
+Encode throughput is measured in raw input bytes; decode and check throughput are measured in hex input bytes (2× decoded length). `hex` is measured via `hex::encode` / `hex::decode` (allocating, as in `benches/compare.rs`).
+
+**AMD EPYC 9B45 (Zen 5, AVX-512BW + VBMI, `rustc 1.99.0`, 50 samples):**
+
+| Operation (input) | **better-hex** (CT) | [const-hex] | [faster-hex] | [base16ct] (CT) | [hex] |
+|---|---:|---:|---:|---:|---:|
+| `encode_to_slice` (32 B) | 11.1 GiB/s | **12.2 GiB/s** | 5.8 GiB/s | 5.8 GiB/s | 0.24 GiB/s |
+| `encode_to_slice` (16 KiB) | **61.2 GiB/s** | 37.9 GiB/s | 29.7 GiB/s | 5.8 GiB/s | 0.30 GiB/s |
+| `decode_to_slice` (32 B) | **13.5 GiB/s** | 12.8 GiB/s | 7.1 GiB/s | 2.6 GiB/s | 0.18 GiB/s |
+| `decode_to_slice` (16 KiB) | **77.0 GiB/s** | 40.7 GiB/s | 10.6 GiB/s | 2.7 GiB/s | 0.24 GiB/s |
+| `check` (32 B) | **20.2 GiB/s** | 8.7 GiB/s | — | — | — |
+| `check` (16 KiB) | **116.1 GiB/s** | 60.0 GiB/s | — | — | — |
+
+**Apple M5 Pro (AArch64 NEON, `rustc 1.100.0`, 30 samples):**
+
+| Operation (input) | **better-hex** (CT) | [const-hex] | [faster-hex] | [base16ct] (CT) | [hex] |
+|---|---:|---:|---:|---:|---:|
+| `encode_to_slice` (32 B) | 13.3 GiB/s | 13.0 GiB/s | 2.5 GiB/s | **14.0 GiB/s** | 0.70 GiB/s |
+| `encode_to_slice` (16 KiB) | 38.8 GiB/s | **39.0 GiB/s** | 3.0 GiB/s | 14.0 GiB/s | 0.81 GiB/s |
+| `decode_to_slice` (32 B) | **22.0 GiB/s** | 20.5 GiB/s | 2.4 GiB/s | 4.3 GiB/s | 0.30 GiB/s |
+| `decode_to_slice` (16 KiB) | **23.1 GiB/s** | 22.1 GiB/s | 2.4 GiB/s | 4.5 GiB/s | 0.43 GiB/s |
+| `check` (32 B) | **33.0 GiB/s** | 23.1 GiB/s | — | — | — |
+| `check` (16 KiB) | **35.8 GiB/s** | 31.6 GiB/s | — | — | — |
+
+Reproduce locally:
+
+```sh
+cargo bench --bench compare --features _bench_base16ct,_bench_const_hex,_bench_faster_hex,_bench_hex
+```
+
+</details>
 
 ## Testing
 
@@ -142,11 +183,11 @@ Three [cargo-fuzz] targets in `fuzz/fuzz_targets/` cover the public API:
   scalar naïve encoder / decoder for every input. Any disagreement on
   encode, decode, or check output (modulo documented case-folding behavior)
   is a bug.
-- **`api`** — round-trip and invariant checks across `encode`, `decode`,
-  `check`, the `FromHex` / `ToHex` traits, and the `HexTarget` adapters
-  (`String`, `heapless::String`, `arrayvec::ArrayString`).
-- **`hex_str`** — `HexStr<N>` and `PrefixedHexStr<N>` construction, parsing,
-  display, and serde round-trips.
+- **`api`** — round-trip and length-error checks across `encode_to_slice`,
+  `encode_to_slice_upper`, `decode_to_slice`, `const_check`,
+  `const_decode_to_array`, and `decode::<[u8; 4]>`.
+- **`hex_str`** — `HexStr<N>` and `PrefixedHexStr<N>` `FromStr` parsing,
+  decoding, and lowercase re-encoding round-trips.
 
 Run locally with `./fuzz/fuzz.sh` (defaults to 60 s per target; configurable
 via `FUZZ_SECONDS`). The script runs `cargo fuzz` in `--release` with
@@ -244,7 +285,7 @@ crates and research. Licenses are noted; all are permissive.
   (Copyright © 2018 Nervos Foundation)
 
 - **[hex](https://github.com/KokaKiwi/rust-hex)** by KokaKiwi / The rust-hex Developers —
-  `FromHex` / `ToHex` trait API design, scalar decode LUT, serde helpers —
+  `FromHex` / `ToHex` trait API design, serde helpers —
   **MIT OR Apache-2.0**
   (Copyright © 2013–2014 The Rust Project Developers; © 2015–2020 The rust-hex Developers)
 
