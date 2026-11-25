@@ -173,15 +173,17 @@ pub const unsafe fn decode(src: *const u8, dst: *mut u8, byte_len: usize) -> Res
 #[inline]
 #[doc(hidden)]
 pub const fn check_inner(mut input: &[u8]) -> u8 {
-    let mut err: u8 = 0;
+    // Accumulate in `u16` inside the loop (avoiding 8-bit partial-register
+    // writes on x86_64) and narrow once at exit (`err` is 0x0000 or 0x00FF).
+    let mut err: u16 = 0;
     while let Some((&byte, rest)) = input.split_first() {
         // `decode_nibble` returns 0..=15 for valid bytes and 0xFFFF for
         // invalid ones. Shift right by 8 to isolate the error byte (0x00 or
         // 0xFF) — otherwise valid nibbles (e.g. 'd' → 13) would make `err != 0`.
-        err |= (decode_nibble(byte) >> 8) as u8;
+        err |= decode_nibble(byte) >> 8;
         input = rest;
     }
-    err
+    err as u8
 }
 
 /// Constant-time hex validator.
