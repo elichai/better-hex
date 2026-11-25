@@ -29,12 +29,12 @@ jobs:
           - arch: aarch64
             runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
       - name: Install Rust 1.97.0
-        uses: dtolnay/rust-toolchain@1.97.0
+        uses: dtolnay/rust-toolchain@1.120.0
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -84,10 +84,10 @@ jobs:
             bench_dir: dev/bench/aarch64
             bench_name: better-hex Benchmarks (aarch64)
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Rust 1.97.0
-        uses: dtolnay/rust-toolchain@1.97.0
+        uses: dtolnay/rust-toolchain@1.120.0
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
