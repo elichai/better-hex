@@ -852,8 +852,9 @@ unsafe fn decode_chunk_512(
 /// Hex-decode `input` into `output` using AVX-512BW.
 ///
 /// Processes 128 hex chars (two `__m512i` loads → 64 output bytes) per
-/// iteration, plus a 32-byte single-chunk tail (handling 32-byte hashes/keys
-/// in one AVX-512 step) before falling through to AVX2/SSSE3/scalar.
+/// iteration. Inputs under 64 output bytes (including 32-byte digests) bypass
+/// ZMM setup completely and fall through to AVX2/SSSE3/scalar so pre-Ice-Lake
+/// Intel CPUs avoid 512-bit license transitions on short decodes.
 /// Accumulates error bits across all chunks without branching on validity
 /// (constant-time).
 ///
@@ -870,7 +871,7 @@ unsafe fn decode_avx512_impl(mut src: *const u8, mut dst: *mut u8, mut byte_len:
     unsafe {
         let mut err_accum = 0u64;
 
-        if byte_len >= 32 {
+        if byte_len >= 64 {
             let delta_check = _mm512_broadcast_i32x4(decode_delta_check_128());
             let delta_rebase = _mm512_broadcast_i32x4(decode_delta_rebase_128());
             let one = _mm512_set1_epi8(1);
@@ -893,18 +894,6 @@ unsafe fn decode_avx512_impl(mut src: *const u8, mut dst: *mut u8, mut byte_len:
                 src = src.add(128);
                 dst = dst.add(64);
                 byte_len -= 64;
-            }
-
-            // Remaining 32–63 output bytes (including 32-byte digests/keys).
-            if byte_len >= 32 {
-                let chunk = _mm512_loadu_si512(src.cast());
-                let (decoded, mask) = decode_chunk_512(chunk, delta_check, delta_rebase, one, mask_hi, weights);
-                err_accum |= mask;
-                _mm256_storeu_si256(dst.cast(), decoded);
-
-                src = src.add(64);
-                dst = dst.add(32);
-                byte_len -= 32;
             }
         }
 
