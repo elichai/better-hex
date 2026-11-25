@@ -70,7 +70,8 @@ impl Buffers {
 
     pub fn next(&mut self) -> &[u8] {
         let start = self.index * self.stride;
-        self.index = (self.index + 1) % self.count;
+        let next = self.index + 1;
+        self.index = if next >= self.count { 0 } else { next };
         &self.data[start..start + self.stride]
     }
 
