@@ -41,7 +41,7 @@ jobs:
       id-token: write # crates.io Trusted Publishing (OIDC)
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0 # release-plz needs full history
           persist-credentials: false
@@ -72,7 +72,7 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -97,7 +97,7 @@ jobs:
 
       - name: Checkout release PR
         if: steps.release-plz.outputs.prs_created == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ fromJSON(steps.release-plz.outputs.pr).head_branch }}
           # The refresh step pushes a commit to this branch.

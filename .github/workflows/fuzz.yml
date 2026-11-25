@@ -34,13 +34,13 @@ jobs:
           - { os: ubuntu-latest, arch: x86_64 }
           - { os: ubuntu-24.04-arm, arch: aarch64 }
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # The corpus lives on an orphan branch (no shared history with main).
       # We check it out into a sibling directory and copy seeds in before
       # fuzzing. Adding `path:` keeps it from clobbering the main checkout.
       - name: Checkout fuzz-corpus
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: fuzz-corpus
           path: fuzz-corpus
